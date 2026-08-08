@@ -1,0 +1,259 @@
+{
+    "Cafe_Main": {
+        "focus": "▶ 카페 보상 수령",
+        "next": [
+            "Cafe_Main_Click",
+            {
+                "name": "Return_Home",
+                "jump_back": true
+            },
+            {
+                "name": "Center_Click",
+                "jump_back": true
+            }
+        ]
+    },
+    "Cafe_Main_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_main_btn.png",
+                "roi" : [70, 677, 40, 21]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [90, 660, 1, 1]
+            }
+        },
+        "next": [
+            "Cafe_Check_Lobby",
+            "Cafe_Main_Click"
+        ]
+    },
+    "Cafe_Check_Lobby": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_lobby.png",
+                "roi" : [100, 10, 95, 30]
+            }
+        },
+        "post_delay": 5000,
+        "next": [
+            "Cafe_New_Visit",
+            "Cafe_Reward_Claim_1"
+        ]
+    },
+    "Cafe_New_Visit": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_info.png",
+                "roi" : [598, 167, 86, 44]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 450, 1, 1]
+            }
+        },
+        "next": [
+            "Cafe_New_Visit",
+            "Cafe_Reward_Claim_1"
+        ]
+    },
+    "Cafe_Reward_Claim_1": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1200, 650, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "next": [
+            "Cafe_Reward_Claim_2",
+            "Cafe_Return_Lobby",
+            "Cafe_Reward_Claim_1"
+        ]
+    },
+    "Cafe_Reward_Claim_2": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_reward_claim.png",
+                "roi" : [600, 507, 85, 77]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 530, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "next": [
+            "Cafe_Reward_Claim_2",
+            "Cafe_Reward_Full",
+            "Cafe_Reward_Claimed"
+        ]
+    },
+    "Cafe_Reward_Claimed": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_reward_claimed.png",
+                "roi" : [691, 331, 60, 74]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 680, 1, 1]
+            }
+        },
+        "pre_delay" : 3000,
+        "next": [
+            "Cafe_Reward_Claimed",
+            "Cafe_Reward_Remain",
+            "Cafe_Return_Lobby_Click"
+        ]
+    },
+    "Cafe_Return_Lobby_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [980, 145, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "repeat_delay": 500,
+        "post_delay": 2000,
+        "next": [
+            "Cafe_Bif"
+        ]
+    },
+    "Cafe_Return_Lobby": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_after_reward.png",
+                "roi" : [587, 504, 111, 52]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [980, 145, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "next": [
+            "Cafe_Return_Lobby",
+            "Cafe_Bif"
+        ]
+    },
+    "Cafe_Reward_Remain": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_remain_notice.png",
+                "roi" : [600, 143, 79, 58]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 500, 1, 1]
+            }
+        },
+        "next": [
+            "Cafe_Reward_Remain",
+            "Cafe_Return_Lobby"
+        ]
+    },
+    "Cafe_Reward_Full": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_full_notice.png",
+                "roi" : [595, 119, 91, 56]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 550, 1, 1]
+            }
+        },
+        "next": [
+            "Cafe_Reward_Full",
+            "Cafe_Reward_Full_Focus"
+        ]
+    },
+    "Cafe_Reward_Full_Focus": {
+        "focus":"  ▼ AP가 가득 차 카페 수익 수령 실패",
+        "next": [
+            "Cafe_Bif"
+        ]
+    },
+    "Cafe_Bif": {
+        "next": [
+            "Cafe_End"
+        ]
+    },
+    "Cafe_End": {
+        "next" : [
+            "Return_Home"
+        ]
+    },
+
+
+    "Cafe_Bif_1": {
+        "next" : [
+            "Cafe_Bond_NW"
+        ]
+    },
+    "Cafe_Bif_2": {
+        "next": [
+            "Cafe_Move_Second"
+        ]
+    },
+
+    "Cafe_Move_Second": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [120, 105, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "post_delay": 5000,
+        "next": [
+            "Cafe_Second_New_Visit",
+            "Cafe_Second_Bond_NW"
+        ]
+    },
+    "Cafe_Second_New_Visit": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "cafe_main/cafe_info.png",
+                "roi" : [598, 167, 86, 44]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 450, 1, 1]
+            }
+        },
+        "next": [
+            "Cafe_Second_New_Visit",
+            "Cafe_Second_Bond_NW"
+        ]
+    }
+
+}

@@ -1,0 +1,246 @@
+{
+    "Cafe_Bond_NW": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [427, 240, 1, 1],
+                "end": [853, 480, 1, 1],
+                "duration": 50
+            }
+        },
+        "repeat": 10,
+        "next": [
+            "Cafe_Bond_NW_Hub"
+        ]
+    },
+    "Cafe_Bond_NW_Hub": {
+        "next": [
+            {
+                "name": "Check_Bond_Rankup",
+                "jump_back": true
+            },
+            "Cafe_Bond_NW_Click",
+            "Cafe_Bond_NW_Empty"
+        ]
+    },
+    "Cafe_Bond_NW_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target_offset": [45, 0, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "pre_delay": 0,
+        "post_delay": 2000,
+        "next": [
+            "Cafe_Bond_NW_Hub"
+        ]
+    },
+    "Cafe_Bond_NW_Empty": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bond_SW"
+        ]
+    },
+    "Cafe_Bond_SW": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [427, 480, 1, 1],
+                "end": [853, 240, 1, 1],
+                "duration": 50
+            }
+        },
+        "repeat": 10,
+        "next": [
+            "Cafe_Bond_SW_Hub"
+        ]
+    },
+    "Cafe_Bond_SW_Hub": {
+        "next": [
+            {
+                "name": "Check_Bond_Rankup",
+                "jump_back": true
+            },
+            "Cafe_Bond_SW_Click",
+            "Cafe_Bond_SW_Empty"
+        ]
+    },
+    "Cafe_Bond_SW_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target_offset": [45, 0, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "pre_delay": 0,
+        "post_delay": 2000,
+        "next": [
+            "Cafe_Bond_SW_Hub"
+        ]
+    },
+    "Cafe_Bond_SW_Empty": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bond_SE"
+        ]
+    },
+    "Cafe_Bond_SE": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [853, 480, 1, 1],
+                "end": [427, 240, 1, 1],
+                "duration": 50
+            }
+        },
+        "repeat": 10,
+        "next": [
+            "Cafe_Bond_SE_Hub"
+        ]
+    },
+    "Cafe_Bond_SE_Hub": {
+        "next": [
+            {
+                "name": "Check_Bond_Rankup",
+                "jump_back": true
+            },
+            "Cafe_Bond_SE_Click",
+            "Cafe_Bond_SE_Empty"
+        ]
+    },
+    "Cafe_Bond_SE_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target_offset": [45, 0, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "pre_delay": 0,
+        "post_delay": 2000,
+        "next": [
+            "Cafe_Bond_SE_Hub"
+        ]
+    },
+    "Cafe_Bond_SE_Empty": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bond_NE"
+        ]
+    },
+    "Cafe_Bond_NE": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [853, 240, 1, 1],
+                "end": [427, 480, 1, 1],
+                "duration": 50
+            }
+        },
+        "repeat": 10,
+        "next": [
+            "Cafe_Bond_NE_Hub"
+        ]
+    },
+    "Cafe_Bond_NE_Hub": {
+        "next": [
+            {
+                "name": "Check_Bond_Rankup",
+                "jump_back": true
+            },
+            "Cafe_Bond_NE_Click",
+            "Cafe_Bond_NE_Empty"
+        ]
+    },
+    "Cafe_Bond_NE_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target_offset": [45, 0, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "pre_delay": 0,
+        "post_delay": 2000,
+        "next": [
+            "Cafe_Bond_NE_Hub"
+        ]
+    },
+    "Cafe_Bond_NE_Empty": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe_main/cafe_bond.png",
+                "roi": [0, 125, 1280, 495],
+                "threshold": 0.7
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bif_2",
+            {
+                "name": "Center_Click",
+                "jump_back": true
+            }
+        ]
+    }
+}

@@ -1,0 +1,123 @@
+{
+    "Login_Main": {
+        "focus": "▶ 게임 로그인",
+        "next": [
+            "Login_Start"
+        ]
+    },
+	"Login_Start": {
+        "timeout": 3000,
+        "next": [
+            "Login_Menu",
+            "Login_Reward_Menu",
+            "Login_Ingame_Notice",
+            "Login_MaxHit_Click_1",
+            "Login_End"
+        ]
+	},
+    "Login_MaxHit_Click_1": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1010, 135, 1, 1]
+            }
+        },
+        "max_hit": 5,
+        "post_delay": 200,
+        "next": [
+            "Login_MaxHit_Click_2"
+        ]
+    },
+    "Login_MaxHit_Click_2": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1111, 123, 1, 1]
+            }
+        },
+        "post_delay": 1000,
+        "next": [
+            "Login_Start"
+        ]
+    },
+    "Login_Menu": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : [
+                    "login_main/login_menu.png",
+                    "login_main/login_menu_back.png"
+                ],
+                "roi" : [30, 620, 65, 35]
+            }
+        },
+        "next": [
+            "Login_Menu_Click"
+        ]
+    },
+    "Login_Menu_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1010, 135, 1, 1]
+            }
+        },
+        "next": [
+            "Login_Ingame_Notice",
+            "Login_Menu_Click"
+        ]
+    },
+    "Login_Reward_Menu": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "login_main/login_reward.png",
+                "roi" : [678, 90, 343, 81]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1010, 135, 1, 1]
+            }
+        },
+        "next": [
+            "Login_Ingame_Notice",
+            "Login_Reward_Menu_Click"
+        ]
+    },
+    "Login_Reward_Menu_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1010, 135, 1, 1]
+            }
+        },
+        "next": [
+            "Login_Ingame_Notice",
+            "Login_Reward_Menu_Click"
+        ]
+    },
+    "Login_Ingame_Notice": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "login_main/login_ingame_notice.png",
+                "roi" : [155, 462, 104, 33]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1111, 123, 1, 1]
+            }
+        },
+        "next": [
+            "Login_Ingame_Notice",
+            "Login_End"
+        ]
+    },
+    "Login_End": {
+        "next": []
+    }
+}

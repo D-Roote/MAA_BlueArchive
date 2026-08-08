@@ -1,0 +1,198 @@
+/* =========================================
+   전체 기본 폰트 및 배경 설정
+   ========================================= */
+QWidget {
+    background-color: #F4F7FB;
+    color: #334155;
+    font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+    font-size: 10pt;
+}
+
+QMainWindow {
+    background-color: #FFFFFF;
+}
+
+/* =========================================
+   탭 위젯 (QTabWidget) - 기존 패딩 및 모서리 크기 유지
+   ========================================= */
+QTabWidget::pane {
+    border: 1px solid #E2E8F0;
+    background-color: #FFFFFF;
+    border-radius: 8px;
+    margin-top: -1px;
+}
+
+QTabBar::tab {
+    background-color: #E6EDF5;
+    color: #475569;
+    padding: 10px 25px;
+    border: 1px solid #E2E8F0;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #00AEEF;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #DDE8F5;
+}
+
+/* =========================================
+   리스트 위젯 (작업 목록, QListWidget)
+   ========================================= */
+QListWidget {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    padding: 2px;
+    padding-top: 8px;
+    outline: none;
+}
+
+QListWidget::item {
+    background: transparent;
+    border: none;
+}
+
+QListWidget::item:hover {
+    background-color: #F8FAFC;
+}
+
+QListWidget::item:selected {
+    background: transparent;
+    border: none;
+}
+
+/* =========================================
+   버튼 (QPushButton)
+   ========================================= */
+QPushButton {
+    background-color: #00AEEF;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 8px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #009BD6;
+}
+
+QPushButton:pressed {
+    background-color: #0087BA;
+}
+
+QPushButton:disabled {
+    background-color: #CBD5E0;
+    color: #A0AEC0;
+}
+
+QPushButton#stopBtn {
+    background-color: #FF5A5A;
+}
+QPushButton#stopBtn:hover {
+    background-color: #E04848;
+}
+
+/* =========================================
+   동적 생성 UI (체크박스, 라디오버튼)
+   ========================================= */
+QWidget#OptionItemWidget, QWidget > QLabel {
+    background-color: transparent;
+}
+
+QCheckBox {
+    spacing: 6px;
+    background-color: transparent;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #CBD5E1;
+    border-radius: 4px;
+    background-color: #FFFFFF;
+    subcontrol-origin: margin;
+    subcontrol-position: center left;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #00AEEF;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #00AEEF;
+    border-color: #00AEEF;
+    image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+}
+
+QRadioButton {
+    spacing: 8px;
+    background-color: transparent;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #CBD5E1;
+    border-radius: 9px;
+    background-color: #FFFFFF;
+    subcontrol-origin: margin;
+    subcontrol-position: center left;
+}
+
+QRadioButton::indicator:hover {
+    border-color: #00AEEF;
+}
+
+QRadioButton::indicator:checked {
+    border: 2px solid #00AEEF;
+    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, 
+                                      stop:0 #00AEEF, stop:0.5 #00AEEF, 
+                                      stop:0.6 transparent, stop:1 transparent);
+}
+
+/* =========================================
+   로그 출력 (QTextEdit)
+   ========================================= */
+QTextEdit {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    color: #4A5568;
+    padding: 8px;
+}
+
+/* =========================================
+   스크롤바 (수직)
+   ========================================= */
+QScrollBar:vertical {
+    border: none;
+    background: #F4F7FB;
+    width: 10px;
+    border-radius: 5px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #CBD5E0;
+    min-height: 20px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #00AEEF;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+}

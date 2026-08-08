@@ -1,0 +1,4 @@
+MaaFw==5.10.5
+PySide6==6.11.1
+
+opencv-python==4.13.0.92

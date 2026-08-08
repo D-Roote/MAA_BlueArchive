@@ -1,0 +1,121 @@
+{
+    "Schedule_Main": {
+        "focus": "▶ 스케쥴 작업",
+        "next" : [
+            "Schedule_Main_Click",
+            {
+                "name": "Return_Home",
+                "jump_back": true
+            },
+            {
+                "name": "Center_Click",
+                "jump_back": true
+            }
+        ]
+    },
+    "Schedule_Main_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_main_btn.png",
+                "roi" : [182, 675, 55, 26]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [210, 660, 1, 1]
+            }
+        },        
+        "next": [
+            "Schedule_Check_Lobby",
+            "Schedule_Main_Click"
+        ]
+    },
+    "Schedule_Check_Lobby": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_lobby.png",
+                "roi" : [99, 8, 122, 33]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1000, 200, 1, 1]
+            }
+        },
+        "next": [
+            "Schedule_Check_List_Window",
+            "Schedule_Check_Lobby"
+        ]
+    },
+    "Schedule_Check_List_Window": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_all_btn.png",
+                "roi" : [1091, 644, 148, 42]
+            }
+        },
+        "next": [
+            "Schedule_Move_List"
+        ]
+    },
+    "Schedule_Move_List": {
+        "next": [
+            "Schedule_Check_Aca",
+            "Schedule_Open_List_Window"
+        ]
+    },
+    "Schedule_Check_Aca": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_list_11.png",
+                "roi" : [1002, 95, 238, 37]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1245, 360, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "inverse": true,
+        "next": [
+            "Schedule_Move_List"
+        ]
+    },
+    "Schedule_Open_List_Window": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_all_btn.png",
+                "roi" : [1091, 644, 148, 42]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "target": [1160, 660, 1, 1]
+        },
+        "repeat": 2,
+        "next": [
+            "Schedule_Check_List"
+        ]
+    },
+    "Schedule_Check_List": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule_main/schedule_list_window.png",
+                "roi" : [560, 85, 162, 35]
+            }
+        },
+        "next": [
+
+        ]
+    }
+}
