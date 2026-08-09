@@ -15,10 +15,7 @@
     },
     "Cafe_Bond_NW_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_NW_Click",
             "Cafe_Bond_NW_Empty"
         ]
@@ -75,10 +72,7 @@
     },
     "Cafe_Bond_SW_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_SW_Click",
             "Cafe_Bond_SW_Empty"
         ]
@@ -135,10 +129,7 @@
     },
     "Cafe_Bond_SE_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_SE_Click",
             "Cafe_Bond_SE_Empty"
         ]
@@ -195,10 +186,7 @@
     },
     "Cafe_Bond_NE_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_NE_Click",
             "Cafe_Bond_NE_Empty"
         ]
@@ -237,10 +225,7 @@
         "inverse": true,
         "next": [
             "Cafe_Bif_2",
-            {
-                "name": "Center_Click",
-                "jump_back": true
-            }
+            "[JumpBack]Center_Click"
         ]
     }
 }

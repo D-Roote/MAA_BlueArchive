@@ -3,14 +3,8 @@
         "focus": "▶ 카페 보상 수령",
         "next": [
             "Cafe_Main_Click",
-            {
-                "name": "Return_Home",
-                "jump_back": true
-            },
-            {
-                "name": "Center_Click",
-                "jump_back": true
-            }
+            "[JumpBack]Return_Home",
+            "[JumpBack]Center_Click"
         ]
     },
     "Cafe_Main_Click": {

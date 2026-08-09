@@ -9,7 +9,7 @@
         "next": []
     },
 
-
+    
     "Return_Home": {
         "recognition": {
             "type": "TemplateMatch",
@@ -19,7 +19,7 @@
                     "public/home_pressed.png",
                     "public/home_background.png"
                 ],
-                "roi" : [1210,3,59,45]
+                "roi" : [1210, 3, 59, 45]
             }
         },
         "next": [
@@ -44,7 +44,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template" : "public/home_check.png",
-                "roi" : [843,20,30,38]
+                "roi" : [843, 20, 30, 38]
             }
         },
         "next": []
@@ -56,7 +56,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template" : "public/bond_rankup.png",
-                "roi" : [514,598,248,47]
+                "roi" : [514, 598, 248, 47]
             }
         },
         "action": {
@@ -71,11 +71,6 @@
     },
     "Check_Bond_Rankup_Return": {
         "next": []
-    },
-
-
-    "Public_Error": {
-        "focus": "Error",
-        "next": []
     }
+    
 }
