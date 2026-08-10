@@ -1,0 +1,234 @@
+{
+    "Schedule_List": {
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "Sechedule_End_Check",
+            "Schedule_1st",
+            "Schedule_2nd",
+            "Schedule_3rd",
+            "Schedule_4th",
+            "Schedule_5th",
+            "Schedule_6th",
+            "Schedule_7th",
+            "Schedule_8th",
+            "Schedule_Next_Aca"
+        ]
+    },
+
+    "Sechedule_End_Check": {
+        "pre_delay": 0,
+        "post_delay": 0,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule/schedule_main_btn.png",
+                "roi" : [182, 675, 55, 26]
+            }
+        },
+        "next": []
+    },
+
+    "Schedule_Next_Aca": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1245, 360, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "next": [
+            "Schedule_Next_Aca_Window"
+        ]
+    },
+    "Schedule_Next_Aca_Window": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule/schedule_all_btn.png",
+                "roi" : [1091, 644, 148, 42]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "target": [1160, 660, 1, 1]
+        },
+        "repeat": 2,
+        "next": [
+            "Schedule_Next_Aca_Window",
+            "Schedule_List"
+        ]
+    },
+
+    "Schedule_1st": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [150, 310, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_2nd": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [495, 310, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_3rd": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [840, 310, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_4th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [150, 460, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_5th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [495, 460, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_6th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [840, 460, 200, 4],
+                "lower": [255, 128, 195],
+                "upper": [255, 128, 195],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_7th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [150, 612, 200, 4],
+                "lower": [240, 128, 190],
+                "upper": [255, 158, 204],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_8th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [495, 612, 200, 4],
+                "lower": [240, 128, 190],
+                "upper": [255, 158, 204],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    },
+    "Schedule_9th": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [840, 612, 200, 4],
+                "lower": [240, 128, 190],
+                "upper": [255, 158, 204],
+                "count": 15
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 2000,
+        "next": [
+            "[JumpBack]Schedule_Start",
+            "Schedule_List"
+        ]
+    }
+}

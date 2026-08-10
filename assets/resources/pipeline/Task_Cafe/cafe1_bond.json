@@ -24,7 +24,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -46,7 +46,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -81,7 +81,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -103,7 +103,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -138,7 +138,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -160,7 +160,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -195,7 +195,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -217,7 +217,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }

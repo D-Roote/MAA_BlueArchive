@@ -6,6 +6,7 @@
         ]
     },
 	"Login_Start": {
+        "anchor": "Login_Task",
         "timeout": 3000,
         "next": [
             "Login_Menu",
@@ -45,8 +46,8 @@
             "type": "TemplateMatch",
             "param": {
                 "template" : [
-                    "login_main/login_menu.png",
-                    "login_main/login_menu_back.png"
+                    "login/login_menu.png",
+                    "login/login_menu_back.png"
                 ],
                 "roi" : [30, 620, 65, 35]
             }
@@ -71,7 +72,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "login_main/login_reward.png",
+                "template" : "login/login_reward.png",
                 "roi" : [678, 90, 343, 81]
             }
         },
@@ -102,7 +103,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "login_main/login_ingame_notice.png",
+                "template" : "login/login_ingame_notice.png",
                 "roi" : [155, 462, 104, 33]
             }
         },
@@ -112,11 +113,13 @@
                 "target": [1111, 123, 1, 1]
             }
         },
+        "post_delay": 3000,
         "next": [
             "Login_Ingame_Notice",
+            "[JumpBack]Expire_Alert",
             "Login_End"
         ]
-    },
+    },    
     "Login_End": {
         "next": []
     }

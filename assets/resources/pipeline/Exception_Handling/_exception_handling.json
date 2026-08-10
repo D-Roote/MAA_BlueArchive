@@ -1,0 +1,14 @@
+{
+    "Exception_Handling": {
+        "next":[
+            "Network_Alert",
+            "Day_Alert"
+        ]
+    },
+    
+    "Stop_Task": {
+        "action": {
+            "type": "StopTask"
+        }
+    }
+}

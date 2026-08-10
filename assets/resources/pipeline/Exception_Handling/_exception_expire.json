@@ -1,0 +1,18 @@
+{
+    "Expire_Alert": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/item_expire_notice.png",
+                "roi" : [423, 203, 436, 78]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 550, 1, 1]
+            }
+        },
+        "next": []
+    }
+}

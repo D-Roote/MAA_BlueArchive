@@ -1,0 +1,19 @@
+{
+    "Get_Reward": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/reward.png",
+                "roi": [508, 128, 264, 69]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [655, 635, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "next": []
+    }
+}

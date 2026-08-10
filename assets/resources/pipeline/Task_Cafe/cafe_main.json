@@ -1,6 +1,7 @@
 {
     "Cafe_Main": {
         "focus": "▶ 카페 보상 수령",
+        "anchor": "Current_Task",
         "next": [
             "Cafe_Main_Click",
             "[JumpBack]Return_Home",
@@ -11,7 +12,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_main_btn.png",
+                "template": "cafe/cafe_main_btn.png",
                 "roi" : [70, 677, 40, 21]
             }
         },
@@ -30,21 +31,21 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_lobby.png",
+                "template" : "cafe/cafe_lobby.png",
                 "roi" : [100, 10, 95, 30]
             }
         },
         "post_delay": 5000,
         "next": [
             "Cafe_New_Visit",
-            "Cafe_Reward_Claim_1"
+            "Cafe_Reward_Window"
         ]
     },
     "Cafe_New_Visit": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_info.png",
+                "template" : "cafe/cafe_info.png",
                 "roi" : [598, 167, 86, 44]
             }
         },
@@ -56,10 +57,10 @@
         },
         "next": [
             "Cafe_New_Visit",
-            "Cafe_Reward_Claim_1"
+            "Cafe_Reward_Window"
         ]
     },
-    "Cafe_Reward_Claim_1": {
+    "Cafe_Reward_Window": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -68,16 +69,16 @@
         },
         "repeat": 2,
         "next": [
-            "Cafe_Reward_Claim_2",
+            "Cafe_Reward_Enabled",
             "Cafe_Return_Lobby",
-            "Cafe_Reward_Claim_1"
+            "Cafe_Reward_Window"
         ]
     },
-    "Cafe_Reward_Claim_2": {
+    "Cafe_Reward_Enabled": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_reward_claim.png",
+                "template" : "cafe/cafe_reward_claim.png",
                 "roi" : [600, 507, 85, 77]
             }
         },
@@ -89,7 +90,7 @@
         },
         "repeat": 2,
         "next": [
-            "Cafe_Reward_Claim_2",
+            "Cafe_Reward_Enabled",
             "Cafe_Reward_Full",
             "Cafe_Reward_Claimed"
         ]
@@ -98,16 +99,17 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_reward_claimed.png",
-                "roi" : [691, 331, 60, 74]
+                "template": "public/reward.png",
+                "roi": [508, 128, 264, 69]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [640, 680, 1, 1]
+                "target": [655, 635, 1, 1]
             }
         },
+        "repeat": 2,
         "pre_delay" : 3000,
         "next": [
             "Cafe_Reward_Claimed",
@@ -133,7 +135,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_after_reward.png",
+                "template" : "cafe/cafe_after_reward.png",
                 "roi" : [587, 504, 111, 52]
             }
         },
@@ -153,7 +155,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_remain_notice.png",
+                "template" : "cafe/cafe_remain_notice.png",
                 "roi" : [600, 143, 79, 58]
             }
         },
@@ -172,7 +174,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_full_notice.png",
+                "template" : "cafe/cafe_full_notice.png",
                 "roi" : [595, 119, 91, 56]
             }
         },
@@ -198,11 +200,7 @@
             "Cafe_End"
         ]
     },
-    "Cafe_End": {
-        "next" : [
-            "Return_Home"
-        ]
-    },
+
 
 
     "Cafe_Bif_1": {
@@ -234,7 +232,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template" : "cafe_main/cafe_info.png",
+                "template" : "cafe/cafe_info.png",
                 "roi" : [598, 167, 86, 44]
             }
         },
@@ -248,6 +246,13 @@
             "Cafe_Second_New_Visit",
             "Cafe_Second_Bond_NW"
         ]
-    }
+    },
 
+
+
+    "Cafe_End": {
+        "next" : [
+            "Return_Home"
+        ]
+    }
 }

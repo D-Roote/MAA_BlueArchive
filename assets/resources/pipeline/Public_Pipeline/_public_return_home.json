@@ -1,15 +1,4 @@
 {
-    "Center_Click": {
-        "action": {
-            "type":"LongPress",
-            "param": {
-                "target": [640, 360, 1, 1]
-            }
-        },
-        "next": []
-    },
-
-    
     "Return_Home": {
         "recognition": {
             "type": "TemplateMatch",
@@ -17,16 +6,12 @@
                 "template": [
                     "public/home.png",
                     "public/home_pressed.png",
-                    "public/home_background.png"
+                    "public/home_background.png",
+                    "public/home_background_2nd.png"
                 ],
                 "roi" : [1210, 3, 59, 45]
             }
         },
-        "next": [
-            "Return_Home_Click"
-        ]
-    },
-    "Return_Home_Click": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -34,6 +19,11 @@
             }
         },
         "repeat": 3,
+        "next": [
+            "Return_Home_Repeat"
+        ]
+    },
+    "Return_Home_Repeat": {     
         "next": [
             "Return_Home_Check",
             "Return_Home"
@@ -43,34 +33,29 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
+                "template": [
+                    "public/home.png",
+                    "public/home_pressed.png",
+                    "public/home_background.png",
+                    "public/home_background_2nd.png"
+                ],
+                "roi" : [1210, 3, 59, 45]
+            }
+        },
+        "inverse": true,
+        "next": []
+    },
+
+
+
+    "Return_Home_Check_NOTUSED": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
                 "template" : "public/home_check.png",
                 "roi" : [843, 20, 30, 38]
             }
         },
         "next": []
-    },
-
-
-    "Check_Bond_Rankup": {
-        "recognition": {
-            "type": "TemplateMatch",
-            "param": {
-                "template" : "public/bond_rankup.png",
-                "roi" : [514, 598, 248, 47]
-            }
-        },
-        "action": {
-            "type": "LongPress"
-        },
-        "timeout": 5000,
-        "post_delay": 1000,
-        "next": [
-            "Check_Bond_Rankup",
-            "Check_Bond_Rankup_Return"
-        ]
-    },
-    "Check_Bond_Rankup_Return": {
-        "next": []
     }
-    
 }

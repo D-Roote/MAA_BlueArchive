@@ -7,6 +7,7 @@ evn/
 #User Config
 assets/user/
 assets/resources/config
+assets/resources/debug
 
 #Cache
 __pycache__/
