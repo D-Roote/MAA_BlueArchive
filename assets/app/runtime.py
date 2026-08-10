@@ -225,16 +225,16 @@ class AppRuntime:
         
         user32 = ctypes.windll.user32
 
-        self._resize_window_for_task(1280, 720)
-
-        if minimize_window and self._target_hwnd:
-            user32.SetForegroundWindow(self._target_hwnd)
-            time.sleep(0.1)
-            
-            user32.ShowWindow(self._target_hwnd, 6)
-
         try:
-            last_task = None
+            self._resize_window_for_task(1280, 720)
+
+            if minimize_window and self._target_hwnd:
+                user32.SetForegroundWindow(self._target_hwnd)
+                time.sleep(0.1)
+
+                user32.ShowWindow(self._target_hwnd, 6)
+
+            jobs = []  # (entry, job) 쌍을 순서대로 보관
             executed_entries = []
 
             for entry, override_data in execution_queue:
@@ -249,14 +249,35 @@ class AppRuntime:
                     override_param = None
 
                 if override_param:
-                    last_task = self.tasker.post_task(entry, override_param)
+                    job = self.tasker.post_task(entry, override_param)
                 else:
-                    last_task = self.tasker.post_task(entry)
-                    
+                    job = self.tasker.post_task(entry)
+
+                jobs.append((entry, job))
                 executed_entries.append(entry)
 
-            if last_task:
-                last_task.wait()
+            failed_entries = []
+            if jobs:
+                # Tasker는 post_task 호출 순서대로 내부 큐에서 순차 실행하므로,
+                # 마지막 job을 기다리면 그 이전의 모든 job도 이미 완료된 상태다.
+                _, last_job = jobs[-1]
+                last_job.wait()
+
+                # 실제 maa.job.Job 클래스 소스 기준: get()이 아니라
+                # job.succeeded 프로퍼티(내부적으로 job.status.succeeded)로 판단한다.
+                for entry, job in jobs:
+                    try:
+                        if not job.succeeded:
+                            failed_entries.append(entry)
+                    except Exception:
+                        failed_entries.append(entry)
+
+            if failed_entries:
+                return (
+                    False,
+                    f"Some tasks failed: {', '.join(failed_entries)} "
+                    f"(all executed: {', '.join(executed_entries)})"
+                )
 
             return True, f"All tasks finished: {', '.join(executed_entries)}"
         finally:
@@ -317,5 +338,11 @@ class LogSinkFocus(ContextEventSink):
         if not content:
             return
 
-        rendered = content.format(**details)
+        try:
+            rendered = content.format(**details)
+        except Exception:
+            # focus 템플릿에 details에 없는 플레이스홀더가 있는 등 포맷 문법 오류.
+            # 콜백 스레드로 예외를 전파시키지 않고, 원본 템플릿을 그대로 표시한다.
+            rendered = content
+
         self._emit(rendered)
