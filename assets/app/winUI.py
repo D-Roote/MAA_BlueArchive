@@ -20,6 +20,22 @@ UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
 
 
+def find_switch_cases(cases):
+    """PI V2 스펙: switch는 case.name이 Yes/yes/Y/y 중 하나, No/no/N/n 중 하나인
+    두 case로 구성됨. 각각의 case 이름(원본 표기 그대로)을 찾아 반환한다."""
+    yes_names = {"yes", "y"}
+    no_names = {"no", "n"}
+    yes_case_name = None
+    no_case_name = None
+    for case in cases:
+        name = case.get("name", "")
+        if name.lower() in yes_names:
+            yes_case_name = name
+        elif name.lower() in no_names:
+            no_case_name = name
+    return yes_case_name, no_case_name
+
+
 # 동적 List 클래스
 class OptionItemWidget(QWidget):
     def __init__(self, task_data, task_options, on_setting_clicked_callback, on_checkbox_toggled_callback, parent=None):
@@ -29,12 +45,29 @@ class OptionItemWidget(QWidget):
         self.task_options = task_options 
         
         self.selected_options = {}
-        for opt in self.task_options:
-            default_val = opt.get("default")
-            if default_val:
-                self.selected_options[opt["name"]] = [default_val]
+        for opt_name, opt in self.task_options:
+            opt_type = opt.get("type", "select")
+            default_case = opt.get("default_case")
+
+            if opt_type == "switch":
+                # switch는 항상 Yes/No 둘 중 하나가 명시적으로 선택된 상태여야
+                # build_execution_queue에서 No의 pipeline_override(있다면)도
+                # 정확히 조회될 수 있음. default_case가 없으면 No를 기본값으로 한다.
+                yes_case_name, no_case_name = find_switch_cases(opt.get("cases", []))
+                if default_case and default_case == yes_case_name:
+                    self.selected_options[opt_name] = [yes_case_name]
+                elif no_case_name is not None:
+                    self.selected_options[opt_name] = [no_case_name]
+                else:
+                    self.selected_options[opt_name] = []
+            elif isinstance(default_case, list):
+                # checkbox 타입: default_case가 이미 배열
+                self.selected_options[opt_name] = list(default_case)
+            elif default_case:
+                # select 타입: default_case가 단일 문자열
+                self.selected_options[opt_name] = [default_case]
             else:
-                self.selected_options[opt["name"]] = []
+                self.selected_options[opt_name] = []
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 5, 2)
@@ -101,7 +134,28 @@ class DragDropListWidget(QListWidget):
     def dropEvent(self, event):
         self.drag_line_y = -1
         self.viewport().update()
+
+        # InternalMove는 내부적으로 QListWidgetItem을 재구성할 수 있어
+        # setItemWidget()으로 붙인 커스텀 위젯이 유실될 위험이 있음.
+        # 드롭 전 entry(UserRole 데이터) -> 위젯 매핑을 저장해두고,
+        # 드롭 후 각 아이템의 entry를 기준으로 정확히 재부착한다.
+        widget_by_entry = {}
+        for i in range(self.count()):
+            item = self.item(i)
+            widget = self.itemWidget(item)
+            entry = item.data(Qt.UserRole)
+            if widget is not None and entry is not None:
+                widget_by_entry[entry] = widget
+
         super().dropEvent(event)
+
+        for i in range(self.count()):
+            item = self.item(i)
+            entry = item.data(Qt.UserRole)
+            if self.itemWidget(item) is None and entry in widget_by_entry:
+                widget = widget_by_entry[entry]
+                self.setItemWidget(item, widget)
+                item.setSizeHint(widget.sizeHint())
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -290,7 +344,8 @@ class MainWindow(QMainWindow):
         target_layout.setStretchFactor(self.option_list_widget, 1)
 
         raw_tasks = self.runtime.interface.get("task", [])
-        options_dict = {opt["name"]: opt for opt in self.runtime.interface.get("option", [])}
+        # PI V2 스펙: option은 record<string, object> (키가 옵션 이름)
+        options_dict = self.runtime.interface.get("option", {})
         
         task_dict = {t["entry"]: t for t in raw_tasks}
 
@@ -313,13 +368,15 @@ class MainWindow(QMainWindow):
         def add_task_widget(task_data, is_checked, saved_options):
             item = QListWidgetItem()
             item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
+            # 드래그앤드롭 후 위젯을 entry 기준으로 정확히 재매칭하기 위한 식별자
+            item.setData(Qt.UserRole, task_data["entry"])
             self.option_list_widget.addItem(item)
             
             task_options = []
             if "option" in task_data:
                 for opt_name in task_data["option"]:
                     if opt_name in options_dict:
-                        task_options.append(options_dict[opt_name])
+                        task_options.append((opt_name, options_dict[opt_name]))
 
             custom_widget = OptionItemWidget(
                 task_data, 
@@ -370,11 +427,10 @@ class MainWindow(QMainWindow):
             if child.widget():
                 child.widget().deleteLater()
 
-        for opt in task_options:
-            opt_name = opt["name"]
+        for opt_name, opt in task_options:
             opt_type = opt.get("type", "select")
             
-            title_label = QLabel(f"[{opt.get('label', opt['name'])}]")
+            title_label = QLabel(f"[{opt.get('label', opt_name)}]")
             title_label.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 10px;")
             title_label.setWordWrap(True)
             layout.addWidget(title_label)
@@ -439,10 +495,14 @@ class MainWindow(QMainWindow):
                     layout.addWidget(row_widget)
 
             elif opt_type == "switch":
-                if cases:
-                    case = cases[0]
-                    case_name = case["name"]
-                    
+                yes_case_name, no_case_name = find_switch_cases(cases)
+                # 화면에는 Yes case 하나만 체크박스로 표시 (기존 UX 유지).
+                # No case는 화면에 보이지 않지만, 체크 해제 시 selected_options에
+                # 명시적으로 기록되어 No의 pipeline_override(있다면)도 정확히 적용됨.
+                yes_case = next((c for c in cases if c.get("name") == yes_case_name), None)
+                if yes_case_name is not None:
+                    case_label_text = yes_case.get('label', yes_case_name) if yes_case else yes_case_name
+
                     row_widget = QWidget()
                     row_layout = QHBoxLayout(row_widget)
                     row_layout.setContentsMargins(0, 2, 0, 2)
@@ -450,19 +510,19 @@ class MainWindow(QMainWindow):
 
                     # 기능은 CheckBox와 동일 (추후 스타일시트로 토글 모양 변경 가능)
                     switch_cb = QCheckBox("")
-                    
-                    if case_name in item_widget.selected_options.get(opt_name, []):
+
+                    if yes_case_name in item_widget.selected_options.get(opt_name, []):
                         switch_cb.setChecked(True)
-                    
-                    case_label = QLabel(case.get('label', case_name))
+
+                    case_label = QLabel(case_label_text)
                     case_label.setStyleSheet("background: transparent;")
-                    case_label.setWordWrap(True) 
-                    
-                    def make_switch_slot(w, o_name, c_name):
-                        return lambda checked: self.update_widget_option_checkbox(w, o_name, c_name, checked)
-                    
-                    switch_cb.toggled.connect(make_switch_slot(item_widget, opt_name, case_name))
-                    
+                    case_label.setWordWrap(True)
+
+                    def make_switch_slot(w, o_name, y_name, n_name):
+                        return lambda checked: self.update_widget_option_switch(w, o_name, y_name, n_name, checked)
+
+                    switch_cb.toggled.connect(make_switch_slot(item_widget, opt_name, yes_case_name, no_case_name))
+
                     row_layout.addWidget(switch_cb)
                     row_layout.addWidget(case_label, 1)
                     layout.addWidget(row_widget)
@@ -488,6 +548,15 @@ class MainWindow(QMainWindow):
             if case_name in widget.selected_options[opt_name]:
                 widget.selected_options[opt_name].remove(case_name)
 
+    def update_widget_option_switch(self, widget, opt_name, yes_case_name, no_case_name, is_checked):
+        # switch는 항상 Yes 또는 No 둘 중 하나가 명시적으로 선택된 상태를 유지한다.
+        # (체크 해제 시 selected_options가 비어버리면 build_execution_queue에서
+        #  옵션 자체가 스킵되어 No case의 pipeline_override가 영영 적용될 수 없음)
+        if is_checked and yes_case_name is not None:
+            widget.selected_options[opt_name] = [yes_case_name]
+        elif not is_checked and no_case_name is not None:
+            widget.selected_options[opt_name] = [no_case_name]
+
     def check_start_button_state(self):
         any_checked = False
         for i in range(self.option_list_widget.count()):
@@ -509,8 +578,7 @@ class MainWindow(QMainWindow):
                 task_entry = widget_in_item.task_data["entry"]
                 override_params = {}
                 
-                for opt in widget_in_item.task_options:
-                    opt_name = opt["name"]
+                for opt_name, opt in widget_in_item.task_options:
                     selected_cases = widget_in_item.selected_options.get(opt_name, [])
                     
                     if not selected_cases:
