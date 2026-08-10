@@ -9,10 +9,19 @@ assets/user/
 assets/resources/config
 assets/resources/debug
 
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer Logs
+pip-log.txt
+pip-delete-this-directory.txt
+
 #Cache
 __pycache__/
 assets/**/__pycache__/
 assets/**/*.pyc
+*$py.class
 *.py[cod]
 *.pyd
 
