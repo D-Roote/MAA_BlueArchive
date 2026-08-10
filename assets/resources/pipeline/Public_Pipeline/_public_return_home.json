@@ -1,0 +1,61 @@
+{
+    "Return_Home": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "public/home.png",
+                    "public/home_pressed.png",
+                    "public/home_background.png",
+                    "public/home_background_2nd.png"
+                ],
+                "roi" : [1210, 3, 59, 45]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1240, 30, 1, 1]
+            }
+        },
+        "repeat": 3,
+        "next": [
+            "Return_Home_Repeat"
+        ]
+    },
+    "Return_Home_Repeat": {     
+        "next": [
+            "Return_Home_Check",
+            "Return_Home"
+        ]
+    },
+    "Return_Home_Check": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "public/home.png",
+                    "public/home_pressed.png",
+                    "public/home_background.png",
+                    "public/home_background_2nd.png"
+                ],
+                "roi" : [1210, 3, 59, 45]
+            }
+        },
+        "inverse": true,
+        "next": []
+    },
+
+
+
+    "Return_Home_Check_NOTUSED": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "public/home_check.png",
+                "roi" : [843, 20, 30, 38]
+            }
+        },
+        "next": []
+    }
+}

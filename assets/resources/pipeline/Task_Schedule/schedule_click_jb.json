@@ -1,0 +1,64 @@
+{
+    "Schedule_Start": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule/schedule_reward_list.png",
+                "roi" : [307, 307, 670, 39]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [650, 550, 1, 1]
+            }
+        },
+        "post_delay": 1000,
+        "next": [
+            "Schedule_OOT",
+            "[JumpBack]Check_Bond_Rankup",
+            "Schedule_Report",
+            "Schedule_Start"
+        ]
+    },
+    "Schedule_Report": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule/schedule_report.png",
+                "roi" : [557, 124, 167, 34]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 560, 1, 1]
+            }
+        },
+        "next": [
+            "Schedule_Report",
+            "Schedule_Report_End"
+        ]
+    },
+    "Schedule_Report_End": {
+        "next": []
+    },
+
+    "Schedule_OOT": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "schedule/schedule_oot.png",
+                "roi" : [438, 232, 401, 31]
+            }
+        },
+        "next": [
+            "Schedule_End_Repeat"
+        ]
+    },
+    "Schedule_End_Repeat": {
+        "next": [
+            "Return_Home"
+        ]
+    }
+}

@@ -1,23 +1,18 @@
 {
     "Schedule_Main": {
         "focus": "▶ 스케쥴 작업",
+        "anchor": "Current_Task",
         "next" : [
             "Schedule_Main_Click",
-            {
-                "name": "Return_Home",
-                "jump_back": true
-            },
-            {
-                "name": "Center_Click",
-                "jump_back": true
-            }
+            "[JumpBack]Return_Home",
+            "[JumpBack]Center_Click"
         ]
     },
     "Schedule_Main_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_main_btn.png",
+                "template": "schedule/schedule_main_btn.png",
                 "roi" : [182, 675, 55, 26]
             }
         },
@@ -36,7 +31,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_lobby.png",
+                "template": "schedule/schedule_lobby.png",
                 "roi" : [99, 8, 122, 33]
             }
         },
@@ -46,6 +41,7 @@
                 "target": [1000, 200, 1, 1]
             }
         },
+        "post_delay": 1000,
         "next": [
             "Schedule_Check_List_Window",
             "Schedule_Check_Lobby"
@@ -55,7 +51,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_all_btn.png",
+                "template": "schedule/schedule_all_btn.png",
                 "roi" : [1091, 644, 148, 42]
             }
         },
@@ -73,7 +69,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_list_11.png",
+                "template": "schedule/schedule_list_3.png",
                 "roi" : [1002, 95, 238, 37]
             }
         },
@@ -93,7 +89,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_all_btn.png",
+                "template": "schedule/schedule_all_btn.png",
                 "roi" : [1091, 644, 148, 42]
             }
         },
@@ -110,12 +106,13 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule_main/schedule_list_window.png",
+                "template": "schedule/schedule_list_window.png",
                 "roi" : [560, 85, 162, 35]
             }
         },
+        "post_delay": 1000,
         "next": [
-
+            "Schedule_List"
         ]
     }
 }

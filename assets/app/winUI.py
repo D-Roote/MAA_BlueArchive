@@ -3,7 +3,7 @@ from datetime import datetime
 import json
 import cv2
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
@@ -126,6 +126,8 @@ class MainWindow(QMainWindow):
         qss_path = Path(__file__).resolve().parent.parent / "pySide6" / QSS_FILENAME
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
+        
+        self.ui.tabWidget.setUsesScrollButtons(False)
 
         if qss_path.exists():
             with open(qss_path, "r", encoding="utf-8") as f:
@@ -148,6 +150,56 @@ class MainWindow(QMainWindow):
 
     def setup_connections(self):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
+
+    def update_tab_widths(self):
+        tab_bar = self.ui.tabWidget.tabBar()
+        count = tab_bar.count()
+        if count == 0:
+            return
+
+
+        # border(좌우 1px씩) + padding(좌우 25px씩)가
+        # width 지정값 위에 추가로 그려지므로, 미리 빼야 실제 렌더링 폭이
+        # 등분값과 정확히 일치함 (안 빼면 탭들이 넘쳐서 스크롤 화살표가 자동 생성됨)
+        EXTRA_PER_TAB = 52  # border 2 + padding 50
+
+        total_width = self.ui.tabWidget.width()
+        target_width = total_width // count
+        tab_width = max(target_width - EXTRA_PER_TAB, 20)
+
+        tab_bar.setStyleSheet(f"""
+            QTabBar::tab {{
+                background-color: #E6EDF5;
+                color: #475569;
+                padding: 10px 25px;
+                border: 1px solid #E2E8F0;
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                width: {tab_width}px;
+            }}
+            QTabBar::tab:last {{
+                margin-right: 0px;
+            }}
+            QTabBar::tab:selected {{
+                background-color: #00AEEF;
+                color: #FFFFFF;
+                font-weight: bold;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: #DDE8F5;
+            }}
+        """)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 창이 실제로 표시되는 시점까지도 레이아웃이 100% 확정되지 않을 수 있어
+        # 이벤트 루프가 한 바퀴 돈 직후로 한 박자 미룸
+        QTimer.singleShot(0, self.update_tab_widths)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_tab_widths()
 
     def append_log(self, message):
         current_time = datetime.now().strftime("%H:%M:%S")

@@ -1,0 +1,20 @@
+{
+    "Day_Alert": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/day_alert.png",
+                "roi": [492, 285, 293, 111]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 500, 1, 1]
+            }
+        },
+        "next": [
+            "[Anchor]Current_Task"
+        ]
+    }
+}

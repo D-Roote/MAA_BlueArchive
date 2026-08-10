@@ -15,10 +15,7 @@
     },
     "Cafe_Bond_NW_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_NW_Click",
             "Cafe_Bond_NW_Empty"
         ]
@@ -27,7 +24,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -49,7 +46,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -75,10 +72,7 @@
     },
     "Cafe_Bond_SW_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_SW_Click",
             "Cafe_Bond_SW_Empty"
         ]
@@ -87,7 +81,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -109,7 +103,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -135,10 +129,7 @@
     },
     "Cafe_Bond_SE_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_SE_Click",
             "Cafe_Bond_SE_Empty"
         ]
@@ -147,7 +138,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -169,7 +160,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -195,10 +186,7 @@
     },
     "Cafe_Bond_NE_Hub": {
         "next": [
-            {
-                "name": "Check_Bond_Rankup",
-                "jump_back": true
-            },
+            "[JumpBack]Check_Bond_Rankup",
             "Cafe_Bond_NE_Click",
             "Cafe_Bond_NE_Empty"
         ]
@@ -207,7 +195,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -229,7 +217,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe_main/cafe_bond.png",
+                "template": "cafe/cafe_bond.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -237,10 +225,7 @@
         "inverse": true,
         "next": [
             "Cafe_Bif_2",
-            {
-                "name": "Center_Click",
-                "jump_back": true
-            }
+            "[JumpBack]Center_Click"
         ]
     }
 }

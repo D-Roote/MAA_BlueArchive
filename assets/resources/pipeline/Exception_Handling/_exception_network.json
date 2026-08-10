@@ -1,0 +1,54 @@
+{
+        "Network_Alert": {
+        "on_error": [],
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/network_alert.png",
+                "roi" : [714, 483, 106, 74]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [770, 500, 1, 1]
+            }
+        },
+        "repeat": 2,
+        "pre_delay": 0,
+        "post_delay": 10000,
+        "next": [
+            "No_Network_Alert",
+            "[Anchor]Current_Task"
+        ]
+    },
+
+    "No_Network_Alert": {
+        "on_error": [],
+        "max_hit": 12,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/no_network_alert.png",
+                "roi" : [398, 260, 480, 294]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [650, 600, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": [
+            "No_Network_Alert",
+            "Stop_Task_By_Network"
+        ]
+    },
+    "Stop_Task_By_Network": {
+        "focus": "인터넷 연결에 문제가 발생하였습니다.",
+        "next": [
+            "Stop_Task"
+        ]
+    }
+}
