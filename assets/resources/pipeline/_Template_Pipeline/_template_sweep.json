@@ -1,0 +1,107 @@
+{
+    "_Check_Sweep_Window": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/sweep_window.png",
+                "roi" : [742, 208, 386, 46]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1100, 300, 1, 1]
+            }
+        },
+        "next": [
+            "_Check_Sweep_Count",
+            "_Check_Sweep_Window"
+        ]
+    },
+    "_Check_Sweep_Count": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [1054, 280, 58, 46],
+                "lower": [205, 205, 205],
+                "upper": [205, 205, 205],
+                "count": 100
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1000, 400, 1, 1]
+            }
+        },
+        "next": [
+            "_Confirm_Sweep",
+            "_No_Ticket",
+            "_Check_Sweep_Count"
+        ]
+    },
+    "_Confirm_Sweep": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [657, 481, 219, 44],
+                "lower": [110, 217, 253],
+                "upper": [119, 222, 255],
+                "count": 5000
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 500,
+        "next": [
+            "_Sweep_Reward_Click"
+        ]
+    },
+    "_Sweep_Reward_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [650, 450, 1, 1]
+            }
+        },
+        "next": [
+            "_Sweep_Reward_Click_2"
+        ]
+    },
+    "_Sweep_Reward_Click_2": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [650, 555, 1, 1]
+            }
+        },
+        "next": [
+            "_Check_Sweep_End",
+            "_Sweep_Reward_Click"
+        ]
+    },
+    "_No_Ticket": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/sweep_shortage.png",
+                "roi" : [619, 398, 110, 35]
+            }
+        },
+        "next": []
+    },
+    "_Check_Sweep_End": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/sweep_window.png",
+                "roi" : [742, 208, 386, 46]
+            }
+        },
+        "next": []
+    }
+}

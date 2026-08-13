@@ -16,7 +16,7 @@
         "post_delay": 1000,
         "next": [
             "Schedule_OOT",
-            "[JumpBack]Check_Bond_Rankup",
+            "[JumpBack]Check_Relationship_Rankup",
             "Schedule_Report",
             "Schedule_Start"
         ]

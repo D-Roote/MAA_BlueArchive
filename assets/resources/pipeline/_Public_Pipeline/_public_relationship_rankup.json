@@ -1,0 +1,27 @@
+{
+    "Check_Relationship_Rankup": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template" : "public/relationship_rankup.png",
+                "roi" : [514, 598, 248, 47]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 500, 1, 1]
+            }
+        },
+        "timeout": 10000,
+        "pre_delay": 300,
+        "post_delay": 0,
+        "next": [
+            "Check_Relationship_Rankup",
+            "Check_Relationship_Rankup_Return"
+        ]
+    },
+    "Check_Relationship_Rankup_Return": {
+        "next": []
+    }
+}

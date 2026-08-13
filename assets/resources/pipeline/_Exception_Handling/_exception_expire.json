@@ -1,0 +1,35 @@
+{
+    "Expire_Alert": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/item_expire_notice.png",
+                "roi" : [423, 203, 436, 78]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 550, 1, 1]
+            }
+        },
+        "next": []
+    },
+
+    "Expired_Alert": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/item_expired_notice.png",
+                "roi" : [375, 235, 521, 37]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 520, 1, 1]
+            }
+        },
+        "next": []
+    }
+}

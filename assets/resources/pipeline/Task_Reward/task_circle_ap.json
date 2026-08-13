@@ -1,0 +1,91 @@
+{
+    "Reward_AP_Main": {
+        "focus": "▶ 서클 AP 수령",
+        "next": [
+            "Reward_Circle_Main_Click",
+            "[JumpBack]Return_Home",
+            "[JumpBack]Center_Click"
+        ]
+    },
+    "Reward_Circle_Main_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_circle_main_btn.png",
+                "roi" : [539, 678, 39, 20]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [560, 665, 1, 1]
+            }
+        },
+        "post_delay": 500,
+        "next": [
+            "Reward_Circle_Click",
+            "Reward_Circle_Main_Click"
+        ]
+    },
+    "Reward_Circle_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_circle_btn.png",
+                "roi" : [192, 309, 122, 49]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [300, 400, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Circle_Lobby",
+            "Reward_Circle_Click"
+        ]
+    },
+    "Reward_Circle_Lobby": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_circle_lobby.png",
+                "roi" : [101, 5, 95, 35]
+            }
+        },
+        "timeout": 5000,
+        "on_error": [
+            "Return_Home"
+        ],
+        "next": [
+            "Reward_Circle_Claim"
+        ]
+    },
+    "Reward_Circle_Claim": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [542, 464, 197, 56],
+                "lower": [110, 217, 253],
+                "upper": [119, 222, 255],
+                "count": 100
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [650, 500, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Circle_Claim",
+            "Reward_Circle_End"
+        ]
+    },
+    "Reward_Circle_End": {
+        "next": [
+            "Return_Home"
+        ]
+    }
+}

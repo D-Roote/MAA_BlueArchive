@@ -1,16 +1,16 @@
 {
-    "Expire_Alert": {
+    "Lobby_Memorial_Check": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "public/item_expire_notice.png",
-                "roi" : [423, 203, 436, 78]
+                "template": "public/memorial_skip.png",
+                "roi" : [537, 318, 204, 37]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [640, 550, 1, 1]
+                "target": [765, 500, 1, 1]
             }
         },
         "next": []

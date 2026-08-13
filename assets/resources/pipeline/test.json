@@ -1,15 +1,25 @@
 {
+    
     "Test1": {
+        "timeout": 5000,
+        "next": [
+            "Test2"
+        ]
+
+    },
+    "Test2": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "public/bond_rankup.png",
-                "roi" : [492,285,293,111],
-                "threshold": 0.7
+                "template": "public/home.png",
+                "roi": [492,285,293,111]
             }
         },
+        "action": {
+            "type": "LongPress"
+        },
         "next": [
-            "Test1"
+            
         ]
     }
 }

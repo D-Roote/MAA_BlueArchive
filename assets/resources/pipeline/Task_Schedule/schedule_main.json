@@ -69,7 +69,7 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "schedule/schedule_list_3.png",
+                "template": "schedule/schedule_list_2.png",
                 "roi" : [1002, 95, 238, 37]
             }
         },

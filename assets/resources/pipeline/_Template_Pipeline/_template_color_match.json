@@ -1,0 +1,14 @@
+{
+    "_Color_Match": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [542, 464, 197, 56],
+                "lower": [110, 217, 253],
+                "upper": [119, 222, 255],
+                "count": 100
+            }
+        },
+        "next": ["_Color_Match"]
+    }
+}

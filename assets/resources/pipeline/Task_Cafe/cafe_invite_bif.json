@@ -1,0 +1,48 @@
+{
+    "Cafe_Invite": {
+        "max_hit": 1,
+        "next": [
+            "[JumpBack]Cafe_Start_Invite",
+            "Cafe_Check_No_Invite"
+        ]
+    },
+    "Cafe_Second_Invite": {
+        "next": [
+            "[JumpBack]Cafe_Start_Invite",
+            "Cafe_Second_Check_No_Invite"
+        ]
+    },
+
+
+
+    "Cafe_Check_No_Invite": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [870, 637, 35, 28],
+                "lower": [248, 154, 200],
+                "upper": [254, 160, 206],
+                "count": 50
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bif_1"
+        ]
+    },
+    "Cafe_Second_Check_No_Invite": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [870, 637, 35, 28],
+                "lower": [248, 154, 200],
+                "upper": [254, 160, 206],
+                "count": 50
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Cafe_Bif_2"
+        ]
+    }
+}

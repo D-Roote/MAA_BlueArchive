@@ -1,5 +1,5 @@
 {
-    "Cafe_Bond_NW": {
+    "Cafe_Second_Interaction_NW": {
         "action": {
             "type": "Swipe",
             "param": {
@@ -10,21 +10,21 @@
         },
         "repeat": 10,
         "next": [
-            "Cafe_Bond_NW_Hub"
+            "Cafe_Second_Interaction_NW_Hub"
         ]
     },
-    "Cafe_Bond_NW_Hub": {
+    "Cafe_Second_Interaction_NW_Hub": {
         "next": [
-            "[JumpBack]Check_Bond_Rankup",
-            "Cafe_Bond_NW_Click",
-            "Cafe_Bond_NW_Empty"
+            "[JumpBack]Check_Relationship_Rankup",
+            "Cafe_Second_Interaction_NW_Click",
+            "Cafe_Second_Interaction_NW_Empty"
         ]
     },
-    "Cafe_Bond_NW_Click": {
+    "Cafe_Second_Interaction_NW_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -39,24 +39,24 @@
         "pre_delay": 0,
         "post_delay": 2000,
         "next": [
-            "Cafe_Bond_NW_Hub"
+            "Cafe_Second_Interaction_NW_Hub"
         ]
     },
-    "Cafe_Bond_NW_Empty": {
+    "Cafe_Second_Interaction_NW_Empty": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
         },
         "inverse": true,
         "next": [
-            "Cafe_Bond_SW"
+            "Cafe_Second_Interaction_SW"
         ]
     },
-    "Cafe_Bond_SW": {
+    "Cafe_Second_Interaction_SW": {
         "action": {
             "type": "Swipe",
             "param": {
@@ -67,21 +67,21 @@
         },
         "repeat": 10,
         "next": [
-            "Cafe_Bond_SW_Hub"
+            "Cafe_Second_Interaction_SW_Hub"
         ]
     },
-    "Cafe_Bond_SW_Hub": {
+    "Cafe_Second_Interaction_SW_Hub": {
         "next": [
-            "[JumpBack]Check_Bond_Rankup",
-            "Cafe_Bond_SW_Click",
-            "Cafe_Bond_SW_Empty"
+            "[JumpBack]Check_Relationship_Rankup",
+            "Cafe_Second_Interaction_SW_Click",
+            "Cafe_Second_Interaction_SW_Empty"
         ]
     },
-    "Cafe_Bond_SW_Click": {
+    "Cafe_Second_Interaction_SW_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -96,24 +96,24 @@
         "pre_delay": 0,
         "post_delay": 2000,
         "next": [
-            "Cafe_Bond_SW_Hub"
+            "Cafe_Second_Interaction_SW_Hub"
         ]
     },
-    "Cafe_Bond_SW_Empty": {
+    "Cafe_Second_Interaction_SW_Empty": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
         },
         "inverse": true,
         "next": [
-            "Cafe_Bond_SE"
+            "Cafe_Second_Interaction_SE"
         ]
     },
-    "Cafe_Bond_SE": {
+    "Cafe_Second_Interaction_SE": {
         "action": {
             "type": "Swipe",
             "param": {
@@ -124,21 +124,21 @@
         },
         "repeat": 10,
         "next": [
-            "Cafe_Bond_SE_Hub"
+            "Cafe_Second_Interaction_SE_Hub"
         ]
     },
-    "Cafe_Bond_SE_Hub": {
+    "Cafe_Second_Interaction_SE_Hub": {
         "next": [
-            "[JumpBack]Check_Bond_Rankup",
-            "Cafe_Bond_SE_Click",
-            "Cafe_Bond_SE_Empty"
+            "[JumpBack]Check_Relationship_Rankup",
+            "Cafe_Second_Interaction_SE_Click",
+            "Cafe_Second_Interaction_SE_Empty"
         ]
     },
-    "Cafe_Bond_SE_Click": {
+    "Cafe_Second_Interaction_SE_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -153,24 +153,24 @@
         "pre_delay": 0,
         "post_delay": 2000,
         "next": [
-            "Cafe_Bond_SE_Hub"
+            "Cafe_Second_Interaction_SE_Hub"
         ]
     },
-    "Cafe_Bond_SE_Empty": {
+    "Cafe_Second_Interaction_SE_Empty": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
         },
         "inverse": true,
         "next": [
-            "Cafe_Bond_NE"
+            "Cafe_Second_Interaction_NE"
         ]
     },
-    "Cafe_Bond_NE": {
+    "Cafe_Second_Interaction_NE": {
         "action": {
             "type": "Swipe",
             "param": {
@@ -181,21 +181,21 @@
         },
         "repeat": 10,
         "next": [
-            "Cafe_Bond_NE_Hub"
+            "Cafe_Second_Interaction_NE_Hub"
         ]
     },
-    "Cafe_Bond_NE_Hub": {
+    "Cafe_Second_Interaction_NE_Hub": {
         "next": [
-            "[JumpBack]Check_Bond_Rankup",
-            "Cafe_Bond_NE_Click",
-            "Cafe_Bond_NE_Empty"
+            "[JumpBack]Check_Relationship_Rankup",
+            "Cafe_Second_Interaction_NE_Click",
+            "Cafe_Second_Interaction_NE_Empty"
         ]
     },
-    "Cafe_Bond_NE_Click": {
+    "Cafe_Second_Interaction_NE_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
@@ -210,22 +210,21 @@
         "pre_delay": 0,
         "post_delay": 2000,
         "next": [
-            "Cafe_Bond_NE_Hub"
+            "Cafe_Second_Interaction_NE_Hub"
         ]
     },
-    "Cafe_Bond_NE_Empty": {
+    "Cafe_Second_Interaction_NE_Empty": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "cafe/cafe_bond.png",
+                "template": "cafe/cafe_interaction_mark.png",
                 "roi": [0, 125, 1280, 495],
                 "threshold": 0.7
             }
         },
         "inverse": true,
         "next": [
-            "Cafe_Bif_2",
-            "[JumpBack]Center_Click"
+            "Cafe_End"
         ]
     }
 }

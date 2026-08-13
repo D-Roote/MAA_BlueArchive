@@ -35,11 +35,17 @@
             "entry": "Login_Main"
         },
         {
+            "name": "Free_AP",
+            "label": "무료 AP 수령",
+            "entry": "Reward_AP_Main"
+        },
+        {
             "name": "Cafe",
             "label": "카페 보상 수령",
             "entry": "Cafe_Main",
             "option": [
-                "Cafe_Bif_Enable"
+                "Cafe_Bif_Enable",
+                "Cafe_Invite_Enable"
             ]
         },
         {
@@ -50,7 +56,11 @@
         {
             "name": "Bounty",
             "label": "현상수배/학원교류회 소탕",
-            "entry": "Bounty_Main"
+            "entry": "Bounty_Main",
+            "option": [
+                "Bounty_Location_Selection",
+                "AcaEM_Location_Selection"
+            ]
         },
         {
             "name": "Test1",
@@ -69,7 +79,7 @@
             "cases": [
                 {
                     "name": "Yes",
-                    "label": "활성화 (안정성 낮음)",
+                    "label": "활성화",
                     "pipeline_override": {
                         "Cafe_Bif": {
                             "next": [
@@ -84,6 +94,101 @@
                 }
             ],
             "default_case": "Yes"
+        },
+        "Cafe_Invite_Enable": {
+            "label": "카페 초대권 사용",
+            "type": "switch",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "label": "활성화",
+                    "pipeline_override": {
+                        "Cafe_Bif_1": {
+                            "next" : [
+                                "Cafe_Invite",
+                                "Cafe_Interaction_NW"
+                            ]
+                        },
+                        "Cafe_Bif_2": {
+                            "next": [
+                                "Cafe_Second_Invite",
+                                "Cafe_Second_Interaction_NW"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "label": "비활성화"
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "Bounty_Location_Selection": {
+            "label": "현상 수배 의뢰 선택",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Highway",
+                    "label": "고가도로"
+                },
+                {
+                    "name": "DesertTrainWay",
+                    "label": "사막 기찻길",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 300, 1, 1]
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "Classroom",
+                    "label": "교실",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 400, 1, 1]
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Highway"
+        },
+        "AcaEM_Location_Selection": {
+            "label": "학원 선택",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Trinity",
+                    "label": "트리니티"
+                },
+                {
+                    "name": "Gehenna",
+                    "label": "게헨나",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 300, 1, 1]
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "Millennium",
+                    "label": "밀레니엄",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 400, 1, 1]
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Trinity"
         },
         "Test1_Focus_Option": {
             "label": "테스트 포커스 설정",

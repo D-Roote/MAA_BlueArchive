@@ -12,6 +12,7 @@
             "Login_Menu",
             "Login_Reward_Menu",
             "Login_Ingame_Notice",
+            "[JumpBack]Lobby_Memorial_Check",
             "Login_MaxHit_Click_1",
             "Login_End"
         ]
@@ -117,6 +118,7 @@
         "next": [
             "Login_Ingame_Notice",
             "[JumpBack]Expire_Alert",
+            "[JumpBack]Expired_Alert",
             "Login_End"
         ]
     },    
