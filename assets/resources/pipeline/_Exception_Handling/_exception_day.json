@@ -15,7 +15,7 @@
         },
         "next": [
             "Day_Alert",
-            "[Anchor]Current_Task"
+            "Recover_Login_Main"
         ]
     }
 }

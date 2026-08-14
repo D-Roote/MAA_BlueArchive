@@ -1,23 +1,22 @@
 {
-    "Login_Main": {
-        "focus": "▶ 게임 로그인",
+    "Recover_Login_Main": {
         "next": [
-            "Login_Start"
+            "Recover_Login_Start"
         ]
     },
-	"Login_Start": {
-        "anchor": "Login_Task",
+	"Recover_Login_Start": {
+        "anchor": "Recover_Login_Task",
         "timeout": 3000,
         "next": [
-            "Login_Menu",
-            "Login_Reward_Menu",
-            "Login_Ingame_Notice",
-            "Login_MaxHit_Click_1",
+            "Recover_Login_Menu",
+            "Recover_Login_Reward_Menu",
+            "Recover_Login_Ingame_Notice",
             "[JumpBack]Lobby_Memorial_Check",
-            "Login_End"
+            "Recover_Login_MaxHit_Click_1",
+            "Recover_Login_End"
         ]
 	},
-    "Login_MaxHit_Click_1": {
+    "Recover_Login_MaxHit_Click_1": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -27,11 +26,10 @@
         "max_hit": 5,
         "post_delay": 200,
         "next": [
-            "[JumpBack]Lobby_Memorial_Check",
-            "Login_MaxHit_Click_2"
+            "Recover_Login_MaxHit_Click_2"
         ]
     },
-    "Login_MaxHit_Click_2": {
+    "Recover_Login_MaxHit_Click_2": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -40,11 +38,10 @@
         },
         "post_delay": 1000,
         "next": [
-            "[JumpBack]Lobby_Memorial_Check",
-            "Login_Start"
+            "Recover_Login_Start"
         ]
     },
-    "Login_Menu": {
+    "Recover_Login_Menu": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -56,10 +53,10 @@
             }
         },
         "next": [
-            "Login_Menu_Click"
+            "Recover_Login_Menu_Click"
         ]
     },
-    "Login_Menu_Click": {
+    "Recover_Login_Menu_Click": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -67,11 +64,11 @@
             }
         },
         "next": [
-            "Login_Ingame_Notice",
-            "Login_Menu_Click"
+            "Recover_Login_Ingame_Notice",
+            "Recover_Login_Menu_Click"
         ]
     },
-    "Login_Reward_Menu": {
+    "Recover_Login_Reward_Menu": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -86,11 +83,11 @@
             }
         },
         "next": [
-            "Login_Ingame_Notice",
-            "Login_Reward_Menu_Click"
+            "Recover_Login_Ingame_Notice",
+            "Recover_Login_Reward_Menu_Click"
         ]
     },
-    "Login_Reward_Menu_Click": {
+    "Recover_Login_Reward_Menu_Click": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -98,11 +95,11 @@
             }
         },
         "next": [
-            "Login_Ingame_Notice",
-            "Login_Reward_Menu_Click"
+            "Recover_Login_Ingame_Notice",
+            "Recover_Login_Reward_Menu_Click"
         ]
     },
-    "Login_Ingame_Notice": {
+    "Recover_Login_Ingame_Notice": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -118,13 +115,15 @@
         },
         "post_delay": 3000,
         "next": [
-            "Login_Ingame_Notice",
+            "Recover_Login_Ingame_Notice",
             "[JumpBack]Expire_Alert",
             "[JumpBack]Expired_Alert",
-            "Login_End"
+            "Recover_Login_End"
         ]
     },    
-    "Login_End": {
-        "next": []
+    "Recover_Login_End": {
+        "next": [
+            "[Anchor]Current_Task"
+        ]
     }
 }

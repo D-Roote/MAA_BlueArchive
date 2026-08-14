@@ -1,0 +1,139 @@
+{
+    "Reward_Shop_AP_Main": {
+        "focus": "▶ 상점 무료 AP 수령",
+        "next": [
+            "[JumpBack]Return_Home",
+            "Reward_Shop_AP_Click",
+            "[JumpBack]Center_Click"
+        ]
+    },
+    "Reward_Shop_AP_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [970, 35, 1, 1]
+            }
+        },
+        "post_delay": 3000,
+        "next": [
+            "Reward_Shop_AP_Window_Check",
+            "Reward_Shop_AP_Click"
+        ]
+    },
+    "Reward_Shop_AP_Window_Check": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [779, 158, 249, 41],
+                "lower": [169, 224, 244],
+                "upper": [169, 224, 244],
+                "count": 5000
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 1000,
+        "next": [
+            "Reward_Shop_AP_Bought",
+            "Reward_Shop_AP_Buy",
+            "Reward_Shop_AP_Window_Check"
+        ]
+    },
+    "Reward_Shop_AP_Bought": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_already_bought.png",
+                "roi" : [262, 421, 243, 21]
+            }
+        },
+        "next": [
+            "Reward_Shop_AP_End"
+        ]
+    },
+    "Reward_Shop_AP_Buy": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_free_package.png",
+                "roi" : [314, 236, 141, 32]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [384, 484, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Shop_AP_Buy_Confirm",
+            "Reward_Shop_AP_Bought",
+            "Reward_Shop_AP_Buy"
+        ]
+    },
+    "Reward_Shop_AP_Buy_Confirm": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [665, 566, 188, 59],
+                "lower": [235,225,75],
+                "upper": [250, 235, 90],
+                "count": 500
+            }
+        },
+        "action": {
+            "type": "LongPress"
+        },
+        "post_delay": 3000,
+        "next": [
+            "Reward_Shop_AP_Reward",
+            "Reward_Shop_AP_Buy_Confirm"
+        ]
+    },
+    "Reward_Shop_AP_Reward": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/reward.png",
+                "roi": [508, 128, 264, 69]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [655, 635, 1, 1]
+            }
+        },
+        "post_delay": 500,
+        "next": [
+            "Reward_Shop_AP_Reward",
+            "Reward_Shop_AP_End"
+        ]
+    },
+    "Reward_Limit_Full": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_limit_full.png",
+                "roi" : [403, 283, 479, 110]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [640, 500, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Limit_Full",
+            "Reward_Shop_AP_End"
+        ]
+    },
+    "Reward_Shop_AP_End": {
+        "next": [
+            "[JumpBack]Return_Home",
+            "Reward_AP_Main"
+        ]
+    }
+}

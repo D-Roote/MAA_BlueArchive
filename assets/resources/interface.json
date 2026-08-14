@@ -37,7 +37,7 @@
         {
             "name": "Free_AP",
             "label": "무료 AP 수령",
-            "entry": "Reward_AP_Main"
+            "entry": "Reward_Shop_AP_Main"
         },
         {
             "name": "Cafe",
@@ -60,15 +60,6 @@
             "option": [
                 "Bounty_Location_Selection",
                 "AcaEM_Location_Selection"
-            ]
-        },
-        {
-            "name": "Test1",
-            "label": "테스트",
-            "entry": "Test1",
-            "option": [
-                "Test1_Focus_Option",
-                "Test1_Next_Option"
             ]
         }
     ],
@@ -189,46 +180,6 @@
                 }
             ],
             "default_case": "Trinity"
-        },
-        "Test1_Focus_Option": {
-            "label": "테스트 포커스 설정",
-            "type": "select",
-            "cases": [
-                {
-                    "name": "Default",
-                    "label": "기본 텍스트"
-                },
-                {
-                    "name": "Changed Text",
-                    "label": "변경된 텍스트",
-                    "pipeline_override": {
-                        "Test1": {
-                            "focus": "Changed Test1"
-                        }
-                    }
-                }
-            ],
-            "default_case": "Changed Text"
-        },
-        "Test1_Next_Option": {
-            "label": "Next 변경",
-            "type": "switch",
-            "cases": [
-                {
-                    "name": "Yes",
-                    "label": "루프 제거",
-                    "pipeline_override": {
-                        "Test1": {
-                            "next": []
-                        }
-                    }
-                },
-                {
-                    "name": "No",
-                    "label": "루프 유지"
-                }
-            ],
-            "default_case": "No"
         }
     }
 }

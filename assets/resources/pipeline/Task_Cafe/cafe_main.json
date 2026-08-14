@@ -109,8 +109,7 @@
                 "target": [655, 635, 1, 1]
             }
         },
-        "repeat": 2,
-        "pre_delay" : 3000,
+        "pre_delay" : 2000,
         "next": [
             "Cafe_Reward_Claimed",
             "Cafe_Reward_Remain",
@@ -124,8 +123,8 @@
                 "target": [980, 145, 1, 1]
             }
         },
-        "repeat": 3,
-        "repeat_delay": 200,
+        "repeat": 5,
+        "repeat_delay": 50,
         "post_delay": 1000,
         "next": [
             "Cafe_Bif"
@@ -190,19 +189,17 @@
         ]
     },
     "Cafe_Reward_Full_Focus": {
-        "focus":"  ▼ AP가 가득 차 카페 수익 수령 실패",
+        "focus":" ◆ AP가 가득 차 수령 실패",
         "next": [
             "Cafe_Bif"
         ]
     },
+
     "Cafe_Bif": {
         "next": [
             "Cafe_End"
         ]
     },
-
-
-
     "Cafe_Bif_1": {
         "next" : [
             "Cafe_Interaction_NW"
@@ -213,7 +210,6 @@
             "Cafe_Second_Interaction_NW"
         ]
     },
-
     "Cafe_Move_Second": {
         "action": {
             "type": "LongPress",

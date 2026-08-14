@@ -54,7 +54,8 @@
                 "roi" : [101, 5, 95, 35]
             }
         },
-        "timeout": 5000,
+        "timeout": 3000,
+        "post_wait_freezes": 300,
         "on_error": [
             "Return_Home"
         ],
