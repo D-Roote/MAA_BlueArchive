@@ -35,11 +35,17 @@
             "entry": "Login_Main"
         },
         {
+            "name": "Free_AP",
+            "label": "무료 AP 수령",
+            "entry": "Reward_Shop_AP_Main"
+        },
+        {
             "name": "Cafe",
             "label": "카페 보상 수령",
             "entry": "Cafe_Main",
             "option": [
-                "Cafe_Bif_Enable"
+                "Cafe_Bif_Enable",
+                "Cafe_Invite_Enable"
             ]
         },
         {
@@ -50,15 +56,10 @@
         {
             "name": "Bounty",
             "label": "현상수배/학원교류회 소탕",
-            "entry": "Bounty_Main"
-        },
-        {
-            "name": "Test1",
-            "label": "테스트",
-            "entry": "Test1",
+            "entry": "Bounty_Main",
             "option": [
-                "Test1_Focus_Option",
-                "Test1_Next_Option"
+                "Bounty_Location_Selection",
+                "AcaEM_Location_Selection"
             ]
         }
     ],
@@ -69,7 +70,7 @@
             "cases": [
                 {
                     "name": "Yes",
-                    "label": "활성화 (안정성 낮음)",
+                    "label": "활성화",
                     "pipeline_override": {
                         "Cafe_Bif": {
                             "next": [
@@ -85,45 +86,100 @@
             ],
             "default_case": "Yes"
         },
-        "Test1_Focus_Option": {
-            "label": "테스트 포커스 설정",
-            "type": "select",
-            "cases": [
-                {
-                    "name": "Default",
-                    "label": "기본 텍스트"
-                },
-                {
-                    "name": "Changed Text",
-                    "label": "변경된 텍스트",
-                    "pipeline_override": {
-                        "Test1": {
-                            "focus": "Changed Test1"
-                        }
-                    }
-                }
-            ],
-            "default_case": "Changed Text"
-        },
-        "Test1_Next_Option": {
-            "label": "Next 변경",
+        "Cafe_Invite_Enable": {
+            "label": "카페 초대권 사용",
             "type": "switch",
             "cases": [
                 {
                     "name": "Yes",
-                    "label": "루프 제거",
+                    "label": "활성화",
                     "pipeline_override": {
-                        "Test1": {
-                            "next": []
+                        "Cafe_Bif_1": {
+                            "next" : [
+                                "Cafe_Invite",
+                                "Cafe_Interaction_NW"
+                            ]
+                        },
+                        "Cafe_Bif_2": {
+                            "next": [
+                                "Cafe_Second_Invite",
+                                "Cafe_Second_Interaction_NW"
+                            ]
                         }
                     }
                 },
                 {
                     "name": "No",
-                    "label": "루프 유지"
+                    "label": "비활성화"
                 }
             ],
-            "default_case": "No"
+            "default_case": "Yes"
+        },
+        "Bounty_Location_Selection": {
+            "label": "현상 수배 의뢰 선택",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Highway",
+                    "label": "고가도로"
+                },
+                {
+                    "name": "DesertTrainWay",
+                    "label": "사막 기찻길",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 300, 1, 1]
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "Classroom",
+                    "label": "교실",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 400, 1, 1]
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Highway"
+        },
+        "AcaEM_Location_Selection": {
+            "label": "학원 선택",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Trinity",
+                    "label": "트리니티"
+                },
+                {
+                    "name": "Gehenna",
+                    "label": "게헨나",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 300, 1, 1]
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "Millennium",
+                    "label": "밀레니엄",
+                    "pipeline_override": {
+                        "Bounty_Select_Location": {
+                            "action": {
+                                "param": [1000, 400, 1, 1]
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Trinity"
         }
     }
 }

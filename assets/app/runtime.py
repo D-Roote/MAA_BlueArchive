@@ -138,7 +138,7 @@ class AppRuntime:
                 candidates.append(w)
 
         if not candidates:
-            return False, f"블루 아카이브가 실행 중이 아닙니다."
+            return False, f" ᓀ‸ᓂ \n블루 아카이브가 실행 중이 아닙니다."
         
         window = candidates[0]
         self._target_hwnd = window.hwnd

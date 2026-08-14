@@ -1,39 +1,38 @@
 {
-    "Bounty_Main": {
-        "focus": "▶ 현상수배 / 학원교류회 소탕",
+    "AcaEM_Main": {
         "anchor": "Current_Task",
         "next": [
-            "Bounty_Main_Click",
+            "AcaEM_Main_Click",
             "[JumpBack]Sensei_Task",
             "[JumpBack]Return_Home",
             "[JumpBack]Center_Click"
         ]
     },
-    "Bounty_Main_Click": {
+    "AcaEM_Main_Click": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "ticket/bounty_main_btn.png",
-                "roi" : [669, 383, 91, 29]
+                "template": "ticket/acaem_main_btn.png",
+                "roi" : [638, 569, 106, 25]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [700, 400, 1, 1]
+                "target": [700, 580, 1, 1]
             }
         },
         "next": [
-            "Bounty_Select_Location",
-            "Bounty_Main_Click"
+            "AcaEM_Select_Location",
+            "AcaEM_Main_Click"
         ]
     },
-    "Bounty_Select_Location": {
+    "AcaEM_Select_Location": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "ticket/bounty_select_location.png",
-                "roi" : [656, 89, 233, 39]
+                "template": "ticket/acaem_select_academy.png",
+                "roi" : [652, 90, 239, 43]
             }
         },
         "action": {
@@ -43,11 +42,11 @@
             }
         },
         "next": [
-            "Bounty_Select_Stage",
-            "Bounty_Select_Location"
+            "AcaEM_Select_Stage",
+            "AcaEM_Select_Location"
         ]
     },
-    "Bounty_Select_Stage": {
+    "AcaEM_Select_Stage": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -56,73 +55,73 @@
             }
         },
         "next": [
-            "Bounty_Check_Stage_10th",
-            "Bounty_Check_Stage_9th",
-            "Bounty_Check_Stage_8th"
+            "AcaEM_Check_Stage_4th",
+            "AcaEM_Check_Stage_3th",
+            "AcaEM_Check_Stage_2th"
         ]
     },
-    "Bounty_Check_Stage_10th": {
+    "AcaEM_Check_Stage_4th": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
                 "template": "public/three_star_check.png",
-                "roi" : [683, 613, 74, 65]
+                "roi" : [683, 463, 74, 65]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [1100, 635, 1, 1]
+                "target": [1100, 500, 1, 1]
             }
         },
         "post_wait_freezes": 300,
         "next": [
-            "Bounty_Check_Sweep_Window",
-            "Bounty_Check_Stage_10th"
+            "AcaEM_Check_Sweep_Window",
+            "AcaEM_Check_Stage_4th"
         ]
     },
-    "Bounty_Check_Stage_9th": {
+    "AcaEM_Check_Stage_3th": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
                 "template": "public/three_star_check.png",
-                "roi" : [683, 512, 74, 65]
+                "roi" : [683, 365, 74, 65]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [1100, 525, 1, 1]
+                "target": [1100, 400, 1, 1]
             }
         },
         "post_wait_freezes": 300,
         "next": [
-            "Bounty_Check_Sweep_Window",
-            "Bounty_Check_Stage_9th"
+            "AcaEM_Check_Sweep_Window",
+            "AcaEM_Check_Stage_3th"
         ]
     },
-    "Bounty_Check_Stage_8th": {
+    "AcaEM_Check_Stage_2th": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
                 "template": "public/three_star_check.png",
-                "roi" : [683, 413, 74, 65]
+                "roi" : [683, 265, 74, 65]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [1100, 425, 1, 1]
+                "target": [1100, 300, 1, 1]
             }
         },
         "post_wait_freezes": 300,
         "next": [
-            "Bounty_Check_Sweep_Window",
-            "Bounty_Check_Stage_8th"
+            "AcaEM_Check_Sweep_Window",
+            "AcaEM_Check_Stage_2th"
         ]
     },
 
-    "Bounty_Check_Sweep_Window": {
+    "AcaEM_Check_Sweep_Window": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -138,11 +137,11 @@
         },
         "post_delay": 300,
         "next": [
-            "Bounty_Check_Sweep_Count",
-            "Bounty_Check_Sweep_Window"
+            "AcaEM_Check_Sweep_Count",
+            "AcaEM_Check_Sweep_Window"
         ]
     },
-    "Bounty_Check_Sweep_Count": {
+    "AcaEM_Check_Sweep_Count": {
         "recognition": {
             "type": "ColorMatch",
             "param": {
@@ -159,12 +158,12 @@
             }
         },
         "next": [
-            "Bounty_Confirm_Sweep",
-            "Bounty_No_Ticket",
-            "Bounty_Check_Sweep_Count"
+            "AcaEM_Confirm_Sweep",
+            "AcaEM_No_Ticket",
+            "AcaEM_Check_Sweep_Count"
         ]
     },
-    "Bounty_Confirm_Sweep": {
+    "AcaEM_Confirm_Sweep": {
         "recognition": {
             "type": "ColorMatch",
             "param": {
@@ -182,10 +181,10 @@
         },
         "post_delay": 500,
         "next": [
-            "Bounty_Sweep_Reward_Click"
+            "AcaEM_Sweep_Reward_Click"
         ]
     },
-    "Bounty_Sweep_Reward_Click": {
+    "AcaEM_Sweep_Reward_Click": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -193,10 +192,10 @@
             }
         },
         "next": [
-            "Bounty_Sweep_Reward_Click_2"
+            "AcaEM_Sweep_Reward_Click_2"
         ]
     },
-    "Bounty_Sweep_Reward_Click_2": {
+    "AcaEM_Sweep_Reward_Click_2": {
         "action": {
             "type": "LongPress",
             "param": {
@@ -204,11 +203,11 @@
             }
         },
         "next": [
-            "Bounty_Check_Sweep_End",
-            "Bounty_Sweep_Reward_Click"
+            "AcaEM_Check_Sweep_End",
+            "AcaEM_Sweep_Reward_Click"
         ]
     },
-    "Bounty_No_Ticket": {
+    "AcaEM_No_Ticket": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -217,10 +216,10 @@
             }
         },
         "next": [
-            "Bounty_End"
+            "AcaEM_End"
         ]
     },
-    "Bounty_Check_Sweep_End": {
+    "AcaEM_Check_Sweep_End": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -229,12 +228,12 @@
             }
         },
         "next": [
-            "Bounty_End"
+            "AcaEM_End"
         ]
     },
-    "Bounty_End": {
+    "AcaEM_End": {
         "next": [
-            "AcaEM_Main"
+            "Return_Home"
         ]
     }
 }

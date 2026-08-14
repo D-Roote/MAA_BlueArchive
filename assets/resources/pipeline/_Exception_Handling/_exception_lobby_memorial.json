@@ -1,19 +1,18 @@
 {
-    "Get_Reward": {
+    "Lobby_Memorial_Check": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "template": "public/reward.png",
-                "roi": [508, 128, 264, 69]
+                "template": "public/memorial_skip.png",
+                "roi" : [537, 318, 204, 37]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [655, 635, 1, 1]
+                "target": [765, 500, 1, 1]
             }
         },
-        "repeat": 2,
         "next": []
     }
 }

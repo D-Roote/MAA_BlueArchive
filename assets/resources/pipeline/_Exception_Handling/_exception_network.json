@@ -5,7 +5,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "public/network_alert.png",
-                "roi" : [714, 483, 106, 74]
+                "roi" : [435, 304, 414, 71]
             }
         },
         "action": {
@@ -15,10 +15,11 @@
             }
         },
         "repeat": 2,
-        "pre_delay": 0,
+        "pre_delay": 1000,
         "post_delay": 10000,
         "next": [
             "No_Network_Alert",
+            "Network_Alert",
             "[Anchor]Current_Task"
         ]
     },
@@ -30,7 +31,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "public/no_network_alert.png",
-                "roi" : [398, 260, 480, 294]
+                "roi" : [403, 268, 474, 141]
             }
         },
         "action": {
@@ -46,7 +47,7 @@
         ]
     },
     "Stop_Task_By_Network": {
-        "focus": "인터넷 연결에 문제가 발생하였습니다.",
+        "focus": "◆ 인터넷 연결에 문제가 발생하여 작업을 종료합니다.",
         "next": [
             "Stop_Task"
         ]

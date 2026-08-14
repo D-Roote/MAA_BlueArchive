@@ -1,0 +1,45 @@
+{
+    "Return_Home": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [34, 28, 31, 22],
+                "lower": [245, 210, 0],
+                "upper": [255, 220, 10],
+                "count": 20
+            }
+        },
+        "inverse": true,
+        "post_delay": 0,
+        "next": [
+            "Return_Home_Check",
+            "Return_Home_Repeat"
+        ]
+    },
+    "Return_Home_Repeat": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1240, 30, 1, 1]
+            }
+        },
+        "post_delay": 500,
+        "next": [
+            "Return_Home_Check",
+            "[JumpBack]Lobby_Memorial_Check",
+            "Return_Home"
+        ]
+    },
+    "Return_Home_Check": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [34, 28, 31, 22],
+                "lower": [245, 210, 0],
+                "upper": [255, 220, 10],
+                "count": 20
+            }
+        },
+        "next": []
+    }
+}

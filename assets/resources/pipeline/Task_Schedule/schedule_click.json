@@ -43,10 +43,12 @@
     },
     "Schedule_Next_Aca_Window": {
         "recognition": {
-            "type": "TemplateMatch",
+            "type": "ColorMatch",
             "param": {
-                "template": "schedule/schedule_all_btn.png",
-                "roi" : [1091, 644, 148, 42]
+                "roi" : [1079, 639, 176, 46],
+                "lower": [110, 217, 253],
+                "upper": [119, 222, 255],
+                "count": 100
             }
         },
         "action": {
@@ -54,6 +56,7 @@
             "target": [1160, 660, 1, 1]
         },
         "repeat": 2,
+        "post_wait_freezes": 300,
         "next": [
             "Schedule_Next_Aca_Window",
             "Schedule_List"
@@ -73,7 +76,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -92,7 +95,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -111,7 +114,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -130,7 +133,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -149,7 +152,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -168,7 +171,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -187,7 +190,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -206,7 +209,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"
@@ -225,7 +228,7 @@
         "action": {
             "type": "LongPress"
         },
-        "post_delay": 2000,
+        "post_wait_freezes": 300,
         "next": [
             "[JumpBack]Schedule_Start",
             "Schedule_List"

@@ -1,3 +1,219 @@
 {
+    "Cafe_Start_Invite": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_1st"},
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [870, 637, 35, 28],
+                "lower": [248, 154, 200],
+                "upper": [254, 160, 206],
+                "count": 50
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [880, 650, 1, 1]
+            }
+        },
+        "post_delay": 0,
+        "next": [
+            "Cafe_Open_MomoTalk",
+            "Cafe_Start_Invite"
+        ]
+    },
+    "Cafe_Open_MomoTalk": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [405, 71, 421, 50],
+                "lower": [251, 145, 165],
+                "upper": [251, 145, 165],
+                "count": 100
+            }
+        },
+        "next": [
+            "[Anchor]Current_Momo"
+        ]
+    },
+    "Cafe_MomoTalk_1st": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_2nd"},
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [800, 220, 1, 1]
+            }
+        },
+        "post_wait": 200,
+        "next": [
+            "Cafe_MomoTalk_1st_Click",
+            "[JumpBack]Cafe_MomoTalk_Close",
+            "Cafe_Open_MomoTalk"
+        ]
+    },
+    "Cafe_MomoTalk_1st_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe/cafe_momo_invite.png",
+                "roi" : [603, 149, 74, 35]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": []
+    },
+    "Cafe_MomoTalk_2nd": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_3rd"},
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [800, 300, 1, 1]
+            }
+        },
+        "post_wait": 200,
+        "next": [
+            "Cafe_MomoTalk_2nd_Click",
+            "[JumpBack]Cafe_MomoTalk_Close",
+            "Cafe_Open_MomoTalk"
+        ]
+    },
+    "Cafe_MomoTalk_2nd_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe/cafe_momo_invite.png",
+                "roi" : [603, 149, 74, 35]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": []
+    },
+    "Cafe_MomoTalk_3rd": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_4th"},
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [800, 300, 1, 1]
+            }
+        },
+        "post_wait": 200,
+        "next": [
+            "Cafe_MomoTalk_3rd_Click",
+            "[JumpBack]Cafe_MomoTalk_Close",
+            "Cafe_Open_MomoTalk"
+        ]
+    },
+    "Cafe_MomoTalk_3rd_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe/cafe_momo_invite.png",
+                "roi" : [603, 149, 74, 35]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": []
+    },
+    "Cafe_MomoTalk_4th": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_5th"},
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [800, 300, 1, 1]
+            }
+        },
+        "post_wait": 200,
+        "next": [
+            "Cafe_MomoTalk_4th_Click",
+            "[JumpBack]Cafe_MomoTalk_Close",
+            "Cafe_Open_MomoTalk"
+        ]
+    },
+    "Cafe_MomoTalk_4th_Click": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe/cafe_momo_invite.png",
+                "roi" : [603, 149, 74, 35]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": []
+    },
+    "Cafe_MomoTalk_5th": {
+        "anchor": {"Current_Momo": "Cafe_MomoTalk_1st"},
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [800, 300, 1, 1]
+            }
+        },
+        "post_wait": 200,
+        "next": [
+            "Cafe_MomoTalk_5th_Click"
+        ]
+    },
+    "Cafe_MomoTalk_5th_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [765, 500, 1, 1]
+            }
+        },
+        "post_delay": 5000,
+        "next": []
+    },
+    
+    
+
+
+
+    "Cafe_MomoTalk_Close": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "cafe/cafe_momo_no_invite.png",
+                "roi" : [519, 145, 243, 39]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [500, 500, 1, 1]
+            }
+        },
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": []
+    }
+
+    
+    
+    
+
     
 }

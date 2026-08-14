@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.ui.workStartBtn.setEnabled(True)
         
-        self.append_log("작업이 종료 되었습니다.\n")
+        self.append_log("▶ 작업이 종료 되었습니다.\n")
 
     def setup_dynamic_options(self):
         self.option_list_widget = DragDropListWidget()

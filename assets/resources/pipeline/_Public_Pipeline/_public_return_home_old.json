@@ -1,5 +1,5 @@
 {
-    "Return_Home": {
+    "Return_Home_OLD": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -23,13 +23,13 @@
             "Return_Home_Repeat"
         ]
     },
-    "Return_Home_Repeat": {     
+    "Return_Home_Repeat_OLD": {     
         "next": [
             "Return_Home_Check",
             "Return_Home"
         ]
     },
-    "Return_Home_Check": {
+    "Return_Home_Check_OLD": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
@@ -43,19 +43,6 @@
             }
         },
         "inverse": true,
-        "next": []
-    },
-
-
-
-    "Return_Home_Check_NOTUSED": {
-        "recognition": {
-            "type": "TemplateMatch",
-            "param": {
-                "template" : "public/home_check.png",
-                "roi" : [843, 20, 30, 38]
-            }
-        },
         "next": []
     }
 }
