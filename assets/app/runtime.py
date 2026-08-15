@@ -258,13 +258,9 @@ class AppRuntime:
 
             failed_entries = []
             if jobs:
-                # Tasker는 post_task 호출 순서대로 내부 큐에서 순차 실행하므로,
-                # 마지막 job을 기다리면 그 이전의 모든 job도 이미 완료된 상태다.
                 _, last_job = jobs[-1]
                 last_job.wait()
-
-                # 실제 maa.job.Job 클래스 소스 기준: get()이 아니라
-                # job.succeeded 프로퍼티(내부적으로 job.status.succeeded)로 판단한다.
+                
                 for entry, job in jobs:
                     try:
                         if not job.succeeded:

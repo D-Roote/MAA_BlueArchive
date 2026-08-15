@@ -129,7 +129,9 @@
                     "pipeline_override": {
                         "Bounty_Select_Location": {
                             "action": {
-                                "param": [1000, 300, 1, 1]
+                                "param": {
+                                    "target": [1000, 300, 1, 1]
+                                }
                             }
                         }
                     }
@@ -140,7 +142,9 @@
                     "pipeline_override": {
                         "Bounty_Select_Location": {
                             "action": {
-                                "param": [1000, 400, 1, 1]
+                                "param": {
+                                    "target": [1000, 400, 1, 1]
+                                }
                             }
                         }
                     }
@@ -160,9 +164,11 @@
                     "name": "Gehenna",
                     "label": "게헨나",
                     "pipeline_override": {
-                        "Bounty_Select_Location": {
+                        "AcaEM_Select_Location": {
                             "action": {
-                                "param": [1000, 300, 1, 1]
+                                "param": {
+                                    "target": [1000, 300, 1, 1]
+                                }
                             }
                         }
                     }
@@ -171,9 +177,11 @@
                     "name": "Millennium",
                     "label": "밀레니엄",
                     "pipeline_override": {
-                        "Bounty_Select_Location": {
+                        "AcaEM_Select_Location": {
                             "action": {
-                                "param": [1000, 400, 1, 1]
+                                "param": {
+                                    "target": [1000, 400, 1, 1]
+                                }
                             }
                         }
                     }
