@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         self.runtime = AppRuntime()
         self.log_sink = self.runtime.log_sink
         self.worker = None
+        self.stop_worker = None
         self.isRunning = False
 
         self.setup_connections()
@@ -303,7 +304,7 @@ class MainWindow(QMainWindow):
 
         self.worker = RuntimeWorker(self.runtime, execution_queue, minimize_window)
 
-        self.worker.log.connect(self.append_log)
+        self.worker.log.connect(self.append_log, Qt.QueuedConnection)
         self.worker.task_finished.connect(self.on_task_finished)
 
         self.runtime.log_sink.set_log_callback(self.worker.log.emit)
@@ -324,8 +325,19 @@ class MainWindow(QMainWindow):
 
         if not self.worker:
             return
-        
-        self.worker.stop_runtime()
+
+        # 정지 요청이 이미 진행 중이면 재실행하지 않음
+        if self.stop_worker is not None and self.stop_worker.isRunning():
+            return
+
+        self.stop_worker = StopWorker(self.runtime)
+        self.stop_worker.finished_stop.connect(self.on_stop_worker_finished)
+        self.stop_worker.start()
+
+    def on_stop_worker_finished(self):
+        if self.stop_worker is not None:
+            self.stop_worker.deleteLater()
+        self.stop_worker = None
 
     def on_task_finished(self):
         self.isRunning = False
@@ -662,6 +674,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"설정 파일 저장 실패: {e}")
 
+# 정지 요청 전용 스레드
+class StopWorker(QThread):
+    finished_stop = Signal()
+
+    def __init__(self, runtime, parent=None):
+        super().__init__(parent)
+        self.runtime = runtime
+
+    def run(self):
+        self.runtime.stop_task()
+        self.finished_stop.emit()
+
 # Tasker 스레드
 class RuntimeWorker(QThread):
     log = Signal(str)
@@ -672,9 +696,6 @@ class RuntimeWorker(QThread):
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
-
-    def stop_runtime(self):
-        return self.runtime.stop_task()
 
     def run(self):
         initialized, init_message = self.runtime.initialize(self.minimize_window)
