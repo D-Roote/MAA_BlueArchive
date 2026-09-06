@@ -21,8 +21,6 @@ QSS_FILENAME = "style.qss"
 
 
 def find_switch_cases(cases):
-    """PI V2 스펙: switch는 case.name이 Yes/yes/Y/y 중 하나, No/no/N/n 중 하나인
-    두 case로 구성됨. 각각의 case 이름(원본 표기 그대로)을 찾아 반환한다."""
     yes_names = {"yes", "y"}
     no_names = {"no", "n"}
     yes_case_name = None
@@ -50,9 +48,6 @@ class OptionItemWidget(QWidget):
             default_case = opt.get("default_case")
 
             if opt_type == "switch":
-                # switch는 항상 Yes/No 둘 중 하나가 명시적으로 선택된 상태여야
-                # build_execution_queue에서 No의 pipeline_override(있다면)도
-                # 정확히 조회될 수 있음. default_case가 없으면 No를 기본값으로 한다.
                 yes_case_name, no_case_name = find_switch_cases(opt.get("cases", []))
                 if default_case and default_case == yes_case_name:
                     self.selected_options[opt_name] = [yes_case_name]
@@ -61,10 +56,8 @@ class OptionItemWidget(QWidget):
                 else:
                     self.selected_options[opt_name] = []
             elif isinstance(default_case, list):
-                # checkbox 타입: default_case가 이미 배열
                 self.selected_options[opt_name] = list(default_case)
             elif default_case:
-                # select 타입: default_case가 단일 문자열
                 self.selected_options[opt_name] = [default_case]
             else:
                 self.selected_options[opt_name] = []
@@ -97,12 +90,28 @@ class OptionItemWidget(QWidget):
     def is_checked(self):
         return self.checkbox.isChecked()
 
+    def set_locked(self, locked: bool):
+        self.checkbox.setEnabled(not locked)
+        self.setting_btn.setEnabled(not locked)
+        if locked:
+            self.label.setStyleSheet("background: transparent; color: #94A3B8;")
+        else:
+            self.label.setStyleSheet("background: transparent; color: #000000;")
+
 # 커스텀 리스트 위젯
 class DragDropListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDropIndicatorShown(False)
         self.drag_line_y = -1
+        self.on_order_changed_callback = None
+        self._locked = False
+
+    def set_locked(self, locked: bool):
+        self._locked = locked
+        self.setDragDropMode(
+            QAbstractItemView.NoDragDrop if locked else QAbstractItemView.InternalMove
+        )
 
     def dragMoveEvent(self, event):
         super().dragMoveEvent(event)
@@ -135,10 +144,6 @@ class DragDropListWidget(QListWidget):
         self.drag_line_y = -1
         self.viewport().update()
 
-        # InternalMove는 내부적으로 QListWidgetItem을 재구성할 수 있어
-        # setItemWidget()으로 붙인 커스텀 위젯이 유실될 위험이 있음.
-        # 드롭 전 entry(UserRole 데이터) -> 위젯 매핑을 저장해두고,
-        # 드롭 후 각 아이템의 entry를 기준으로 정확히 재부착한다.
         widget_by_entry = {}
         for i in range(self.count()):
             item = self.item(i)
@@ -156,6 +161,9 @@ class DragDropListWidget(QListWidget):
                 widget = widget_by_entry[entry]
                 self.setItemWidget(item, widget)
                 item.setSizeHint(widget.sizeHint())
+
+        if self.on_order_changed_callback:
+            self.on_order_changed_callback()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -205,6 +213,9 @@ class MainWindow(QMainWindow):
     def setup_connections(self):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
 
+        if hasattr(self.ui, 'minimizeEnableBtn'):
+            self.ui.minimizeEnableBtn.toggled.connect(self.on_user_config_changed)
+
     def update_tab_widths(self):
         tab_bar = self.ui.tabWidget.tabBar()
         count = tab_bar.count()
@@ -247,8 +258,6 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 창이 실제로 표시되는 시점까지도 레이아웃이 100% 확정되지 않을 수 있어
-        # 이벤트 루프가 한 바퀴 돈 직후로 한 박자 미룸
         QTimer.singleShot(0, self.update_tab_widths)
 
     def resizeEvent(self, event):
@@ -286,8 +295,6 @@ class MainWindow(QMainWindow):
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 
-        self.save_user_config()
-
         execution_queue = self.build_execution_queue()
 
         minimize_window = False
@@ -310,6 +317,8 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.clicked.connect(self.on_task_stop)
         self.ui.workStartBtn.setEnabled(True)
 
+        self.set_options_locked(True)
+
     def on_task_stop(self):
         self.ui.workStartBtn.setEnabled(False)
 
@@ -325,7 +334,9 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.ui.workStartBtn.setEnabled(True)
-        
+
+        self.set_options_locked(False)
+
         self.append_log("▶ 작업이 종료 되었습니다.\n")
 
     def setup_dynamic_options(self):
@@ -342,9 +353,9 @@ class MainWindow(QMainWindow):
             
         target_layout.insertWidget(0, self.option_list_widget)
         target_layout.setStretchFactor(self.option_list_widget, 1)
+        self.option_list_widget.on_order_changed_callback = self.on_user_config_changed
 
         raw_tasks = self.runtime.interface.get("task", [])
-        # PI V2 스펙: option은 record<string, object> (키가 옵션 이름)
         options_dict = self.runtime.interface.get("option", {})
         
         task_dict = {t["entry"]: t for t in raw_tasks}
@@ -360,7 +371,9 @@ class MainWindow(QMainWindow):
 
         minimize_enabled = user_config.get("minimize_enabled", False)
         if hasattr(self.ui, 'minimizeEnableBtn'):
+            self.ui.minimizeEnableBtn.blockSignals(True)
             self.ui.minimizeEnableBtn.setChecked(minimize_enabled)
+            self.ui.minimizeEnableBtn.blockSignals(False)
 
         saved_tasks = user_config.get("tasks", [])
         added_entries = set()
@@ -368,7 +381,6 @@ class MainWindow(QMainWindow):
         def add_task_widget(task_data, is_checked, saved_options):
             item = QListWidgetItem()
             item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
-            # 드래그앤드롭 후 위젯을 entry 기준으로 정확히 재매칭하기 위한 식별자
             item.setData(Qt.UserRole, task_data["entry"])
             self.option_list_widget.addItem(item)
             
@@ -382,7 +394,7 @@ class MainWindow(QMainWindow):
                 task_data, 
                 task_options, 
                 self.show_sub_cases, 
-                self.check_start_button_state
+                self.on_task_checkbox_toggled
             )
             
             if saved_options:
@@ -390,7 +402,9 @@ class MainWindow(QMainWindow):
                     if opt_name in saved_options:
                         custom_widget.selected_options[opt_name] = saved_options[opt_name]
             
+            custom_widget.checkbox.blockSignals(True)
             custom_widget.checkbox.setChecked(is_checked)
+            custom_widget.checkbox.blockSignals(False)
             custom_widget.adjustSize()
             item.setSizeHint(custom_widget.sizeHint())
             
@@ -449,6 +463,7 @@ class MainWindow(QMainWindow):
                     row_layout.setSpacing(8)
 
                     radio_btn = QRadioButton("")
+                    radio_btn.setAutoExclusive(False)
                     button_group.addButton(radio_btn)
                     
                     if case_name in item_widget.selected_options.get(opt_name, []):
@@ -496,9 +511,6 @@ class MainWindow(QMainWindow):
 
             elif opt_type == "switch":
                 yes_case_name, no_case_name = find_switch_cases(cases)
-                # 화면에는 Yes case 하나만 체크박스로 표시 (기존 UX 유지).
-                # No case는 화면에 보이지 않지만, 체크 해제 시 selected_options에
-                # 명시적으로 기록되어 No의 pipeline_override(있다면)도 정확히 적용됨.
                 yes_case = next((c for c in cases if c.get("name") == yes_case_name), None)
                 if yes_case_name is not None:
                     case_label_text = yes_case.get('label', yes_case_name) if yes_case else yes_case_name
@@ -508,7 +520,7 @@ class MainWindow(QMainWindow):
                     row_layout.setContentsMargins(0, 2, 0, 2)
                     row_layout.setSpacing(8)
 
-                    # 기능은 CheckBox와 동일 (추후 스타일시트로 토글 모양 변경 가능)
+                    # 기능은 CheckBox와 동일 (추후 스타일시트로 토글 모양 변경)
                     switch_cb = QCheckBox("")
 
                     if yes_case_name in item_widget.selected_options.get(opt_name, []):
@@ -536,6 +548,7 @@ class MainWindow(QMainWindow):
     def update_widget_option_radio(self, widget, opt_name, case_name, is_checked):
         if is_checked:
             widget.selected_options[opt_name] = [case_name]
+            self.on_user_config_changed()
 
     def update_widget_option_checkbox(self, widget, opt_name, case_name, is_checked):
         if opt_name not in widget.selected_options:
@@ -548,14 +561,15 @@ class MainWindow(QMainWindow):
             if case_name in widget.selected_options[opt_name]:
                 widget.selected_options[opt_name].remove(case_name)
 
+        self.on_user_config_changed()
+
     def update_widget_option_switch(self, widget, opt_name, yes_case_name, no_case_name, is_checked):
-        # switch는 항상 Yes 또는 No 둘 중 하나가 명시적으로 선택된 상태를 유지한다.
-        # (체크 해제 시 selected_options가 비어버리면 build_execution_queue에서
-        #  옵션 자체가 스킵되어 No case의 pipeline_override가 영영 적용될 수 없음)
         if is_checked and yes_case_name is not None:
             widget.selected_options[opt_name] = [yes_case_name]
         elif not is_checked and no_case_name is not None:
             widget.selected_options[opt_name] = [no_case_name]
+
+        self.on_user_config_changed()
 
     def check_start_button_state(self):
         any_checked = False
@@ -566,6 +580,28 @@ class MainWindow(QMainWindow):
                 any_checked = True
                 break
         self.ui.workStartBtn.setEnabled(any_checked)
+
+    def on_task_checkbox_toggled(self, checked):
+        self.check_start_button_state()
+        self.on_user_config_changed()
+
+    def on_user_config_changed(self):
+        self.save_user_config()
+
+    def set_options_locked(self, locked: bool):
+        for i in range(self.option_list_widget.count()):
+            item = self.option_list_widget.item(i)
+            widget = self.option_list_widget.itemWidget(item)
+            if widget:
+                widget.set_locked(locked)
+
+        self.option_list_widget.set_locked(locked)
+
+        if hasattr(self.ui, 'minimizeEnableBtn'):
+            self.ui.minimizeEnableBtn.setEnabled(not locked)
+
+        if hasattr(self.ui, 'scrollSettingContents'):
+            self.ui.scrollSettingContents.setEnabled(not locked)
 
     def build_execution_queue(self):
         execution_queue = []
