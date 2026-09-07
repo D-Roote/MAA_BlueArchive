@@ -12,13 +12,13 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "reward/reward_circle_main_btn.png",
-                "roi" : [539, 678, 39, 20]
+                "roi" : [525, 680, 35, 20]
             }
         },
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [560, 665, 1, 1]
+                "target": [545, 660, 1, 1]
             }
         },
         "post_delay": 500,

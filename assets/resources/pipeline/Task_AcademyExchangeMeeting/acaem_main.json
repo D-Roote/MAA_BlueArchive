@@ -13,7 +13,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "ticket/acaem_main_btn.png",
-                "roi" : [638, 569, 106, 25]
+                "roi" : [638, 606, 80, 21]
             }
         },
         "action": {

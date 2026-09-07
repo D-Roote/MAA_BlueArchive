@@ -13,7 +13,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "schedule/schedule_main_btn.png",
-                "roi" : [182, 675, 55, 26]
+                "roi" : [190, 680, 47, 19]
             }
         },
         "action": {

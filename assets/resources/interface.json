@@ -61,6 +61,11 @@
                 "Bounty_Location_Selection",
                 "AcaEM_Location_Selection"
             ]
+        },
+        {
+            "name": "Reward",
+            "label": "미션 보상 수령",
+            "entry": "Reward_Mission_Main"
         }
     ],
     "option": {

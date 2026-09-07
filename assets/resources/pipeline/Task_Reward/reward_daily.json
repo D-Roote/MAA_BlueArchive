@@ -1,0 +1,175 @@
+{
+    "Reward_Mission_Main": {
+        "focus": "▶ 미션 보상 수령",
+        "next": [
+            "[JumpBack]Return_Home",
+            "Reward_Mission_Click",
+            "[JumpBack]Center_Click"
+        ]
+    },
+    "Reward_Mission_Click": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [50, 230, 1, 1]
+            }
+        },
+        "post_delay": 2000,
+        "next": [
+            "Reward_Mission_Window_Check",
+            "Reward_Mission_Click"
+        ]
+    },
+    "Reward_Mission_Window_Check": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "reward/reward_mission_lobby.png",
+                "roi" : [101, 11, 61, 29]
+            }
+        },
+        "next": [
+            "Reward_Mission_No_Reward",
+            "Reward_Mission_Reward_Check",
+            "Reward_Mission_Window_Check"
+        ]
+    },
+    "Reward_Mission_Reward_Check": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [1079, 645, 140, 49],
+                "lower": [246, 228, 61],
+                "upper": [254, 240, 76],
+                "count": 100
+            }
+        },
+        "next": [
+            "Reward_Mission_Reward_Claim"
+        ]
+    },
+    "Reward_Mission_Reward_Claim": {
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [1150, 670, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Mission_No_Reward",
+            "Reward_Mission_Reward_Claim"
+        ]
+    },
+    "Reward_Mission_No_Reward": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [1079, 645, 140, 49],
+                "lower": [191, 191, 195],
+                "upper": [212, 212, 213],
+                "count": 100
+            }
+        },
+        "next": [
+            "Reward_Mission_Check_8"
+        ]
+    },
+    "Reward_Mission_Check_8": {
+        "next": [
+            "Reward_Mission_No_8",
+            "Reward_Mission_Claim_8"
+        ]
+    },
+    "Reward_Mission_Claim_8": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [939, 649, 69, 41],
+                "lower": [246, 228, 61],
+                "upper": [254, 240, 76],
+                "count": 100
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [970, 670, 1, 1]
+            }
+        },
+        "post_delay": 3000,
+        "next": [
+            "Reward_Mission_Claim_8_Check",
+            "Reward_Mission_Claim_8"
+        ]
+    },
+    "Reward_Mission_Claim_8_Check": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": "public/reward.png",
+                "roi": [508, 128, 264, 69]
+            }
+        },
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "target": [655, 635, 1, 1]
+            }
+        },
+        "next": [
+            "Reward_Mission_End"
+        ]
+    },
+    "Reward_Mission_No_8": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [939, 649, 69, 41],
+                "lower": [246, 228, 61],
+                "upper": [254, 240, 76],
+                "count": 100
+            }
+        },
+        "inverse": true,
+        "next": [
+            "Reward_Mission_End"
+        ]
+    },
+
+
+    "Reward_Mission_No_8_OLD": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [939, 649, 69, 41],
+                "lower": [218, 218, 218],
+                "upper": [224, 227, 228],
+                "count": 100
+            }
+        },
+        "next": [
+            "Reward_Mission_End"
+        ]
+    },
+    "Reward_Mission_Claimed_8_OLD": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi" : [939, 649, 69, 41],
+                "lower": [126, 130, 134],
+                "upper": [136, 139, 145],
+                "count": 100
+            }
+        },
+        "next": [
+            "Reward_Mission_End"
+        ]
+    },
+
+
+    "Reward_Mission_End": {
+        "next": [
+            "Return_Home"
+        ]
+    }
+}

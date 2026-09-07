@@ -14,7 +14,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "ticket/bounty_main_btn.png",
-                "roi" : [669, 383, 91, 29]
+                "roi" : [674, 400, 66, 22]
             }
         },
         "action": {
