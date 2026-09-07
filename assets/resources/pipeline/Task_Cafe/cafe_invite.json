@@ -27,8 +27,8 @@
             "type": "ColorMatch",
             "param": {
                 "roi" : [405, 71, 421, 50],
-                "lower": [251, 145, 165],
-                "upper": [251, 145, 165],
+                "lower": [248, 140, 160],
+                "upper": [255, 148, 168],
                 "count": 100
             }
         },
@@ -105,7 +105,7 @@
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [800, 300, 1, 1]
+                "target": [800, 380, 1, 1]
             }
         },
         "post_wait": 200,
@@ -137,7 +137,7 @@
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [800, 300, 1, 1]
+                "target": [800, 460, 1, 1]
             }
         },
         "post_wait": 200,
@@ -169,7 +169,7 @@
         "action": {
             "type": "LongPress",
             "param": {
-                "target": [800, 300, 1, 1]
+                "target": [800, 540, 1, 1]
             }
         },
         "post_wait": 200,
@@ -197,7 +197,7 @@
             "type": "TemplateMatch",
             "param": {
                 "template": "cafe/cafe_momo_no_invite.png",
-                "roi" : [519, 145, 243, 39]
+                "roi" : [515, 145, 245, 45]
             }
         },
         "action": {

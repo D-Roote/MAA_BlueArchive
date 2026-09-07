@@ -1,19 +1,14 @@
 {
     "Sensei_Task": {
         "recognition": {
-            "type": "ColorMatch",
+            "type": "TemplateMatch",
             "param": {
-                "roi" : [1140, 526, 110, 71],
-                "lower": [45, 160, 235],
-                "upper": [95, 210, 250],
-                "count": 100
+                "template": "public/task.png",
+                "roi" : [1178, 666, 47, 25]
             }
         },
         "action": {
-            "type": "LongPress",
-            "param": {
-                "target": [1200, 550, 1, 1]
-            }
+            "type": "LongPress"
         },
         "post_delay": 3000,
         "post_wait_freezes": 100,

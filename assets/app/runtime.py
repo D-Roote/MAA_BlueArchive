@@ -145,6 +145,8 @@ class AppRuntime:
 
         if minimize_window:
             screencap_mode = MaaWin32ScreencapMethodEnum.PrintWindow
+            # screencap_mode = MaaWin32ScreencapMethodEnum.FramePool
+            # 블루 아카이브는 최소화 모드에서 FramePool 캡쳐가 작동하지 않는듯 싶다
         else:
             screencap_mode = MaaWin32ScreencapMethodEnum.FramePool
 
@@ -194,6 +196,7 @@ class AppRuntime:
         if not bound:
             return False, bind_message
 
+        # 146 라인 수정시 같이 수정할 것
         screencap_name = "PrintWindow" if minimize_window else "FramePool"
         # mouse_name = self._get_mouse_method().name
         # keyboard_name = self._get_keyboard_method().name
