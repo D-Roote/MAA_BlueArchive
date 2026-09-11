@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Callable
 import json
+import re
 import threading
 import time
 
@@ -14,6 +15,47 @@ from maa.event_sink import NotificationType
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
+
+
+class WindowPlacement(ctypes.Structure):
+    _fields_ = [
+        ("length", wintypes.UINT),
+        ("flags", wintypes.UINT),
+        ("show_cmd", wintypes.UINT),
+        ("min_position", wintypes.POINT),
+        ("max_position", wintypes.POINT),
+        ("normal_position", wintypes.RECT),
+    ]
+
+
+def create_user32():
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.MoveWindow.argtypes = [
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.BOOL,
+    ]
+    user32.MoveWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
+    user32.GetWindowPlacement.restype = wintypes.BOOL
+    user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
+    user32.SetWindowPlacement.restype = wintypes.BOOL
+    return user32
 
 
 class AppRuntime:
@@ -35,9 +77,10 @@ class AppRuntime:
         self._sink_bound = False
         self._resource_loaded = False
         self._task_post_lock = threading.Lock()
+        self._user32 = create_user32()
 
         self._target_hwnd = None
-        self._original_window_rect = None
+        self._original_window_placement = None
 
     def _load_interface(self):
         with self.interface_path.open("r", encoding="utf-8") as file:
@@ -83,61 +126,62 @@ class AppRuntime:
 
 
     def _resize_window_for_task(self, target_client_w=1280, target_client_h=720):
-        if not self._target_hwnd:
-            return
-            
-        user32 = ctypes.windll.user32
-        
-        if user32.IsIconic(self._target_hwnd):
-            user32.ShowWindow(self._target_hwnd, 9)
-            import time
+        if not self._target_hwnd or not self._user32.IsWindow(self._target_hwnd):
+            return False
+
+        placement = WindowPlacement()
+        placement.length = ctypes.sizeof(WindowPlacement)
+        if not self._user32.GetWindowPlacement(self._target_hwnd, ctypes.byref(placement)):
+            return False
+
+        if self._original_window_placement is None:
+            self._original_window_placement = placement
+
+        # 최소화 또는 최대화 상태에서는 먼저 일반 창으로 전환해야 client 크기를 맞출 수 있다.
+        if self._user32.IsIconic(self._target_hwnd) or placement.show_cmd == 3:
+            self._user32.ShowWindow(self._target_hwnd, 9)
             time.sleep(0.1)
 
         window_rect = wintypes.RECT()
         client_rect = wintypes.RECT()
-        
-        if user32.GetWindowRect(self._target_hwnd, ctypes.byref(window_rect)):
-            if self._original_window_rect is None:
-                self._original_window_rect = (
-                    window_rect.left, 
-                    window_rect.top, 
-                    window_rect.right - window_rect.left, 
-                    window_rect.bottom - window_rect.top
-                )
-            
-            user32.GetClientRect(self._target_hwnd, ctypes.byref(client_rect))
-            
-            current_window_w = window_rect.right - window_rect.left
-            current_window_h = window_rect.bottom - window_rect.top
-            
-            current_client_w = client_rect.right - client_rect.left
-            current_client_h = client_rect.bottom - client_rect.top
-            
-            border_width = current_window_w - current_client_w
-            border_height = current_window_h - current_client_h
-            
-            final_window_w = target_client_w + border_width
-            final_window_h = target_client_h + border_height
-            
-            user32.MoveWindow(
-                self._target_hwnd, 
-                window_rect.left, 
-                window_rect.top, 
-                final_window_w, 
-                final_window_h, 
-                True
+        if not self._user32.GetWindowRect(self._target_hwnd, ctypes.byref(window_rect)):
+            return False
+        if not self._user32.GetClientRect(self._target_hwnd, ctypes.byref(client_rect)):
+            return False
+
+        current_window_w = window_rect.right - window_rect.left
+        current_window_h = window_rect.bottom - window_rect.top
+        current_client_w = client_rect.right - client_rect.left
+        current_client_h = client_rect.bottom - client_rect.top
+
+        border_width = current_window_w - current_client_w
+        border_height = current_window_h - current_client_h
+        final_window_w = target_client_w + border_width
+        final_window_h = target_client_h + border_height
+
+        return bool(
+            self._user32.MoveWindow(
+                self._target_hwnd,
+                window_rect.left,
+                window_rect.top,
+                final_window_w,
+                final_window_h,
+                True,
             )
+        )
 
     def _restore_window(self):
-        if not self._target_hwnd or not self._original_window_rect:
-            return
-            
-        user32 = ctypes.windll.user32
-        user32.ShowWindow(self._target_hwnd, 9)
+        placement = self._original_window_placement
+        self._original_window_placement = None
+        target_hwnd = self._target_hwnd
+        self._target_hwnd = None
 
-        x, y, w, h = self._original_window_rect
-        user32.MoveWindow(self._target_hwnd, x, y, w, h, True)
-        self._original_window_rect = None
+        if not target_hwnd or placement is None:
+            return False
+        if not self._user32.IsWindow(target_hwnd):
+            return False
+
+        return bool(self._user32.SetWindowPlacement(target_hwnd, ctypes.byref(placement)))
 
 
     def _create_controller(self, minimize_window: bool = False):
@@ -146,10 +190,18 @@ class AppRuntime:
             return False, "No desktop windows found."
         
         window_keyword = self._get_window_keyword()
+        if not window_keyword:
+            return False, "The Win32 window_regex must not be empty."
+
+        try:
+            window_pattern = re.compile(window_keyword, re.IGNORECASE)
+        except re.error as error:
+            return False, f"Invalid Win32 window_regex: {error}"
+
         candidates = []
         for w in windows:
             title = w.window_name or ""
-            if window_keyword.lower() == title.lower():
+            if window_pattern.search(title):
                 candidates.append(w)
 
         if not candidates:
@@ -265,16 +317,15 @@ class AppRuntime:
         if not execution_queue:
             return False, "No valid tasks to execute."
         
-        user32 = ctypes.windll.user32
-
         try:
-            self._resize_window_for_task(1280, 720)
+            if not self._resize_window_for_task(1280, 720):
+                return False, "Failed to resize the target window to a 1280x720 client area."
 
             if minimize_window and self._target_hwnd:
-                user32.SetForegroundWindow(self._target_hwnd)
+                self._user32.SetForegroundWindow(self._target_hwnd)
                 time.sleep(0.1)
 
-                user32.ShowWindow(self._target_hwnd, 6)
+                self._user32.ShowWindow(self._target_hwnd, 6)
 
             jobs = []  # (entry, job) 쌍을 순서대로 보관
             executed_entries = []
@@ -325,6 +376,11 @@ class AppRuntime:
 
             return True, f"All tasks finished: {', '.join(executed_entries)}"
         finally:
+            if self.controller is not None:
+                try:
+                    self.controller.post_inactive().wait()
+                except Exception:
+                    pass
             self._restore_window()
         
     def stop_task(self):
