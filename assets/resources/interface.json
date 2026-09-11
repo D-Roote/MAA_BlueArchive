@@ -32,16 +32,19 @@
         {
             "name": "Login",
             "label": "게임 로그인",
+            "default_check": true,
             "entry": "Login_Main"
         },
         {
             "name": "Free_AP",
             "label": "무료 AP 수령",
+            "default_check": true,
             "entry": "Reward_Shop_AP_Main"
         },
         {
             "name": "Cafe",
             "label": "카페 보상 수령",
+            "default_check": true,
             "entry": "Cafe_Main",
             "option": [
                 "Cafe_Bif_Enable",
@@ -51,11 +54,13 @@
         {
             "name": "Schedule",
             "label": "스케쥴 진행",
+            "default_check": true,
             "entry": "Schedule_Main"
         },
         {
             "name": "Bounty",
             "label": "현상수배/학원교류회 소탕",
+            "default_check": true,
             "entry": "Bounty_Main",
             "option": [
                 "Bounty_Location_Selection",
@@ -65,6 +70,7 @@
         {
             "name": "Reward",
             "label": "미션 보상 수령",
+            "default_check": true,
             "entry": "Reward_Mission_Main"
         }
     ],

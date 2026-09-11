@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+from copy import deepcopy
 import json
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -17,6 +18,14 @@ WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+
+
+def merge_pipeline_override(target, source):
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge_pipeline_override(target[key], value)
+        else:
+            target[key] = deepcopy(value)
 
 
 def find_switch_cases(cases):
@@ -407,7 +416,10 @@ class MainWindow(QMainWindow):
         raw_tasks = self.runtime.interface.get("task", [])
         options_dict = self.runtime.interface.get("option", {})
         
-        task_dict = {t["entry"]: t for t in raw_tasks}
+        task_dict = {t["name"]: t for t in raw_tasks}
+        task_dict_by_entry = {}
+        for task in raw_tasks:
+            task_dict_by_entry.setdefault(task["entry"], task)
 
         user_config_path = self.runtime.user_dir / "config" / "user_config.json"
         user_config = {}
@@ -415,6 +427,8 @@ class MainWindow(QMainWindow):
             try:
                 with open(user_config_path, "r", encoding="utf-8") as f:
                     user_config = json.load(f)
+                if not isinstance(user_config, dict):
+                    user_config = {}
             except Exception as e:
                 print(f"설정 파일 로드 실패: {e}")
 
@@ -425,12 +439,14 @@ class MainWindow(QMainWindow):
             self.ui.minimizeEnableBtn.blockSignals(False)
 
         saved_tasks = user_config.get("tasks", [])
-        added_entries = set()
+        if not isinstance(saved_tasks, list):
+            saved_tasks = []
+        added_tasks = set()
 
         def add_task_widget(task_data, is_checked, saved_options):
             item = QListWidgetItem()
             item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
-            item.setData(Qt.UserRole, task_data["entry"])
+            item.setData(Qt.UserRole, task_data["name"])
             self.option_list_widget.addItem(item)
             
             task_options = []
@@ -446,10 +462,19 @@ class MainWindow(QMainWindow):
                 self.on_task_checkbox_toggled
             )
             
-            if saved_options:
-                for opt_name in custom_widget.selected_options.keys():
-                    if opt_name in saved_options:
-                        custom_widget.selected_options[opt_name] = saved_options[opt_name]
+            if isinstance(saved_options, dict):
+                for opt_name, opt in custom_widget.task_options:
+                    saved_value = saved_options.get(opt_name)
+                    if not isinstance(saved_value, list):
+                        continue
+
+                    valid_names = [case.get("name") for case in opt.get("cases", [])]
+                    selected = [name for name in valid_names if name in saved_value]
+                    if opt.get("type", "select") != "checkbox":
+                        selected = selected[:1]
+
+                    if selected or opt.get("type", "select") == "checkbox":
+                        custom_widget.selected_options[opt_name] = selected
             
             custom_widget.checkbox.blockSignals(True)
             custom_widget.checkbox.setChecked(is_checked)
@@ -458,20 +483,24 @@ class MainWindow(QMainWindow):
             item.setSizeHint(custom_widget.sizeHint())
             
             self.option_list_widget.setItemWidget(item, custom_widget)
-            added_entries.add(task_data["entry"])
+            added_tasks.add(task_data["name"])
 
         for saved_task in saved_tasks:
-            entry = saved_task.get("entry")
-            if entry in task_dict:
+            task_data = task_dict.get(saved_task.get("name"))
+            if task_data is None:
+                # 기존 entry 기반 설정 파일을 name 기반 형식으로 자동 마이그레이션한다.
+                task_data = task_dict_by_entry.get(saved_task.get("entry"))
+
+            if task_data is not None and task_data["name"] not in added_tasks:
                 add_task_widget(
-                    task_dict[entry],
-                    saved_task.get("checked", True),
+                    task_data,
+                    saved_task.get("checked", task_data.get("default_check", False)),
                     saved_task.get("selected_options", None)
                 )
 
         for task_data in raw_tasks:
-            if task_data["entry"] not in added_entries:
-                add_task_widget(task_data, True, None)
+            if task_data["name"] not in added_tasks:
+                add_task_widget(task_data, task_data.get("default_check", False), None)
 
         self.check_start_button_state()
 
@@ -662,6 +691,9 @@ class MainWindow(QMainWindow):
             if widget_in_item and widget_in_item.is_checked():
                 task_entry = widget_in_item.task_data["entry"]
                 override_params = {}
+                task_override = widget_in_item.task_data.get("pipeline_override", {})
+                if isinstance(task_override, dict):
+                    merge_pipeline_override(override_params, task_override)
                 
                 for opt_name, opt in widget_in_item.task_options:
                     selected_cases = widget_in_item.selected_options.get(opt_name, [])
@@ -672,10 +704,8 @@ class MainWindow(QMainWindow):
                     for case in opt.get("cases", []):
                         if case["name"] in selected_cases:
                             pipeline_override = case.get("pipeline_override", {})
-                            for node_name, node_params in pipeline_override.items():
-                                if node_name not in override_params:
-                                    override_params[node_name] = {}
-                                override_params[node_name].update(node_params)
+                            if isinstance(pipeline_override, dict):
+                                merge_pipeline_override(override_params, pipeline_override)
                 
                 execution_queue.append((task_entry, override_params))
                 
@@ -693,6 +723,7 @@ class MainWindow(QMainWindow):
             widget = self.option_list_widget.itemWidget(item)
             if widget:
                 tasks_data.append({
+                    "name": widget.task_data["name"],
                     "entry": widget.task_data["entry"],
                     "checked": widget.is_checked(),
                     "selected_options": widget.selected_options
@@ -703,11 +734,14 @@ class MainWindow(QMainWindow):
             minimize_enabled = self.ui.minimizeEnableBtn.isChecked()
                 
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
+            temp_path = config_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "minimize_enabled": minimize_enabled,
                     "tasks": tasks_data
                 }, f, ensure_ascii=False, indent=4)
+                f.flush()
+            temp_path.replace(config_path)
         except Exception as e:
             print(f"설정 파일 저장 실패: {e}")
 
