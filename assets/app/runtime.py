@@ -11,7 +11,6 @@ from ctypes import wintypes
 from maa.context import ContextEventSink
 from maa.controller import Win32Controller
 from maa.define import MaaWin32InputMethodEnum, MaaWin32ScreencapMethodEnum
-from maa.event_sink import NotificationType
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
@@ -327,45 +326,34 @@ class AppRuntime:
 
                 self._user32.ShowWindow(self._target_hwnd, 6)
 
-            jobs = []  # (entry, job) 쌍을 순서대로 보관
             executed_entries = []
+            failed_entries = []
 
-            with self._task_post_lock:
-                if cancellation_requested is not None and cancellation_requested():
-                    return False, "Task start cancelled."
+            for entry, override_data in execution_queue:
+                if isinstance(override_data, dict):
+                    override_param = override_data if override_data else None
+                elif isinstance(override_data, str) and override_data.strip() and override_data != "{}":
+                    try:
+                        override_param = json.loads(override_data)
+                    except json.JSONDecodeError as error:
+                        return False, f"Invalid pipeline override for {entry}: {error}"
+                    if not isinstance(override_param, dict):
+                        return False, f"Pipeline override for {entry} must be a JSON object."
+                else:
+                    override_param = None
 
-                for entry, override_data in execution_queue:
-                    if isinstance(override_data, dict):
-                        override_param = override_data if override_data else None
-                    elif isinstance(override_data, str) and override_data.strip() and override_data != "{}":
-                        try:
-                            override_param = json.loads(override_data)
-                        except json.JSONDecodeError as error:
-                            return False, f"Invalid pipeline override for {entry}: {error}"
-                        if not isinstance(override_param, dict):
-                            return False, f"Pipeline override for {entry} must be a JSON object."
-                    else:
-                        override_param = None
-
+                with self._task_post_lock:
+                    if cancellation_requested is not None and cancellation_requested():
+                        return False, "Task execution cancelled."
                     if override_param:
                         job = self.tasker.post_task(entry, override_param)
                     else:
                         job = self.tasker.post_task(entry)
 
-                    jobs.append((entry, job))
-                    executed_entries.append(entry)
-
-            failed_entries = []
-            if jobs:
-                _, last_job = jobs[-1]
-                last_job.wait()
-                
-                for entry, job in jobs:
-                    try:
-                        if not job.succeeded:
-                            failed_entries.append(entry)
-                    except Exception:
-                        failed_entries.append(entry)
+                executed_entries.append(entry)
+                job.wait()
+                if not job.succeeded:
+                    failed_entries.append(entry)
 
             if failed_entries:
                 return (
@@ -414,13 +402,7 @@ class LogSinkFocus(ContextEventSink):
         if self.log_callback is not None:
             self.log_callback(message)
 
-    def _on_raw_notification(self, handle, msg: str, details: dict):
-        if msg != "Node.Action.Starting":
-            return
-
-        if NotificationType.Starting != self._notification_type(msg):
-            return
-
+    def on_raw_notification(self, context, msg: str, details: dict):
         focus = details.get("focus")
         if focus is None:
             return
@@ -432,9 +414,21 @@ class LogSinkFocus(ContextEventSink):
 
             if isinstance(template, dict):
                 content = template.get("content", "")
+                display = template.get("display", "log")
+                if isinstance(display, str):
+                    display_channels = [display]
+                elif isinstance(display, list):
+                    display_channels = display
+                else:
+                    display_channels = []
+                if "log" not in display_channels:
+                    return
             else:
                 content = str(template)
         else:
+            # 기존 문자열 focus는 Action 시작 시 한 번만 출력한다.
+            if msg != "Node.Action.Starting":
+                return
             content = str(focus)
 
         if not content:
