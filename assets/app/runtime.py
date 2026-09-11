@@ -1,13 +1,14 @@
 from pathlib import Path
 from typing import Callable
 import json
+import threading
 import time
 
 import ctypes
 from ctypes import wintypes
 
 from maa.context import ContextEventSink
-from maa.controller import Win32Controller, MaaWin32ScreencapMethodEnum, MaaWin32InputMethodEnum
+from maa.controller import Win32Controller
 from maa.define import MaaWin32InputMethodEnum, MaaWin32ScreencapMethodEnum
 from maa.event_sink import NotificationType
 from maa.resource import Resource
@@ -28,13 +29,12 @@ class AppRuntime:
         self.controller_config = self._get_controller_config()
 
         self.resource = Resource()
-        self.resource.post_bundle(str(self.resource_dir)).wait()
-        self.resource.post_pipeline(str(self.resource_dir / "pipeline")).wait()
-
         self.tasker = Tasker()
         self.controller = None
         self.log_sink = LogSinkFocus()
         self._sink_bound = False
+        self._resource_loaded = False
+        self._task_post_lock = threading.Lock()
 
         self._target_hwnd = None
         self._original_window_rect = None
@@ -46,9 +46,24 @@ class AppRuntime:
     def _get_controller_config(self):
         controllers = self.interface.get("controller", [])
         if not controllers:
-            return {}
+            raise ValueError("No controller entry found in interface.json.")
 
-        return controllers[0]
+        controller = controllers[0]
+        if controller.get("type") != "Win32":
+            raise ValueError("The configured controller is not a Win32 controller.")
+
+        return controller
+
+    def _load_resource(self):
+        if self._resource_loaded and self.resource.loaded:
+            return True, "Resource already loaded."
+
+        job = self.resource.post_bundle(str(self.resource_dir)).wait()
+        if not job.succeeded or not self.resource.loaded:
+            return False, f"Resource loading failed: {self.resource_dir}"
+
+        self._resource_loaded = True
+        return True, "Resource loaded successfully."
 
     def _get_window_keyword(self):
         win32_config = self.controller_config.get("win32", {})
@@ -165,7 +180,9 @@ class AppRuntime:
         if self.controller is None:
             return False, "Controller is not created."
 
-        self.controller.post_connection().wait()
+        job = self.controller.post_connection().wait()
+        if not job.succeeded or not self.controller.connected:
+            return False, "Controller connection failed."
 
         return True, "Controller connected successfully."
 
@@ -173,9 +190,16 @@ class AppRuntime:
         if self.controller is None:
             return False, "Controller is not created."
 
-        self.tasker.bind(self.resource, self.controller)
+        if not self.tasker.bind(self.resource, self.controller):
+            return False, "Tasker binding failed."
+
+        if not self.tasker.inited:
+            return False, "Tasker is not initialized after binding."
+
         if not self._sink_bound:
-            self.tasker.add_context_sink(self.log_sink)
+            sink_id = self.tasker.add_context_sink(self.log_sink)
+            if sink_id is None:
+                return False, "Context sink binding failed."
             self._sink_bound = True
 
         return True, "Tasker bound successfully."
@@ -184,17 +208,27 @@ class AppRuntime:
 
     # winUI.py에서 호출하는 함수
     def initialize(self, minimize_window: bool = False):
-        created, create_message = self._create_controller(minimize_window)
-        if not created:
-            return False, create_message
+        try:
+            loaded, load_message = self._load_resource()
+            if not loaded:
+                return False, load_message
 
-        executed, execute_message = self._execute_controller()
-        if not executed:
-            return False, execute_message
+            created, create_message = self._create_controller(minimize_window)
+            if not created:
+                return False, create_message
 
-        bound, bind_message = self._bind_tasker()
-        if not bound:
-            return False, bind_message
+            executed, execute_message = self._execute_controller()
+            if not executed:
+                self.controller = None
+                return False, execute_message
+
+            bound, bind_message = self._bind_tasker()
+            if not bound:
+                self.controller = None
+                return False, bind_message
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+            self.controller = None
+            return False, f"AppRuntime initialization failed: {error}"
 
         # 146 라인 수정시 같이 수정할 것
         screencap_name = "PrintWindow" if minimize_window else "FramePool"
@@ -207,12 +241,17 @@ class AppRuntime:
             f"[Screen Capture : {screencap_name}]"
         )
 
-    def run_task(self, execution_queue: list[tuple[str, dict]] = None, minimize_window: bool = False):
+    def run_task(
+        self,
+        execution_queue: list[tuple[str, dict]] | None = None,
+        minimize_window: bool = False,
+        cancellation_requested: Callable[[], bool] | None = None,
+    ):
         if self.tasker is None:
             return False, "Tasker is not created."
 
         # 인수가 비어있거나 None이면 interface.json에서 백업으로 가져옴
-        if not execution_queue:
+        if execution_queue is None:
             tasks = self.interface.get("task", [])
             if not tasks:
                 return False, "No task entry found in interface.json."
@@ -240,24 +279,30 @@ class AppRuntime:
             jobs = []  # (entry, job) 쌍을 순서대로 보관
             executed_entries = []
 
-            for entry, override_data in execution_queue:
-                if isinstance(override_data, dict):
-                    override_param = override_data if override_data else None
-                elif isinstance(override_data, str) and override_data.strip() and override_data != "{}":
-                    try:
-                        override_param = json.loads(override_data)
-                    except Exception:
+            with self._task_post_lock:
+                if cancellation_requested is not None and cancellation_requested():
+                    return False, "Task start cancelled."
+
+                for entry, override_data in execution_queue:
+                    if isinstance(override_data, dict):
+                        override_param = override_data if override_data else None
+                    elif isinstance(override_data, str) and override_data.strip() and override_data != "{}":
+                        try:
+                            override_param = json.loads(override_data)
+                        except json.JSONDecodeError as error:
+                            return False, f"Invalid pipeline override for {entry}: {error}"
+                        if not isinstance(override_param, dict):
+                            return False, f"Pipeline override for {entry} must be a JSON object."
+                    else:
                         override_param = None
-                else:
-                    override_param = None
 
-                if override_param:
-                    job = self.tasker.post_task(entry, override_param)
-                else:
-                    job = self.tasker.post_task(entry)
+                    if override_param:
+                        job = self.tasker.post_task(entry, override_param)
+                    else:
+                        job = self.tasker.post_task(entry)
 
-                jobs.append((entry, job))
-                executed_entries.append(entry)
+                    jobs.append((entry, job))
+                    executed_entries.append(entry)
 
             failed_entries = []
             if jobs:
@@ -286,12 +331,14 @@ class AppRuntime:
         if self.tasker is None:
             return False, "Tasker is not created."
 
-        if not self.tasker.running:
-            return False, "Tasker is not running."
-
         try:
-            stop_job = self.tasker.post_stop()
+            with self._task_post_lock:
+                if not self.tasker.running:
+                    return False, "Tasker is not running."
+                stop_job = self.tasker.post_stop()
             stop_job.wait()
+            if not stop_job.succeeded:
+                return False, "Tasker stop failed."
             self.log_sink.set_log_callback(None)
             return True, "Tasker stop requested."
         except Exception as error:
@@ -304,7 +351,7 @@ class LogSinkFocus(ContextEventSink):
         super().__init__()
         self.log_callback: Callable[[str], None] | None = None
 
-    def set_log_callback(self, log_callback: Callable[[str], None]):
+    def set_log_callback(self, log_callback: Callable[[str], None] | None):
         self.log_callback = log_callback
 
     def _emit(self, message: str):
