@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -13,9 +14,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
 from PySide6.QtWidgets import QApplication
+from maa.define import MaaWin32ScreencapMethodEnum
 
 from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
-from app.winUI import MainWindow, RuntimeWorker
+from app.winUI import MainWindow, RuntimeWorker, WINDOW_TITLE
 
 
 def make_job(succeeded=True):
@@ -62,6 +64,31 @@ class RuntimeLifecycleTests(unittest.TestCase):
         tasker.assert_not_called()
         self.assertIsNone(runtime.resource)
         self.assertIsNone(runtime.tasker)
+
+    def test_window_search_ignores_app_and_preserves_capture_modes(self):
+        windows = [
+            SimpleNamespace(hwnd=111, window_name=WINDOW_TITLE),
+            SimpleNamespace(hwnd=222, window_name="Blue Archive - Notes"),
+            SimpleNamespace(hwnd=333, window_name="Blue Archive"),
+        ]
+        for minimize, capture in (
+            (False, MaaWin32ScreencapMethodEnum.FramePool),
+            (True, MaaWin32ScreencapMethodEnum.PrintWindow),
+        ):
+            with self.subTest(minimize=minimize), patch(
+                "app.runtime.Toolkit.find_desktop_windows", return_value=windows
+            ), patch("app.runtime.Win32Controller") as controller:
+                self.assertTrue(self.runtime._create_controller(minimize)[0])
+                self.assertEqual(controller.call_args.kwargs["hWnd"], 333)
+                self.assertEqual(controller.call_args.kwargs["screencap_method"], capture)
+
+    def test_app_window_alone_is_not_a_game_window(self):
+        windows = [SimpleNamespace(hwnd=111, window_name=WINDOW_TITLE)]
+        with patch("app.runtime.Toolkit.find_desktop_windows", return_value=windows), patch(
+            "app.runtime.Win32Controller"
+        ) as controller:
+            self.assertFalse(self.runtime._create_controller()[0])
+        controller.assert_not_called()
 
     def test_reinitialize_releases_old_binding_and_sink(self):
         self.configure_initialization()

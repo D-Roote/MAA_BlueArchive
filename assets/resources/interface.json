@@ -9,7 +9,7 @@
             "name": "Win32",
             "type": "Win32",
             "win32": {
-                "window_regex": "Blue Archive",
+                "window_regex": "^Blue Archive$",
                 "screencap": "PrintWindow",
                 "mouse": "PostMessageWithWindowPos",
                 "keyboard": "PostMessage"
