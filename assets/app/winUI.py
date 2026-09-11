@@ -1,7 +1,6 @@
 from pathlib import Path
 from datetime import datetime
 import json
-import cv2
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
@@ -205,6 +204,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.stop_worker = None
         self.isRunning = False
+        self._close_pending = False
 
         self.setup_connections()
 
@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         self.worker = RuntimeWorker(self.runtime, execution_queue, minimize_window)
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
-        self.worker.task_finished.connect(self.on_task_finished)
+        self.worker.finished.connect(self.on_task_finished)
 
         self.runtime.log_sink.set_log_callback(self.worker.log.emit)
 
@@ -324,32 +324,69 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(False)
 
         if not self.worker:
+            self.check_start_button_state()
             return
+
+        # MaaFW task가 아직 시작되지 않은 초기화 단계도 취소할 수 있게 한다.
+        self.worker.requestInterruption()
 
         # 정지 요청이 이미 진행 중이면 재실행하지 않음
         if self.stop_worker is not None and self.stop_worker.isRunning():
             return
 
         self.stop_worker = StopWorker(self.runtime)
-        self.stop_worker.finished_stop.connect(self.on_stop_worker_finished)
+        self.stop_worker.finished.connect(self.on_stop_worker_finished)
         self.stop_worker.start()
 
     def on_stop_worker_finished(self):
         if self.stop_worker is not None:
+            if self.stop_worker.succeeded:
+                self.append_log(self.stop_worker.result_message)
+            elif self.stop_worker.result_message != "Tasker is not running.":
+                self.append_log(self.stop_worker.result_message)
             self.stop_worker.deleteLater()
         self.stop_worker = None
+        self._finish_pending_close()
 
     def on_task_finished(self):
+        worker = self.worker
         self.isRunning = False
         self.runtime.log_sink.set_log_callback(None)
         self.ui.workStartBtn.setText("작업 시작")
         self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
-        self.ui.workStartBtn.setEnabled(True)
 
         self.set_options_locked(False)
+        self.check_start_button_state()
 
-        self.append_log("▶ 작업이 종료 되었습니다.\n")
+        if worker is not None:
+            prefix = "▶" if worker.succeeded else "⚠"
+            self.append_log(f"{prefix} {worker.result_message}\n")
+            worker.deleteLater()
+        self.worker = None
+        self._finish_pending_close()
+
+    def closeEvent(self, event):
+        worker_running = self.worker is not None and self.worker.isRunning()
+        stop_running = self.stop_worker is not None and self.stop_worker.isRunning()
+
+        if worker_running or stop_running:
+            self._close_pending = True
+            event.ignore()
+            if worker_running:
+                self.on_task_stop()
+            return
+
+        super().closeEvent(event)
+
+    def _finish_pending_close(self):
+        if not self._close_pending:
+            return
+
+        worker_running = self.worker is not None and self.worker.isRunning()
+        stop_running = self.stop_worker is not None and self.stop_worker.isRunning()
+        if not worker_running and not stop_running:
+            QTimer.singleShot(0, self.close)
 
     def setup_dynamic_options(self):
         self.option_list_widget = DragDropListWidget()
@@ -676,40 +713,48 @@ class MainWindow(QMainWindow):
 
 # 정지 요청 전용 스레드
 class StopWorker(QThread):
-    finished_stop = Signal()
-
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
         self.runtime = runtime
+        self.succeeded = False
+        self.result_message = ""
 
     def run(self):
-        self.runtime.stop_task()
-        self.finished_stop.emit()
+        self.succeeded, self.result_message = self.runtime.stop_task()
 
 # Tasker 스레드
 class RuntimeWorker(QThread):
     log = Signal(str)
-    task_finished = Signal()
 
     def __init__(self, runtime, execution_queue, minimize_window=False):
         super().__init__()
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
+        self.succeeded = False
+        self.result_message = "Task did not start."
 
     def run(self):
-        initialized, init_message = self.runtime.initialize(self.minimize_window)
-        self.log.emit(init_message)
+        try:
+            initialized, init_message = self.runtime.initialize(self.minimize_window)
+            if not initialized:
+                self.result_message = init_message
+                return
 
-        if not initialized:
-            self.task_finished.emit()
-            return
-        
-        self.log.emit("▶ 작업 시작...")
-        tasked, _ = self.runtime.run_task(self.execution_queue, self.minimize_window)
+            self.log.emit(init_message)
+            if self.isInterruptionRequested():
+                self.result_message = "Task start cancelled."
+                return
 
-        if not tasked:
-            self.task_finished.emit()
-            return
-
-        self.task_finished.emit()
+            self.log.emit("▶ 작업 시작...")
+            self.succeeded, self.result_message = self.runtime.run_task(
+                self.execution_queue,
+                self.minimize_window,
+                cancellation_requested=self.isInterruptionRequested,
+            )
+            if self.isInterruptionRequested():
+                self.succeeded = False
+                self.result_message = "Task stopped by user."
+        except Exception as error:
+            self.succeeded = False
+            self.result_message = f"Unexpected runtime error: {error}"
