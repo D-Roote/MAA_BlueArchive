@@ -64,17 +64,16 @@ class AppRuntime:
         self.user_dir = self.base_dir / "user"
         self.interface_path = self.resource_dir / "interface.json"
 
-        Toolkit.init_option(str(self.user_dir))
-
         self.interface = self._load_interface()
         self.controller_config = self._get_controller_config()
         self.resource_config = self._get_resource_config()
 
         self.resource = None
-        self.tasker = Tasker()
+        self.tasker = None
         self.controller = None
         self.log_sink = LogSinkFocus()
-        self._sink_bound = False
+        self._context_sink_id = None
+        self._toolkit_initialized = False
         self._resource_loaded = False
         self._task_post_lock = threading.Lock()
         self._user32 = create_user32()
@@ -199,16 +198,19 @@ class AppRuntime:
 
     def _restore_window(self):
         placement = self._original_window_placement
-        self._original_window_placement = None
         target_hwnd = self._target_hwnd
-        self._target_hwnd = None
 
         if not target_hwnd or placement is None:
             return False
-        if not self._user32.IsWindow(target_hwnd):
+        # 창이 닫혔다면 복원할 대상이 없고, API 실패 시에는 재시도할 원본을 남긴다.
+        if self._user32.IsWindow(target_hwnd) and not self._user32.SetWindowPlacement(
+            target_hwnd, ctypes.byref(placement)
+        ):
             return False
 
-        return bool(self._user32.SetWindowPlacement(target_hwnd, ctypes.byref(placement)))
+        self._original_window_placement = None
+        self._target_hwnd = None
+        return True
 
 
     def _create_controller(self, minimize_window: bool = False):
@@ -275,11 +277,11 @@ class AppRuntime:
         if not self.tasker.inited:
             return False, "Tasker is not initialized after binding."
 
-        if not self._sink_bound:
+        if self._context_sink_id is None:
             sink_id = self.tasker.add_context_sink(self.log_sink)
             if sink_id is None:
                 return False, "Context sink binding failed."
-            self._sink_bound = True
+            self._context_sink_id = sink_id
 
         return True, "Tasker bound successfully."
     
@@ -287,27 +289,42 @@ class AppRuntime:
 
     # winUI.py에서 호출하는 함수
     def initialize(self, minimize_window: bool = False):
+        released, release_message = self.release_session()
+        if not released:
+            return False, release_message
+
+        initialized = False
         try:
+            if not self._toolkit_initialized:
+                if not Toolkit.init_option(str(self.user_dir)):
+                    return False, "Toolkit initialization failed."
+                self._toolkit_initialized = True
+
             loaded, load_message = self._load_resource()
             if not loaded:
                 return False, load_message
 
+            # 재바인딩 대신 실행마다 새 Tasker를 사용해 이전 컨트롤러 참조를 분리한다.
+            self.tasker = Tasker()
             created, create_message = self._create_controller(minimize_window)
             if not created:
                 return False, create_message
 
             executed, execute_message = self._execute_controller()
             if not executed:
-                self.controller = None
                 return False, execute_message
 
             bound, bind_message = self._bind_tasker()
             if not bound:
-                self.controller = None
                 return False, bind_message
+            initialized = True
         except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
-            self.controller = None
             return False, f"AppRuntime initialization failed: {error}"
+        finally:
+            if not initialized:
+                released, release_message = self.release_session()
+                if not released:
+                    raise RuntimeError(release_message)
 
         # 146 라인 수정시 같이 수정할 것
         screencap_name = "PrintWindow" if minimize_window else "FramePool"
@@ -329,7 +346,7 @@ class AppRuntime:
         if self.tasker is None:
             return False, "Tasker is not created."
 
-        # 인수가 비어있거나 None이면 interface.json에서 백업으로 가져옴
+        # 명시적인 빈 목록은 실행하지 않고, None일 때만 기본 작업 목록을 사용한다.
         if execution_queue is None:
             tasks = self.interface.get("task", [])
             if not tasks:
@@ -392,26 +409,54 @@ class AppRuntime:
 
             return True, f"All tasks finished: {', '.join(executed_entries)}"
         finally:
-            if self.controller is not None:
-                try:
-                    self.controller.post_inactive().wait()
-                except Exception:
-                    pass
-            self._restore_window()
+            released, release_message = self.release_session()
+            if not released:
+                raise RuntimeError(release_message)
+
+    def release_session(self):
+        """정지 완료 후 Tasker, 컨트롤러, 창 상태 순서로 실행 상태를 정리한다."""
+        with self._task_post_lock:
+            try:
+                if self.tasker is not None:
+                    if self.tasker.running or self.tasker.stopping:
+                        if not self.tasker.post_stop().wait().succeeded:
+                            return False, "Tasker stop failed during cleanup."
+                    if self._context_sink_id is not None:
+                        self.tasker.remove_context_sink(self._context_sink_id)
+                        self._context_sink_id = None
+
+                # Tasker가 보유하는 controller 참조부터 해제한다.
+                self.tasker = None
+                cleanup_errors = []
+                if self.controller is not None and self.controller.connected:
+                    try:
+                        if not self.controller.post_inactive().wait().succeeded:
+                            cleanup_errors.append("Controller deactivation failed during cleanup.")
+                    except Exception as error:
+                        cleanup_errors.append(f"Controller deactivation failed: {error}")
+                self.controller = None
+
+                if self._original_window_placement is not None:
+                    if not self._restore_window():
+                        cleanup_errors.append("Failed to restore the original window state.")
+                else:
+                    self._target_hwnd = None
+                if cleanup_errors:
+                    return False, " ".join(cleanup_errors)
+                return True, "Runtime session released."
+            except Exception as error:
+                return False, f"Runtime cleanup failed: {error}"
         
     def stop_task(self):
-        if self.tasker is None:
-            return False, "Tasker is not created."
-
         try:
             with self._task_post_lock:
-                if not self.tasker.running:
+                if self.tasker is None or not self.tasker.running:
                     return False, "Tasker is not running."
                 stop_job = self.tasker.post_stop()
-            stop_job.wait()
-            if not stop_job.succeeded:
-                return False, "Tasker stop failed."
-            self.log_sink.set_log_callback(None)
+                # 정지 완료 전에는 cleanup/다음 실행이 같은 Tasker에 접근하지 못하게 한다.
+                stop_job.wait()
+                if not stop_job.succeeded:
+                    return False, "Tasker stop failed."
             return True, "Tasker stop requested."
         except Exception as error:
             return False, f"Tasker stop failed: {error}"

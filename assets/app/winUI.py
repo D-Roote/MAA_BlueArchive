@@ -304,6 +304,8 @@ class MainWindow(QMainWindow):
         self.ui.logPrintText.ensureCursorVisible()
 
     def on_task_start(self):
+        if self.worker is not None or self.stop_worker is not None or self._close_pending:
+            return
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 
@@ -342,7 +344,7 @@ class MainWindow(QMainWindow):
         self.worker.requestInterruption()
 
         # 정지 요청이 이미 진행 중이면 재실행하지 않음
-        if self.stop_worker is not None and self.stop_worker.isRunning():
+        if self.stop_worker is not None:
             return
 
         self.stop_worker = StopWorker(self.runtime)
@@ -357,29 +359,36 @@ class MainWindow(QMainWindow):
                 self.append_log(self.stop_worker.result_message)
             self.stop_worker.deleteLater()
         self.stop_worker = None
-        self._finish_pending_close()
+        self._finish_run_if_idle()
 
     def on_task_finished(self):
         worker = self.worker
-        self.isRunning = False
         self.runtime.log_sink.set_log_callback(None)
-        self.ui.workStartBtn.setText("작업 시작")
-        self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
-        self.ui.workStartBtn.clicked.connect(self.on_task_start)
-
-        self.set_options_locked(False)
-        self.check_start_button_state()
 
         if worker is not None:
             prefix = "▶" if worker.succeeded else "⚠"
             self.append_log(f"{prefix} {worker.result_message}\n")
             worker.deleteLater()
         self.worker = None
+        self.ui.workStartBtn.setEnabled(False)
+        self._finish_run_if_idle()
+
+    def _finish_run_if_idle(self):
+        # 두 finished 콜백이 모두 처리되기 전에는 새 실행을 허용하지 않는다.
+        if self.worker is not None or self.stop_worker is not None:
+            return
+        if self.isRunning:
+            self.isRunning = False
+            self.ui.workStartBtn.setText("작업 시작")
+            self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
+            self.ui.workStartBtn.clicked.connect(self.on_task_start)
+        self.set_options_locked(False)
+        self.check_start_button_state()
         self._finish_pending_close()
 
     def closeEvent(self, event):
-        worker_running = self.worker is not None and self.worker.isRunning()
-        stop_running = self.stop_worker is not None and self.stop_worker.isRunning()
+        worker_running = self.worker is not None
+        stop_running = self.stop_worker is not None
 
         if worker_running or stop_running:
             self._close_pending = True
@@ -394,8 +403,8 @@ class MainWindow(QMainWindow):
         if not self._close_pending:
             return
 
-        worker_running = self.worker is not None and self.worker.isRunning()
-        stop_running = self.stop_worker is not None and self.stop_worker.isRunning()
+        worker_running = self.worker is not None
+        stop_running = self.stop_worker is not None
         if not worker_running and not stop_running:
             QTimer.singleShot(0, self.close)
 
@@ -657,6 +666,9 @@ class MainWindow(QMainWindow):
         self.on_user_config_changed()
 
     def check_start_button_state(self):
+        if self.isRunning or self.stop_worker is not None or self._close_pending:
+            self.ui.workStartBtn.setEnabled(False)
+            return
         any_checked = False
         for i in range(self.option_list_widget.count()):
             item = self.option_list_widget.item(i)
@@ -799,3 +811,8 @@ class RuntimeWorker(QThread):
         except Exception as error:
             self.succeeded = False
             self.result_message = f"Unexpected runtime error: {error}"
+        finally:
+            released, release_message = self.runtime.release_session()
+            if not released:
+                self.succeeded = False
+                self.result_message += f"\n{release_message}"
