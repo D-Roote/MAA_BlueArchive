@@ -68,8 +68,9 @@ class AppRuntime:
 
         self.interface = self._load_interface()
         self.controller_config = self._get_controller_config()
+        self.resource_config = self._get_resource_config()
 
-        self.resource = Resource()
+        self.resource = None
         self.tasker = Tasker()
         self.controller = None
         self.log_sink = LogSinkFocus()
@@ -96,13 +97,40 @@ class AppRuntime:
 
         return controller
 
+    def _get_resource_config(self):
+        resources = self.interface.get("resource", [])
+        if not resources:
+            raise ValueError("No resource entry found in interface.json.")
+
+        resource = resources[0]
+        paths = resource.get("path", [])
+        if not isinstance(paths, list) or not paths:
+            raise ValueError("The configured resource path list must not be empty.")
+        if not all(isinstance(path, str) and path for path in paths):
+            raise ValueError("Every configured resource path must be a non-empty string.")
+
+        return resource
+
     def _load_resource(self):
-        if self._resource_loaded and self.resource.loaded:
+        if self._resource_loaded and self.resource is not None and self.resource.loaded:
             return True, "Resource already loaded."
 
-        job = self.resource.post_bundle(str(self.resource_dir)).wait()
-        if not job.succeeded or not self.resource.loaded:
-            return False, f"Resource loading failed: {self.resource_dir}"
+        # 실패했던 Resource에 일부 노드가 남아 있을 수 있으므로 재시도마다 새로 만든다.
+        self.resource = Resource()
+        resource_paths = [
+            (self.interface_path.parent / configured_path).resolve()
+            for configured_path in self.resource_config["path"]
+        ]
+
+        for resource_path in resource_paths:
+            job = self.resource.post_bundle(str(resource_path)).wait()
+            if not job.succeeded:
+                self.resource = None
+                return False, f"Resource loading failed: {resource_path}"
+
+        if not self.resource.loaded:
+            self.resource = None
+            return False, "Resource loading did not produce a loaded resource."
 
         self._resource_loaded = True
         return True, "Resource loaded successfully."
@@ -238,8 +266,8 @@ class AppRuntime:
         return True, "Controller connected successfully."
 
     def _bind_tasker(self):
-        if self.controller is None:
-            return False, "Controller is not created."
+        if self.controller is None or self.resource is None:
+            return False, "Resource or controller is not created."
 
         if not self.tasker.bind(self.resource, self.controller):
             return False, "Tasker binding failed."

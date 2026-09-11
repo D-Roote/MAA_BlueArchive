@@ -196,6 +196,8 @@ class MainWindow(QMainWindow):
         qss_path = Path(__file__).resolve().parent.parent / "pySide6" / QSS_FILENAME
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
+        if self.ui is None:
+            raise RuntimeError(f"Failed to load UI file {ui_path}: {loader.errorString()}")
         
         self.ui.tabWidget.setUsesScrollButtons(False)
 
@@ -530,18 +532,21 @@ class MainWindow(QMainWindow):
             cases = opt.get("cases", [])
 
             if opt_type == "select":
-                button_group = QButtonGroup(container_widget)
+                select_container = QWidget(container_widget)
+                select_layout = QVBoxLayout(select_container)
+                select_layout.setContentsMargins(0, 0, 0, 0)
+                select_layout.setSpacing(0)
+                button_group = QButtonGroup(select_container)
                 
                 for case in cases:
                     case_name = case["name"]
 
-                    row_widget = QWidget()
+                    row_widget = QWidget(select_container)
                     row_layout = QHBoxLayout(row_widget)
                     row_layout.setContentsMargins(0, 2, 0, 2)
                     row_layout.setSpacing(8)
 
                     radio_btn = QRadioButton("")
-                    radio_btn.setAutoExclusive(False)
                     button_group.addButton(radio_btn)
                     
                     if case_name in item_widget.selected_options.get(opt_name, []):
@@ -558,7 +563,9 @@ class MainWindow(QMainWindow):
                     
                     row_layout.addWidget(radio_btn)
                     row_layout.addWidget(case_label, 1) # 🌟 stretch=1
-                    layout.addWidget(row_widget)
+                    select_layout.addWidget(row_widget)
+
+                layout.addWidget(select_container)
 
             elif opt_type == "checkbox":
                 for case in cases:
