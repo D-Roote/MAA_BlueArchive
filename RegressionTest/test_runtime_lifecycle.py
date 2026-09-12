@@ -1,4 +1,4 @@
-"""Run with .venv/Scripts/python.exe -m unittest discover -s tests -v."""
+"""Run with .venv/Scripts/python.exe -m unittest discover -s RegressionTest -v."""
 
 import os
 import re
