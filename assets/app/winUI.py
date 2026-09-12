@@ -307,6 +307,8 @@ class MainWindow(QMainWindow):
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
         
         self.ui.tabWidget.setUsesScrollButtons(False)
+        # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
+        self.ui.tabWidget.setCurrentWidget(self.ui.mainTab)
 
         if qss_path.exists():
             with open(qss_path, "r", encoding="utf-8") as f:
