@@ -126,6 +126,25 @@ def find_switch_cases(cases):
     return yes_case_name, no_case_name
 
 
+class TaskSettingsButton(QPushButton):
+    """클릭 영역은 유지하고 호버 시 아이콘만 확대하는 설정 버튼."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("taskSettingsButton")
+        self.setFixedSize(30, 30)
+        self.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
+        self.setIconSize(QSize(20, 20))
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.setIconSize(QSize(24, 24))
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.setIconSize(QSize(20, 20))
+
+
 # 동적 List 클래스
 class OptionItemWidget(QWidget):
     def __init__(self, task_data, task_options, on_setting_clicked_callback, on_checkbox_toggled_callback, parent=None):
@@ -169,11 +188,7 @@ class OptionItemWidget(QWidget):
 
         layout.addWidget(self.label, 1) 
 
-        self.setting_btn = QPushButton()
-        self.setting_btn.setObjectName("taskSettingsButton")
-        self.setting_btn.setFixedSize(30, 30)
-        self.setting_btn.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
-        self.setting_btn.setIconSize(QSize(20, 20))
+        self.setting_btn = TaskSettingsButton()
         self.setting_btn.setToolTip(f"{display_name} 세부 설정")
         self.setting_btn.setAccessibleName(f"{display_name} 세부 설정")
         self.checkbox.setAccessibleName(f"{display_name} 실행 선택")
