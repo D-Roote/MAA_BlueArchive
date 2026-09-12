@@ -4,7 +4,7 @@
 자동화 파이프라인과 인식용 이미지가 있는 `assets/resources`와는 별개입니다.
 
 - `icons/controls/`: 체크박스와 라디오 버튼의 선택/미선택, 호버, 비활성 상태별 SVG
-- `icons/actions/`: Task 세부 설정 버튼의 흰색 톱니바퀴 SVG
+- `icons/actions/`: 투명 버튼 배경에 표시하는 파란색 톱니바퀴 SVG
 
 아이콘은 24×24 viewBox로 직접 작성한 벡터 이미지입니다.
 주요 색은 `#00AEEF`, 호버 색은 `#009BD6`, 윤곽선은 `#CBD5E1`을 사용합니다.

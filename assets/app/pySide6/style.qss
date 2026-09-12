@@ -97,11 +97,21 @@ QPushButton:disabled {
 
 QPushButton#taskSettingsButton {
     padding: 0px;
+    background-color: transparent;
+    border: 2px solid transparent;
     border-radius: 6px;
 }
 
+QPushButton#taskSettingsButton:hover {
+    border-color: #00AEEF;
+}
+
+QPushButton#taskSettingsButton:pressed {
+    border-color: #0087BA;
+}
+
 QPushButton#taskSettingsButton:focus {
-    border: 2px solid #475569;
+    border-color: #475569;
 }
 
 QPushButton#stopBtn {
