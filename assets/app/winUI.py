@@ -23,6 +23,9 @@ WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+APP_DIR = Path(__file__).resolve().parent
+UI_DIR = APP_DIR / "pySide6"
+UI_RESOURCE_DIR = APP_DIR / "resources"
 
 
 class TitleBarTheme(str, Enum):
@@ -274,8 +277,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        ui_path = Path(__file__).resolve().parent.parent / "pySide6" / UI_FILENAME
-        qss_path = Path(__file__).resolve().parent.parent / "pySide6" / QSS_FILENAME
+        ui_path = UI_DIR / UI_FILENAME
+        qss_path = UI_DIR / QSS_FILENAME
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
