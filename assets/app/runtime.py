@@ -483,7 +483,7 @@ class AppRuntime:
                 stop_job.wait()
                 if not stop_job.succeeded:
                     return False, "Tasker 중지에 실패했습니다."
-            return True, "Tasker 중지를 요청했습니다."
+            return True, "작업 중지 중입니다..."
         except Exception as error:
             return False, f"Tasker 중지 중 오류가 발생했습니다: {error}"
         
