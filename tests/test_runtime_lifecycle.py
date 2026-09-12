@@ -90,6 +90,38 @@ class RuntimeLifecycleTests(unittest.TestCase):
             self.assertFalse(self.runtime._create_controller()[0])
         controller.assert_not_called()
 
+    def test_all_tasks_are_queued_before_first_wait(self):
+        tasker = MagicMock()
+        first_job = make_job()
+        second_job = make_job()
+        posted_entries = []
+
+        def post_task(entry, *args):
+            posted_entries.append(entry)
+            return first_job if entry == "First" else second_job
+
+        def wait_first():
+            self.assertEqual(posted_entries, ["First", "Second"])
+            return first_job
+
+        tasker.post_task.side_effect = post_task
+        first_job.wait.side_effect = wait_first
+        self.runtime.tasker = tasker
+        self.runtime._target_hwnd = 123
+
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "release_session", return_value=(True, "released")
+        ):
+            succeeded, _ = self.runtime.run_task(
+                [("First", {}), ("Second", {})], minimize_window=True
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(tasker.post_task.call_count, 2)
+        first_job.wait.assert_called_once()
+        second_job.wait.assert_called_once()
+        self.runtime._user32.ShowWindow.assert_called_once_with(123, 6)
+
     def test_reinitialize_releases_old_binding_and_sink(self):
         self.configure_initialization()
         self.assertTrue(self.runtime.initialize()[0])

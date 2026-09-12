@@ -371,9 +371,7 @@ class AppRuntime:
 
                 self._user32.ShowWindow(self._target_hwnd, 6)
 
-            executed_entries = []
-            failed_entries = []
-
+            prepared_tasks = []
             for entry, override_data in execution_queue:
                 if isinstance(override_data, dict):
                     override_param = override_data if override_data else None
@@ -387,15 +385,25 @@ class AppRuntime:
                 else:
                     override_param = None
 
-                with self._task_post_lock:
+                prepared_tasks.append((entry, override_param))
+
+            jobs = []
+            executed_entries = []
+            with self._task_post_lock:
+                # MaaFW는 큐가 비면 controller를 자동으로 inactive 처리한다. 모든 작업을
+                # 먼저 등록해야 최소화한 Win32 창이 중간 작업에서 복원되지 않는다.
+                for entry, override_param in prepared_tasks:
                     if cancellation_requested is not None and cancellation_requested():
                         return False, "Task execution cancelled."
                     if override_param:
                         job = self.tasker.post_task(entry, override_param)
                     else:
                         job = self.tasker.post_task(entry)
+                    jobs.append((entry, job))
+                    executed_entries.append(entry)
 
-                executed_entries.append(entry)
+            failed_entries = []
+            for entry, job in jobs:
                 job.wait()
                 if not job.succeeded:
                     failed_entries.append(entry)
