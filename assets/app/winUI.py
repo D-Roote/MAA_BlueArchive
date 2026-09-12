@@ -253,6 +253,16 @@ class OptionItemWidget(QWidget):
                     self.selected_options[opt_name] = [no_case_name]
                 else:
                     self.selected_options[opt_name] = []
+            elif opt_type == "select":
+                case_names = [
+                    case.get("name") for case in opt.get("cases", []) if case.get("name")
+                ]
+                if default_case in case_names:
+                    self.selected_options[opt_name] = [default_case]
+                elif case_names:
+                    self.selected_options[opt_name] = [case_names[0]]
+                else:
+                    self.selected_options[opt_name] = []
             elif isinstance(default_case, list):
                 self.selected_options[opt_name] = list(default_case)
             elif default_case:
