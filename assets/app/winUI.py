@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
-            raise RuntimeError(f"Failed to load UI file {ui_path}: {loader.errorString()}")
+            raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
         
         self.ui.tabWidget.setUsesScrollButtons(False)
 
@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
         if self.stop_worker is not None:
             if self.stop_worker.succeeded:
                 self.append_log(self.stop_worker.result_message)
-            elif self.stop_worker.result_message != "Tasker is not running.":
+            elif self.stop_worker.result_message != "실행 중인 Tasker가 없습니다.":
                 self.append_log(self.stop_worker.result_message)
             self.stop_worker.deleteLater()
         self.stop_worker = None
@@ -571,7 +571,7 @@ class MainWindow(QMainWindow):
                     radio_btn.toggled.connect(make_radio_slot(item_widget, opt_name, case_name))
                     
                     row_layout.addWidget(radio_btn)
-                    row_layout.addWidget(case_label, 1) # 🌟 stretch=1
+                    row_layout.addWidget(case_label, 1)
                     select_layout.addWidget(row_widget)
 
                 layout.addWidget(select_container)
@@ -785,7 +785,7 @@ class RuntimeWorker(QThread):
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
         self.succeeded = False
-        self.result_message = "Task did not start."
+        self.result_message = "작업을 시작하지 못했습니다."
 
     def run(self):
         try:
@@ -796,7 +796,7 @@ class RuntimeWorker(QThread):
 
             self.log.emit(init_message)
             if self.isInterruptionRequested():
-                self.result_message = "Task start cancelled."
+                self.result_message = "작업 시작이 취소되었습니다."
                 return
 
             self.log.emit("▶ 작업 시작...")
@@ -807,10 +807,10 @@ class RuntimeWorker(QThread):
             )
             if self.isInterruptionRequested():
                 self.succeeded = False
-                self.result_message = "Task stopped by user."
+                self.result_message = "작업이 중지되었습니다."
         except Exception as error:
             self.succeeded = False
-            self.result_message = f"Unexpected runtime error: {error}"
+            self.result_message = f"Runtime에서 예기치 않은 오류가 발생했습니다: {error}"
         finally:
             released, release_message = self.runtime.release_session()
             if not released:

@@ -23,9 +23,12 @@
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
      <widget class="QTabWidget" name="tabWidget">
+      <property name="currentIndex">
+       <number>1</number>
+      </property>
       <widget class="QWidget" name="mainTab">
        <attribute name="title">
-        <string>Tab 1</string>
+        <string>시작</string>
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
@@ -427,7 +430,7 @@
       </widget>
       <widget class="QWidget" name="settingTab">
        <attribute name="title">
-        <string>Tab 2</string>
+        <string>설정</string>
        </attribute>
       </widget>
      </widget>

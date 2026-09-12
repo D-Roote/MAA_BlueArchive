@@ -88,31 +88,31 @@ class AppRuntime:
     def _get_controller_config(self):
         controllers = self.interface.get("controller", [])
         if not controllers:
-            raise ValueError("No controller entry found in interface.json.")
+            raise ValueError("interface.json에 컨트롤러 항목이 없습니다.")
 
         controller = controllers[0]
         if controller.get("type") != "Win32":
-            raise ValueError("The configured controller is not a Win32 controller.")
+            raise ValueError("설정된 컨트롤러가 Win32 형식이 아닙니다.")
 
         return controller
 
     def _get_resource_config(self):
         resources = self.interface.get("resource", [])
         if not resources:
-            raise ValueError("No resource entry found in interface.json.")
+            raise ValueError("interface.json에 리소스 항목이 없습니다.")
 
         resource = resources[0]
         paths = resource.get("path", [])
         if not isinstance(paths, list) or not paths:
-            raise ValueError("The configured resource path list must not be empty.")
+            raise ValueError("설정된 리소스 경로 목록이 비어 있습니다.")
         if not all(isinstance(path, str) and path for path in paths):
-            raise ValueError("Every configured resource path must be a non-empty string.")
+            raise ValueError("모든 리소스 경로는 비어 있지 않은 문자열이어야 합니다.")
 
         return resource
 
     def _load_resource(self):
         if self._resource_loaded and self.resource is not None and self.resource.loaded:
-            return True, "Resource already loaded."
+            return True, "리소스가 이미 로드되어 있습니다."
 
         # 실패했던 Resource에 일부 노드가 남아 있을 수 있으므로 재시도마다 새로 만든다.
         self.resource = Resource()
@@ -125,14 +125,14 @@ class AppRuntime:
             job = self.resource.post_bundle(str(resource_path)).wait()
             if not job.succeeded:
                 self.resource = None
-                return False, f"Resource loading failed: {resource_path}"
+                return False, f"리소스 로드에 실패했습니다: {resource_path}"
 
         if not self.resource.loaded:
             self.resource = None
-            return False, "Resource loading did not produce a loaded resource."
+            return False, "리소스 로드가 완료되지 않았습니다."
 
         self._resource_loaded = True
-        return True, "Resource loaded successfully."
+        return True, "리소스를 불러왔습니다."
 
     def _get_window_keyword(self):
         win32_config = self.controller_config.get("win32", {})
@@ -216,16 +216,16 @@ class AppRuntime:
     def _create_controller(self, minimize_window: bool = False):
         windows = Toolkit.find_desktop_windows()
         if not windows:
-            return False, "No desktop windows found."
+            return False, "실행 중인 데스크톱 창을 찾을 수 없습니다."
         
         window_keyword = self._get_window_keyword()
         if not window_keyword:
-            return False, "The Win32 window_regex must not be empty."
+            return False, "Win32 window_regex 설정이 비어 있습니다."
 
         try:
             window_pattern = re.compile(window_keyword, re.IGNORECASE)
         except re.error as error:
-            return False, f"Invalid Win32 window_regex: {error}"
+            return False, f"Win32 window_regex가 올바르지 않습니다: {error}"
 
         candidates = []
         for w in windows:
@@ -255,35 +255,35 @@ class AppRuntime:
 
         self.controller = controller
 
-        return True, "Controller created successfully."
+        return True, "컨트롤러를 생성했습니다."
         
     def _execute_controller(self):
         if self.controller is None:
-            return False, "Controller is not created."
+            return False, "컨트롤러가 생성되지 않았습니다."
 
         job = self.controller.post_connection().wait()
         if not job.succeeded or not self.controller.connected:
-            return False, "Controller connection failed."
+            return False, "컨트롤러 연결에 실패했습니다."
 
-        return True, "Controller connected successfully."
+        return True, "컨트롤러를 연결했습니다."
 
     def _bind_tasker(self):
         if self.controller is None or self.resource is None:
-            return False, "Resource or controller is not created."
+            return False, "리소스 또는 컨트롤러가 생성되지 않았습니다."
 
         if not self.tasker.bind(self.resource, self.controller):
-            return False, "Tasker binding failed."
+            return False, "Tasker 연결에 실패했습니다."
 
         if not self.tasker.inited:
-            return False, "Tasker is not initialized after binding."
+            return False, "연결 후 Tasker가 초기화되지 않았습니다."
 
         if self._context_sink_id is None:
             sink_id = self.tasker.add_context_sink(self.log_sink)
             if sink_id is None:
-                return False, "Context sink binding failed."
+                return False, "로그 콜백 연결에 실패했습니다."
             self._context_sink_id = sink_id
 
-        return True, "Tasker bound successfully."
+        return True, "Tasker를 연결했습니다."
     
     
 
@@ -297,7 +297,7 @@ class AppRuntime:
         try:
             if not self._toolkit_initialized:
                 if not Toolkit.init_option(str(self.user_dir)):
-                    return False, "Toolkit initialization failed."
+                    return False, "MaaFW Toolkit 초기화에 실패했습니다."
                 self._toolkit_initialized = True
 
             loaded, load_message = self._load_resource()
@@ -319,7 +319,7 @@ class AppRuntime:
                 return False, bind_message
             initialized = True
         except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
-            return False, f"AppRuntime initialization failed: {error}"
+            return False, f"Runtime 초기화 중 오류가 발생했습니다: {error}"
         finally:
             if not initialized:
                 released, release_message = self.release_session()
@@ -333,8 +333,7 @@ class AppRuntime:
 
         return (
             True, 
-            # f"AppRuntime initialized successfully.\n"
-            f"[Screen Capture : {screencap_name}]"
+            f"[화면 캡처: {screencap_name}]"
         )
 
     def run_task(
@@ -344,13 +343,13 @@ class AppRuntime:
         cancellation_requested: Callable[[], bool] | None = None,
     ):
         if self.tasker is None:
-            return False, "Tasker is not created."
+            return False, "Tasker가 생성되지 않았습니다."
 
         # 명시적인 빈 목록은 실행하지 않고, None일 때만 기본 작업 목록을 사용한다.
         if execution_queue is None:
             tasks = self.interface.get("task", [])
             if not tasks:
-                return False, "No task entry found in interface.json."
+                return False, "interface.json에 작업 항목이 없습니다."
             
             execution_queue = []
             for task_data in tasks:
@@ -359,11 +358,11 @@ class AppRuntime:
                     execution_queue.append((entry, {}))
 
         if not execution_queue:
-            return False, "No valid tasks to execute."
+            return False, "실행할 작업이 없습니다."
         
         try:
             if not self._resize_window_for_task(1280, 720):
-                return False, "Failed to resize the target window to a 1280x720 client area."
+                return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
 
             if minimize_window and self._target_hwnd:
                 self._user32.SetForegroundWindow(self._target_hwnd)
@@ -379,9 +378,9 @@ class AppRuntime:
                     try:
                         override_param = json.loads(override_data)
                     except json.JSONDecodeError as error:
-                        return False, f"Invalid pipeline override for {entry}: {error}"
+                        return False, f"{entry}의 파이프라인 오버라이드가 올바르지 않습니다: {error}"
                     if not isinstance(override_param, dict):
-                        return False, f"Pipeline override for {entry} must be a JSON object."
+                        return False, f"{entry}의 파이프라인 오버라이드는 JSON 객체여야 합니다."
                 else:
                     override_param = None
 
@@ -394,7 +393,7 @@ class AppRuntime:
                 # 먼저 등록해야 최소화한 Win32 창이 중간 작업에서 복원되지 않는다.
                 for entry, override_param in prepared_tasks:
                     if cancellation_requested is not None and cancellation_requested():
-                        return False, "Task execution cancelled."
+                        return False, "작업 실행이 취소되었습니다."
                     if override_param:
                         job = self.tasker.post_task(entry, override_param)
                     else:
@@ -411,11 +410,11 @@ class AppRuntime:
             if failed_entries:
                 return (
                     False,
-                    f"Some tasks failed: {', '.join(failed_entries)} "
-                    f"(all executed: {', '.join(executed_entries)})"
+                    f"일부 작업에 실패했습니다: {', '.join(failed_entries)} "
+                    f"(전체 실행 작업: {', '.join(executed_entries)})"
                 )
 
-            return True, f"All tasks finished: {', '.join(executed_entries)}"
+            return True, f"모든 작업을 완료했습니다: {', '.join(executed_entries)}"
         finally:
             released, release_message = self.release_session()
             if not released:
@@ -428,7 +427,7 @@ class AppRuntime:
                 if self.tasker is not None:
                     if self.tasker.running or self.tasker.stopping:
                         if not self.tasker.post_stop().wait().succeeded:
-                            return False, "Tasker stop failed during cleanup."
+                            return False, "정리 중 Tasker 중지에 실패했습니다."
                     if self._context_sink_id is not None:
                         self.tasker.remove_context_sink(self._context_sink_id)
                         self._context_sink_id = None
@@ -439,35 +438,35 @@ class AppRuntime:
                 if self.controller is not None and self.controller.connected:
                     try:
                         if not self.controller.post_inactive().wait().succeeded:
-                            cleanup_errors.append("Controller deactivation failed during cleanup.")
+                            cleanup_errors.append("정리 중 컨트롤러 비활성화에 실패했습니다.")
                     except Exception as error:
-                        cleanup_errors.append(f"Controller deactivation failed: {error}")
+                        cleanup_errors.append(f"컨트롤러 비활성화에 실패했습니다: {error}")
                 self.controller = None
 
                 if self._original_window_placement is not None:
                     if not self._restore_window():
-                        cleanup_errors.append("Failed to restore the original window state.")
+                        cleanup_errors.append("창을 원래 상태로 복원하지 못했습니다.")
                 else:
                     self._target_hwnd = None
                 if cleanup_errors:
                     return False, " ".join(cleanup_errors)
-                return True, "Runtime session released."
+                return True, "Runtime 실행 상태를 정리했습니다."
             except Exception as error:
-                return False, f"Runtime cleanup failed: {error}"
+                return False, f"Runtime 정리 중 오류가 발생했습니다: {error}"
         
     def stop_task(self):
         try:
             with self._task_post_lock:
                 if self.tasker is None or not self.tasker.running:
-                    return False, "Tasker is not running."
+                    return False, "실행 중인 Tasker가 없습니다."
                 stop_job = self.tasker.post_stop()
                 # 정지 완료 전에는 cleanup/다음 실행이 같은 Tasker에 접근하지 못하게 한다.
                 stop_job.wait()
                 if not stop_job.succeeded:
-                    return False, "Tasker stop failed."
-            return True, "Tasker stop requested."
+                    return False, "Tasker 중지에 실패했습니다."
+            return True, "Tasker 중지를 요청했습니다."
         except Exception as error:
-            return False, f"Tasker stop failed: {error}"
+            return False, f"Tasker 중지 중 오류가 발생했습니다: {error}"
         
 
 # Focus 콜백, 기타 콜백이 필요하면 수정해서 추가
