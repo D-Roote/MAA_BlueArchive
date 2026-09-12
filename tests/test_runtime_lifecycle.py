@@ -17,7 +17,17 @@ from PySide6.QtWidgets import QApplication
 from maa.define import MaaWin32ScreencapMethodEnum
 
 from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
-from app.winUI import MainWindow, RuntimeWorker, WINDOW_TITLE
+from app.winUI import (
+    DWM_COLOR_DEFAULT,
+    DWMWA_CAPTION_COLOR,
+    DWMWA_TEXT_COLOR,
+    DWMWA_USE_IMMERSIVE_DARK_MODE,
+    MainWindow,
+    RuntimeWorker,
+    TitleBarTheme,
+    WINDOW_TITLE,
+    apply_windows_title_bar_theme,
+)
 
 
 def make_job(succeeded=True):
@@ -229,6 +239,33 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.runtime.controller)
         self.assertIsNone(self.runtime._target_hwnd)
         self.assertTrue(self.runtime.release_session()[0])
+
+
+class TitleBarThemeTests(unittest.TestCase):
+    def test_light_theme_forces_white_caption_and_dark_text(self):
+        dwmapi = MagicMock()
+        dwmapi.DwmSetWindowAttribute.return_value = 0
+
+        self.assertTrue(apply_windows_title_bar_theme(123, TitleBarTheme.LIGHT, dwmapi))
+
+        calls = dwmapi.DwmSetWindowAttribute.call_args_list
+        self.assertEqual(
+            [call.args[1] for call in calls],
+            [DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR],
+        )
+        self.assertEqual([call.args[2]._obj.value for call in calls], [0, 0x00FFFFFF, 0])
+
+    def test_system_theme_restores_default_caption_colors(self):
+        dwmapi = MagicMock()
+        dwmapi.DwmSetWindowAttribute.return_value = 0
+
+        self.assertTrue(apply_windows_title_bar_theme(123, TitleBarTheme.SYSTEM, dwmapi))
+
+        calls = dwmapi.DwmSetWindowAttribute.call_args_list
+        self.assertEqual(
+            [call.args[2]._obj.value for call in calls],
+            [1, DWM_COLOR_DEFAULT, DWM_COLOR_DEFAULT],
+        )
 
 
 class UILifecycleTests(unittest.TestCase):

@@ -1,7 +1,12 @@
 from pathlib import Path
 from datetime import datetime
 from copy import deepcopy
+from enum import Enum
+import ctypes
 import json
+import sys
+
+from ctypes import wintypes
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
@@ -18,6 +23,82 @@ WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+
+
+class TitleBarTheme(str, Enum):
+    """설정 UI에서 그대로 선택값으로 사용할 수 있는 제목 표시줄 테마."""
+
+    LIGHT = "light"
+    DARK = "dark"
+    SYSTEM = "system"
+
+
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_CAPTION_COLOR = 35
+DWMWA_TEXT_COLOR = 36
+DWM_COLOR_DEFAULT = 0xFFFFFFFF
+
+
+def _create_dwmapi():
+    if sys.platform != "win32":
+        return None
+
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+    except OSError:
+        return None
+
+    dwmapi.DwmSetWindowAttribute.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        wintypes.LPCVOID,
+        wintypes.DWORD,
+    ]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+    return dwmapi
+
+
+def apply_windows_title_bar_theme(hwnd, theme, dwmapi=None):
+    """Windows 제목 표시줄 테마를 적용하고 지원 여부를 반환한다."""
+    theme = TitleBarTheme(theme)
+    if sys.platform != "win32" or not hwnd:
+        return False
+
+    dwmapi = dwmapi or _create_dwmapi()
+    if dwmapi is None:
+        return False
+
+    dark_mode = wintypes.BOOL(theme != TitleBarTheme.LIGHT)
+    if theme == TitleBarTheme.LIGHT:
+        caption_color = wintypes.DWORD(0x00FFFFFF)
+        text_color = wintypes.DWORD(0x00000000)
+    elif theme == TitleBarTheme.DARK:
+        caption_color = wintypes.DWORD(0x00202020)
+        text_color = wintypes.DWORD(0x00FFFFFF)
+    else:
+        caption_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
+        text_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
+
+    result = dwmapi.DwmSetWindowAttribute(
+        wintypes.HWND(hwnd),
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        ctypes.byref(dark_mode),
+        ctypes.sizeof(dark_mode),
+    )
+
+    # 색상 속성은 Windows 11부터 지원된다. 미지원 환경에서는 위의 테마 속성만 사용한다.
+    for attribute, value in (
+        (DWMWA_CAPTION_COLOR, caption_color),
+        (DWMWA_TEXT_COLOR, text_color),
+    ):
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            attribute,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+
+    return result == 0
 
 
 def merge_pipeline_override(target, source):
@@ -209,6 +290,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_SIZE[0], WINDOW_SIZE[1])
+        self._title_bar_theme = TitleBarTheme.LIGHT
+        self.set_title_bar_theme(self._title_bar_theme)
 
         self.runtime = AppRuntime()
         self.log_sink = self.runtime.log_sink
@@ -227,6 +310,11 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.toggled.connect(self.on_user_config_changed)
+
+    def set_title_bar_theme(self, theme):
+        """현재 테마를 저장하고 즉시 적용한다. 추후 설정 탭에서 호출할 진입점이다."""
+        self._title_bar_theme = TitleBarTheme(theme)
+        return apply_windows_title_bar_theme(int(self.winId()), self._title_bar_theme)
 
     def update_tab_widths(self):
         tab_bar = self.ui.tabWidget.tabBar()
@@ -270,6 +358,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.set_title_bar_theme(self._title_bar_theme)
         QTimer.singleShot(0, self.update_tab_widths)
 
     def resizeEvent(self, event):
