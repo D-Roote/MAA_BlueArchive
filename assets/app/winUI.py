@@ -4,6 +4,7 @@ from copy import deepcopy
 from enum import Enum
 import ctypes
 import json
+import re
 import sys
 
 from ctypes import wintypes
@@ -14,7 +15,8 @@ from PySide6.QtGui import (QTextCursor,
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QMainWindow, QAbstractItemView, QHBoxLayout, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QWidget, 
-                               QButtonGroup, QCheckBox, QLabel, QPushButton, QRadioButton)
+                               QButtonGroup, QCheckBox, QLabel, QLineEdit, QPushButton,
+                               QRadioButton)
 
 from app.runtime import AppRuntime
 
@@ -112,6 +114,85 @@ def merge_pipeline_override(target, source):
             target[key] = deepcopy(value)
 
 
+def convert_input_value(input_config, value):
+    pipeline_type = input_config.get("pipeline_type", "string")
+    if pipeline_type == "string":
+        return value
+    if pipeline_type == "int":
+        try:
+            return int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("정수를 입력해 주세요.") from error
+    if pipeline_type == "bool":
+        normalized = value.strip().lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+        raise ValueError("true, false, 1, 0 중 하나를 입력해 주세요.")
+    raise ValueError(f"지원하지 않는 pipeline_type입니다: {pipeline_type}")
+
+
+def validate_input_value(input_config, value):
+    verify_pattern = input_config.get("verify")
+    if verify_pattern:
+        try:
+            if re.fullmatch(verify_pattern, value) is None:
+                return False, input_config.get("pattern_msg", "입력 형식이 올바르지 않습니다.")
+        except re.error as error:
+            return False, f"검증 정규식이 올바르지 않습니다: {error}"
+
+    try:
+        convert_input_value(input_config, value)
+    except ValueError as error:
+        return False, str(error)
+    return True, ""
+
+
+def substitute_input_placeholders(value, converted_values):
+    if isinstance(value, dict):
+        return {
+            key: substitute_input_placeholders(child, converted_values)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [substitute_input_placeholders(child, converted_values) for child in value]
+    if not isinstance(value, str):
+        return deepcopy(value)
+
+    exact_match = re.fullmatch(r"\{([^{}]+)\}", value)
+    if exact_match and exact_match.group(1) in converted_values:
+        return deepcopy(converted_values[exact_match.group(1)])
+
+    def replace_placeholder(match):
+        name = match.group(1)
+        if name not in converted_values:
+            return match.group(0)
+        replacement = converted_values[name]
+        if isinstance(replacement, bool):
+            return "true" if replacement else "false"
+        return str(replacement)
+
+    return re.sub(r"\{([^{}]+)\}", replace_placeholder, value)
+
+
+def build_input_pipeline_override(option_config, input_values):
+    converted_values = {}
+    for input_config in option_config.get("inputs", []):
+        input_name = input_config.get("name")
+        if not input_name:
+            continue
+        value = str(input_values.get(input_name, input_config.get("default", "")))
+        is_valid, validation_message = validate_input_value(input_config, value)
+        if not is_valid:
+            raise ValueError(f"{input_name}: {validation_message}")
+        converted_values[input_name] = convert_input_value(input_config, value)
+
+    return substitute_input_placeholders(
+        option_config.get("pipeline_override", {}), converted_values
+    )
+
+
 def find_switch_cases(cases):
     yes_names = {"yes", "y"}
     no_names = {"no", "n"}
@@ -158,7 +239,13 @@ class OptionItemWidget(QWidget):
             opt_type = opt.get("type", "select")
             default_case = opt.get("default_case")
 
-            if opt_type == "switch":
+            if opt_type == "input":
+                self.selected_options[opt_name] = {
+                    input_config["name"]: str(input_config.get("default", ""))
+                    for input_config in opt.get("inputs", [])
+                    if input_config.get("name")
+                }
+            elif opt_type == "switch":
                 yes_case_name, no_case_name = find_switch_cases(opt.get("cases", []))
                 if default_case and default_case == yes_case_name:
                     self.selected_options[opt_name] = [yes_case_name]
@@ -201,6 +288,36 @@ class OptionItemWidget(QWidget):
 
     def is_checked(self):
         return self.checkbox.isChecked()
+
+    def has_valid_input(self):
+        for opt_name, opt in self.task_options:
+            if opt.get("type", "select") != "input":
+                continue
+
+            input_values = self.selected_options.get(opt_name, {})
+            if not isinstance(input_values, dict):
+                return False
+            for input_config in opt.get("inputs", []):
+                input_name = input_config.get("name")
+                if not input_name:
+                    continue
+                value = str(input_values.get(input_name, input_config.get("default", "")))
+                if not validate_input_value(input_config, value)[0]:
+                    return False
+        return True
+
+    def get_persisted_options(self):
+        persisted_options = deepcopy(self.selected_options)
+        for opt_name, opt in self.task_options:
+            if opt.get("type", "select") != "input":
+                continue
+            input_values = persisted_options.get(opt_name)
+            if not isinstance(input_values, dict):
+                continue
+            for input_config in opt.get("inputs", []):
+                if input_config.get("password"):
+                    input_values.pop(input_config.get("name"), None)
+        return persisted_options
 
     def set_locked(self, locked: bool):
         self.checkbox.setEnabled(not locked)
@@ -595,6 +712,19 @@ class MainWindow(QMainWindow):
             if isinstance(saved_options, dict):
                 for opt_name, opt in custom_widget.task_options:
                     saved_value = saved_options.get(opt_name)
+                    if opt.get("type", "select") == "input":
+                        if not isinstance(saved_value, dict):
+                            continue
+                        current_values = custom_widget.selected_options[opt_name]
+                        for input_config in opt.get("inputs", []):
+                            input_name = input_config.get("name")
+                            if not input_name or input_config.get("password"):
+                                continue
+                            saved_input = saved_value.get(input_name)
+                            if isinstance(saved_input, str):
+                                current_values[input_name] = saved_input
+                        continue
+
                     if not isinstance(saved_value, list):
                         continue
 
@@ -752,9 +882,60 @@ class MainWindow(QMainWindow):
                     row_layout.addWidget(case_label, 1)
                     layout.addWidget(row_widget)
 
-            # 필요시 작성
             elif opt_type == "input":
-                pass
+                input_values = item_widget.selected_options.get(opt_name, {})
+                for input_config in opt.get("inputs", []):
+                    input_name = input_config.get("name")
+                    if not input_name:
+                        continue
+
+                    input_container = QWidget(container_widget)
+                    input_layout = QVBoxLayout(input_container)
+                    input_layout.setContentsMargins(0, 2, 0, 4)
+                    input_layout.setSpacing(4)
+
+                    input_label = QLabel(input_config.get("label", input_name))
+                    input_label.setStyleSheet("background: transparent;")
+                    input_layout.addWidget(input_label)
+
+                    line_edit = QLineEdit(input_container)
+                    line_edit.setObjectName("optionInput")
+                    line_edit.setProperty("optionName", opt_name)
+                    line_edit.setProperty("inputName", input_name)
+                    line_edit.setText(
+                        str(input_values.get(input_name, input_config.get("default", "")))
+                    )
+                    description = input_config.get("description")
+                    if description:
+                        line_edit.setToolTip(description)
+                    if input_config.get("password"):
+                        line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+                    line_edit.setAccessibleName(input_config.get("label", input_name))
+                    input_layout.addWidget(line_edit)
+
+                    error_label = QLabel(input_container)
+                    error_label.setObjectName("optionInputError")
+                    error_label.setWordWrap(True)
+                    input_layout.addWidget(error_label)
+
+                    def make_input_slot(w, o_name, i_config, editor, error):
+                        return lambda text: self.update_widget_option_input(
+                            w, o_name, i_config, editor, error, text
+                        )
+
+                    line_edit.textChanged.connect(
+                        make_input_slot(
+                            item_widget,
+                            opt_name,
+                            input_config,
+                            line_edit,
+                            error_label,
+                        )
+                    )
+                    self.update_input_validation_state(
+                        line_edit, error_label, input_config, line_edit.text()
+                    )
+                    layout.addWidget(input_container)
 
         layout.addStretch()
 
@@ -784,6 +965,27 @@ class MainWindow(QMainWindow):
 
         self.on_user_config_changed()
 
+    def update_input_validation_state(self, line_edit, error_label, input_config, value):
+        is_valid, validation_message = validate_input_value(input_config, value)
+        line_edit.setProperty("inputValid", is_valid)
+        line_edit.style().unpolish(line_edit)
+        line_edit.style().polish(line_edit)
+        error_label.setText(validation_message)
+        error_label.setVisible(not is_valid)
+        return is_valid
+
+    def update_widget_option_input(
+        self, widget, opt_name, input_config, line_edit, error_label, value
+    ):
+        input_name = input_config["name"]
+        input_values = widget.selected_options.setdefault(opt_name, {})
+        input_values[input_name] = value
+        self.update_input_validation_state(
+            line_edit, error_label, input_config, value
+        )
+        self.check_start_button_state()
+        self.on_user_config_changed()
+
     def check_start_button_state(self):
         if self.isRunning or self.stop_worker is not None or self._close_pending:
             self.ui.workStartBtn.setEnabled(False)
@@ -794,7 +996,9 @@ class MainWindow(QMainWindow):
             widget = self.option_list_widget.itemWidget(item)
             if widget and widget.is_checked():
                 any_checked = True
-                break
+                if not widget.has_valid_input():
+                    self.ui.workStartBtn.setEnabled(False)
+                    return
         self.ui.workStartBtn.setEnabled(any_checked)
 
     def on_task_checkbox_toggled(self, checked):
@@ -846,6 +1050,14 @@ class MainWindow(QMainWindow):
                 
                 for opt_name, opt in widget_in_item.task_options:
                     selected_cases = widget_in_item.selected_options.get(opt_name, [])
+
+                    if opt.get("type", "select") == "input":
+                        if not isinstance(selected_cases, dict):
+                            continue
+                        input_override = build_input_pipeline_override(opt, selected_cases)
+                        if isinstance(input_override, dict):
+                            merge_pipeline_override(override_params, input_override)
+                        continue
                     
                     if not selected_cases:
                         continue
@@ -875,7 +1087,7 @@ class MainWindow(QMainWindow):
                     "name": widget.task_data["name"],
                     "entry": widget.task_data["entry"],
                     "checked": widget.is_checked(),
-                    "selected_options": widget.selected_options
+                    "selected_options": widget.get_persisted_options()
                 })
                 
         minimize_enabled = False

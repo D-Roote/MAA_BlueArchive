@@ -186,6 +186,35 @@ QRadioButton::indicator:checked:disabled {
     image: url("maabaicons:controls/radio-checked-disabled.svg");
 }
 
+QLineEdit#optionInput {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    padding: 7px 9px;
+    selection-background-color: #00AEEF;
+}
+
+QLineEdit#optionInput:hover,
+QLineEdit#optionInput:focus {
+    border-color: #00AEEF;
+}
+
+QLineEdit#optionInput[inputValid="false"] {
+    border-color: #E04848;
+}
+
+QLineEdit#optionInput:disabled {
+    background-color: #E6EDF5;
+    color: #94A3B8;
+}
+
+QLabel#optionInputError {
+    background-color: transparent;
+    color: #E04848;
+    font-size: 9pt;
+}
+
 /* =========================================
    로그 출력 (QTextEdit)
    ========================================= */
