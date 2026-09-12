@@ -414,7 +414,7 @@ class AppRuntime:
                     f"(전체 실행 작업: {', '.join(executed_entries)})"
                 )
 
-            return True, f"모든 작업을 완료했습니다: {', '.join(executed_entries)}"
+            return True, "모든 작업을 완료했습니다."
         finally:
             released, release_message = self.release_session()
             if not released:

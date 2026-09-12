@@ -122,11 +122,12 @@ class RuntimeLifecycleTests(unittest.TestCase):
         with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
             self.runtime, "release_session", return_value=(True, "released")
         ):
-            succeeded, _ = self.runtime.run_task(
+            succeeded, message = self.runtime.run_task(
                 [("First", {}), ("Second", {})], minimize_window=True
             )
 
         self.assertTrue(succeeded)
+        self.assertEqual(message, "모든 작업을 완료했습니다.")
         self.assertEqual(tasker.post_task.call_count, 2)
         first_job.wait.assert_called_once()
         second_job.wait.assert_called_once()
