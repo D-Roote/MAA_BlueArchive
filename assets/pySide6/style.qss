@@ -183,7 +183,7 @@ QScrollBar:vertical {
 }
 
 QScrollBar::handle:vertical {
-    background-color: #94A3B8;
+    background-color: #00AEEF;
     min-height: 20px;
     border-radius: 5px;
 }
@@ -219,7 +219,7 @@ QScrollBar:horizontal {
 }
 
 QScrollBar::handle:horizontal {
-    background-color: #94A3B8;
+    background-color: #00AEEF;
     min-width: 20px;
     border-radius: 5px;
 }
