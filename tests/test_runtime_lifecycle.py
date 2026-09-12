@@ -279,7 +279,32 @@ class UILifecycleTests(unittest.TestCase):
         temp = temp_dir.name
         runtime = MagicMock()
         runtime.user_dir = Path(temp)
-        runtime.interface = {"task": [{"name": "Test", "entry": "Test_Main", "default_check": True}]}
+        runtime.interface = {
+            "task": [
+                {
+                    "name": "Test",
+                    "entry": "Test_Main",
+                    "default_check": True,
+                    "option": ["Test_Mode"],
+                }
+            ],
+            "option": {
+                "Test_Mode": {
+                    "type": "select",
+                    "default_case": "A",
+                    "cases": [
+                        {
+                            "name": "A",
+                            "pipeline_override": {"Test_Node": {"next": ["A"]}},
+                        },
+                        {
+                            "name": "B",
+                            "pipeline_override": {"Test_Node": {"next": ["B"]}},
+                        },
+                    ],
+                }
+            },
+        }
         runtime.log_sink = LogSinkFocus()
         with patch("app.winUI.AppRuntime", return_value=runtime):
             self.window = MainWindow()
@@ -292,6 +317,31 @@ class UILifecycleTests(unittest.TestCase):
         stop_worker = MagicMock(succeeded=True, result_message="stopped")
         self.window.stop_worker = stop_worker
         return worker
+
+    def test_task_details_remain_viewable_while_option_values_are_locked(self):
+        item = self.window.option_list_widget.item(0)
+        task_widget = self.window.option_list_widget.itemWidget(item)
+        queued_before_start = self.window.build_execution_queue()
+
+        self.start_mock_run()
+        self.assertFalse(task_widget.checkbox.isEnabled())
+        self.assertTrue(task_widget.setting_btn.isEnabled())
+
+        task_widget.setting_btn.click()
+        self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
+
+        # 추후 설정 탭의 토글이 호출할 정책 진입점. 현재 실행 큐는 이미 복사되어 있다.
+        self.window.set_runtime_option_editing_enabled(True)
+        self.assertTrue(self.window.ui.scrollSettingContents.isEnabled())
+        task_widget.selected_options["Test_Mode"] = ["B"]
+        queued_after_change = self.window.build_execution_queue()
+        self.assertEqual(queued_before_start[0][1]["Test_Node"]["next"], ["A"])
+        self.assertEqual(queued_after_change[0][1]["Test_Node"]["next"], ["B"])
+
+        self.window.set_runtime_option_editing_enabled(False)
+        self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
+        self.window.on_task_finished()
+        self.window.on_stop_worker_finished()
 
     def test_restart_waits_for_both_finished_callbacks(self):
         self.start_mock_run()

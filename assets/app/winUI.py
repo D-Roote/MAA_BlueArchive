@@ -181,7 +181,8 @@ class OptionItemWidget(QWidget):
 
     def set_locked(self, locked: bool):
         self.checkbox.setEnabled(not locked)
-        self.setting_btn.setEnabled(not locked)
+        # 실행 중에도 세부 설정 화면은 열 수 있도록 한다.
+        self.setting_btn.setEnabled(True)
         if locked:
             self.label.setStyleSheet("background: transparent; color: #94A3B8;")
         else:
@@ -299,6 +300,8 @@ class MainWindow(QMainWindow):
         self.stop_worker = None
         self.isRunning = False
         self._close_pending = False
+        self._options_locked = False
+        self._allow_option_edits_while_running = False
 
         self.setup_connections()
 
@@ -775,6 +778,7 @@ class MainWindow(QMainWindow):
         self.save_user_config()
 
     def set_options_locked(self, locked: bool):
+        self._options_locked = locked
         for i in range(self.option_list_widget.count()):
             item = self.option_list_widget.item(i)
             widget = self.option_list_widget.itemWidget(item)
@@ -787,7 +791,17 @@ class MainWindow(QMainWindow):
             self.ui.minimizeEnableBtn.setEnabled(not locked)
 
         if hasattr(self.ui, 'scrollSettingContents'):
-            self.ui.scrollSettingContents.setEnabled(not locked)
+            self.ui.scrollSettingContents.setEnabled(
+                not locked or self._allow_option_edits_while_running
+            )
+
+    def set_runtime_option_editing_enabled(self, enabled: bool):
+        """실행 중 세부 옵션 편집 정책을 설정한다. 추후 설정 탭에서 호출할 진입점이다."""
+        self._allow_option_edits_while_running = bool(enabled)
+        if hasattr(self.ui, 'scrollSettingContents'):
+            self.ui.scrollSettingContents.setEnabled(
+                not self._options_locked or self._allow_option_edits_while_running
+            )
 
     def build_execution_queue(self):
         execution_queue = []
