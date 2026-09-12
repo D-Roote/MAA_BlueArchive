@@ -85,16 +85,48 @@ class RuntimeLifecycleTests(unittest.TestCase):
             SimpleNamespace(hwnd=222, window_name="Blue Archive - Notes"),
             SimpleNamespace(hwnd=333, window_name="Blue Archive"),
         ]
-        for minimize, capture in (
-            (False, MaaWin32ScreencapMethodEnum.FramePool),
-            (True, MaaWin32ScreencapMethodEnum.PrintWindow),
+        for minimize, controller_name, capture in (
+            (False, "Win32FramePool", MaaWin32ScreencapMethodEnum.FramePool),
+            (True, "Win32PrintWindow", MaaWin32ScreencapMethodEnum.PrintWindow),
         ):
             with self.subTest(minimize=minimize), patch(
                 "app.runtime.Toolkit.find_desktop_windows", return_value=windows
             ), patch("app.runtime.Win32Controller") as controller:
                 self.assertTrue(self.runtime._create_controller(minimize)[0])
+                self.assertEqual(self.runtime.controller_config["name"], controller_name)
                 self.assertEqual(controller.call_args.kwargs["hWnd"], 333)
                 self.assertEqual(controller.call_args.kwargs["screencap_method"], capture)
+
+    def test_interface_controller_profiles_are_linked_to_resource(self):
+        controllers = {
+            controller["name"]: controller for controller in self.runtime.interface["controller"]
+        }
+        self.assertEqual(
+            controllers["Win32FramePool"]["win32"]["screencap"], "FramePool"
+        )
+        self.assertEqual(
+            controllers["Win32PrintWindow"]["win32"]["screencap"], "PrintWindow"
+        )
+        self.assertEqual(
+            set(self.runtime.resource_config["controller"]),
+            {"Win32FramePool", "Win32PrintWindow"},
+        )
+
+    def test_missing_minimized_controller_fails_before_native_creation(self):
+        self.runtime.interface["controller"] = [
+            controller
+            for controller in self.runtime.interface["controller"]
+            if controller["name"] == "Win32FramePool"
+        ]
+        with patch("app.runtime.Toolkit.find_desktop_windows") as find_windows, patch(
+            "app.runtime.Win32Controller"
+        ) as controller:
+            succeeded, message = self.runtime._create_controller(minimize_window=True)
+
+        self.assertFalse(succeeded)
+        self.assertIn("PrintWindow", message)
+        find_windows.assert_not_called()
+        controller.assert_not_called()
 
     def test_app_window_alone_is_not_a_game_window(self):
         windows = [SimpleNamespace(hwnd=111, window_name=WINDOW_TITLE)]

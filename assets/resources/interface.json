@@ -6,7 +6,20 @@
     "title": "MAA Blue Archive",
     "controller": [
         {
-            "name": "Win32",
+            "name": "Win32FramePool",
+            "label": "Win32 (FramePool)",
+            "type": "Win32",
+            "win32": {
+                "window_regex": "^Blue Archive$",
+                "screencap": "FramePool",
+                "mouse": "PostMessageWithWindowPos",
+                "keyboard": "PostMessage"
+            },
+            "permission_required": false
+        },
+        {
+            "name": "Win32PrintWindow",
+            "label": "Win32 (PrintWindow)",
             "type": "Win32",
             "win32": {
                 "window_regex": "^Blue Archive$",
@@ -24,7 +37,8 @@
                 "./"
             ],
             "controller": [
-                "Win32"
+                "Win32FramePool",
+                "Win32PrintWindow"
             ]
         }
     ],

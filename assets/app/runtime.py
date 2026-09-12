@@ -85,16 +85,32 @@ class AppRuntime:
         with self.interface_path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
-    def _get_controller_config(self):
+    def _get_controller_config(self, minimize_window: bool = False):
         controllers = self.interface.get("controller", [])
         if not controllers:
             raise ValueError("interface.json에 컨트롤러 항목이 없습니다.")
 
-        controller = controllers[0]
-        if controller.get("type") != "Win32":
-            raise ValueError("설정된 컨트롤러가 Win32 형식이 아닙니다.")
+        screencap_name = (
+            MaaWin32ScreencapMethodEnum.PrintWindow.name
+            if minimize_window
+            else MaaWin32ScreencapMethodEnum.FramePool.name
+        )
+        for controller in controllers:
+            if not isinstance(controller, dict) or controller.get("type") != "Win32":
+                continue
 
-        return controller
+            win32_config = controller.get("win32", {})
+            if (
+                isinstance(win32_config, dict)
+                and win32_config.get("screencap") == screencap_name
+            ):
+                if not controller.get("name"):
+                    raise ValueError("선택한 Win32 컨트롤러에 name이 없습니다.")
+                return controller
+
+        raise ValueError(
+            f"interface.json에 {screencap_name} 방식의 Win32 컨트롤러가 없습니다."
+        )
 
     def _get_resource_config(self):
         resources = self.interface.get("resource", [])
@@ -214,6 +230,19 @@ class AppRuntime:
 
 
     def _create_controller(self, minimize_window: bool = False):
+        try:
+            self.controller_config = self._get_controller_config(minimize_window)
+        except ValueError as error:
+            return False, str(error)
+
+        supported_controllers = self.resource_config.get("controller")
+        controller_name = self.controller_config["name"]
+        if supported_controllers is not None:
+            if not isinstance(supported_controllers, list):
+                return False, "리소스의 controller 설정은 목록이어야 합니다."
+            if controller_name not in supported_controllers:
+                return False, f"현재 리소스는 {controller_name} 컨트롤러를 지원하지 않습니다."
+
         windows = Toolkit.find_desktop_windows()
         if not windows:
             return False, "실행 중인 데스크톱 창을 찾을 수 없습니다."
@@ -239,16 +268,9 @@ class AppRuntime:
         window = candidates[0]
         self._target_hwnd = window.hwnd
 
-        if minimize_window:
-            screencap_mode = MaaWin32ScreencapMethodEnum.PrintWindow
-            # screencap_mode = MaaWin32ScreencapMethodEnum.FramePool
-            # 블루 아카이브는 최소화 모드에서 FramePool 캡쳐가 작동하지 않는듯 싶다
-        else:
-            screencap_mode = MaaWin32ScreencapMethodEnum.FramePool
-
         controller = Win32Controller(
             hWnd=window.hwnd,
-            screencap_method=screencap_mode, # self._get_screencap_method() 대신 변수 사용
+            screencap_method=self._get_screencap_method(),
             mouse_method=self._get_mouse_method(),
             keyboard_method=self._get_keyboard_method(),
         )
@@ -326,10 +348,7 @@ class AppRuntime:
                 if not released:
                     raise RuntimeError(release_message)
 
-        # 146 라인 수정시 같이 수정할 것
-        screencap_name = "PrintWindow" if minimize_window else "FramePool"
-        # mouse_name = self._get_mouse_method().name
-        # keyboard_name = self._get_keyboard_method().name
+        screencap_name = self._get_screencap_method().name
 
         return (
             True, 

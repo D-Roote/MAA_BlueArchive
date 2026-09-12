@@ -1,8 +1,6 @@
 ## TODO
 
 # Runtime
-- [ ] runtime.py 에서 interface.json의 Controller 선택 기능 구현
-- [ ] 화면 캡쳐 방식 하드 코딩 수정
 - [ ] runtime.py 에서 interface.json 선택 기능 구현
 - [ ] winUI.py 에서 드롭 박스 기능 구현
 
