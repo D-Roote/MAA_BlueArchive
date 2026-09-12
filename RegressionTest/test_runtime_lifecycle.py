@@ -1,6 +1,7 @@
-"""Run with .venv/Scripts/python.exe -m unittest discover -s tests -v."""
+"""Run with .venv/Scripts/python.exe -m unittest discover -s RegressionTest -v."""
 
 import os
+import re
 from contextlib import ExitStack
 from pathlib import Path
 import sys
@@ -14,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
 
 from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
@@ -25,6 +27,8 @@ from app.winUI import (
     MainWindow,
     RuntimeWorker,
     TitleBarTheme,
+    UI_DIR,
+    UI_RESOURCE_DIR,
     WINDOW_TITLE,
     apply_windows_title_bar_theme,
 )
@@ -318,6 +322,26 @@ class UILifecycleTests(unittest.TestCase):
         stop_worker = MagicMock(succeeded=True, result_message="stopped")
         self.window.stop_worker = stop_worker
         return worker
+
+    def test_relocated_ui_and_svg_assets_load_outside_project_directory(self):
+        original_directory = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                os.chdir(temp)
+                with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+                    window = MainWindow()
+                self.addCleanup(window.deleteLater)
+                widget = window.option_list_widget.itemWidget(window.option_list_widget.item(0))
+                self.assertFalse(widget.setting_btn.icon().pixmap(20, 20).isNull())
+                stylesheet = (UI_DIR / "style.qss").read_text(encoding="utf-8")
+                referenced_icons = re.findall(r'maabaicons:([^"\s)]+)', stylesheet)
+                self.assertTrue(referenced_icons)
+                for relative_path in referenced_icons:
+                    with self.subTest(icon=relative_path):
+                        self.assertTrue((UI_RESOURCE_DIR / "icons" / relative_path).is_file())
+                        self.assertTrue(QSvgRenderer("maabaicons:" + relative_path).isValid())
+            finally:
+                os.chdir(original_directory)
 
     def test_task_details_remain_viewable_while_option_values_are_locked(self):
         item = self.window.option_list_widget.item(0)

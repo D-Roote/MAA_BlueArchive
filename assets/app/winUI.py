@@ -8,9 +8,9 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
-                           QColor, QPainter, QPen)
+                           QColor, QIcon, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QMainWindow, QAbstractItemView, QHBoxLayout, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QWidget, 
@@ -23,6 +23,9 @@ WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+APP_DIR = Path(__file__).resolve().parent
+UI_DIR = APP_DIR / "pySide6"
+UI_RESOURCE_DIR = APP_DIR / "resources"
 
 
 class TitleBarTheme(str, Enum):
@@ -123,6 +126,25 @@ def find_switch_cases(cases):
     return yes_case_name, no_case_name
 
 
+class TaskSettingsButton(QPushButton):
+    """클릭 영역은 유지하고 호버 시 아이콘만 확대하는 설정 버튼."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("taskSettingsButton")
+        self.setFixedSize(30, 30)
+        self.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
+        self.setIconSize(QSize(20, 20))
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.setIconSize(QSize(24, 24))
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.setIconSize(QSize(20, 20))
+
+
 # 동적 List 클래스
 class OptionItemWidget(QWidget):
     def __init__(self, task_data, task_options, on_setting_clicked_callback, on_checkbox_toggled_callback, parent=None):
@@ -166,9 +188,10 @@ class OptionItemWidget(QWidget):
 
         layout.addWidget(self.label, 1) 
 
-        self.setting_btn = QPushButton()
-        self.setting_btn.setFixedSize(10, 10)
-        self.setting_btn.setContentsMargins(1, 1, 1, 1)
+        self.setting_btn = TaskSettingsButton()
+        self.setting_btn.setToolTip(f"{display_name} 세부 설정")
+        self.setting_btn.setAccessibleName(f"{display_name} 세부 설정")
+        self.checkbox.setAccessibleName(f"{display_name} 실행 선택")
         
         if self.task_options:
             layout.addWidget(self.setting_btn)
@@ -274,14 +297,18 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        ui_path = Path(__file__).resolve().parent.parent / "pySide6" / UI_FILENAME
-        qss_path = Path(__file__).resolve().parent.parent / "pySide6" / QSS_FILENAME
+        ui_path = UI_DIR / UI_FILENAME
+        qss_path = UI_DIR / QSS_FILENAME
+        # QSS의 아이콘 경로도 작업 디렉토리와 무관하게 해석한다.
+        QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
         
         self.ui.tabWidget.setUsesScrollButtons(False)
+        # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
+        self.ui.tabWidget.setCurrentWidget(self.ui.mainTab)
 
         if qss_path.exists():
             with open(qss_path, "r", encoding="utf-8") as f:

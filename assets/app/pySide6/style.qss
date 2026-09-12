@@ -95,6 +95,13 @@ QPushButton:disabled {
     color: #A0AEC0;
 }
 
+QPushButton#taskSettingsButton {
+    padding: 0px;
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+}
+
 QPushButton#stopBtn {
     background-color: #FF5A5A;
 }
@@ -115,23 +122,33 @@ QCheckBox {
 }
 
 QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border: 2px solid #CBD5E1;
-    border-radius: 4px;
-    background-color: #FFFFFF;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background-color: transparent;
     subcontrol-origin: margin;
     subcontrol-position: center left;
+    image: url("maabaicons:controls/checkbox-unchecked.svg");
 }
 
-QCheckBox::indicator:hover {
-    border-color: #00AEEF;
+QCheckBox::indicator:unchecked:hover {
+    image: url("maabaicons:controls/checkbox-unchecked-hover.svg");
 }
 
 QCheckBox::indicator:checked {
-    background-color: #00AEEF;
-    border-color: #00AEEF;
-    image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    image: url("maabaicons:controls/checkbox-checked.svg");
+}
+
+QCheckBox::indicator:checked:hover {
+    image: url("maabaicons:controls/checkbox-checked-hover.svg");
+}
+
+QCheckBox::indicator:unchecked:disabled {
+    image: url("maabaicons:controls/checkbox-unchecked-disabled.svg");
+}
+
+QCheckBox::indicator:checked:disabled {
+    image: url("maabaicons:controls/checkbox-checked-disabled.svg");
 }
 
 QRadioButton {
@@ -140,24 +157,33 @@ QRadioButton {
 }
 
 QRadioButton::indicator {
-    width: 16px;
-    height: 16px;
-    border: 2px solid #CBD5E1;
-    border-radius: 9px;
-    background-color: #FFFFFF;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background-color: transparent;
     subcontrol-origin: margin;
     subcontrol-position: center left;
+    image: url("maabaicons:controls/radio-unchecked.svg");
 }
 
-QRadioButton::indicator:hover {
-    border-color: #00AEEF;
+QRadioButton::indicator:unchecked:hover {
+    image: url("maabaicons:controls/radio-unchecked-hover.svg");
 }
 
 QRadioButton::indicator:checked {
-    border: 2px solid #00AEEF;
-    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, 
-                                      stop:0 #00AEEF, stop:0.5 #00AEEF, 
-                                      stop:0.6 transparent, stop:1 transparent);
+    image: url("maabaicons:controls/radio-checked.svg");
+}
+
+QRadioButton::indicator:checked:hover {
+    image: url("maabaicons:controls/radio-checked-hover.svg");
+}
+
+QRadioButton::indicator:unchecked:disabled {
+    image: url("maabaicons:controls/radio-unchecked-disabled.svg");
+}
+
+QRadioButton::indicator:checked:disabled {
+    image: url("maabaicons:controls/radio-checked-disabled.svg");
 }
 
 /* =========================================
