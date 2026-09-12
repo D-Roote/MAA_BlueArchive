@@ -15,8 +15,8 @@ from PySide6.QtGui import (QTextCursor,
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QMainWindow, QAbstractItemView, QHBoxLayout, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QWidget, 
-                               QButtonGroup, QCheckBox, QLabel, QLineEdit, QPushButton,
-                               QRadioButton)
+                               QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
+                               QPushButton, QRadioButton)
 
 from app.runtime import AppRuntime
 
@@ -789,7 +789,7 @@ class MainWindow(QMainWindow):
 
             cases = opt.get("cases", [])
 
-            if opt_type == "select":
+            if opt_type == "radio":
                 select_container = QWidget(container_widget)
                 select_layout = QVBoxLayout(select_container)
                 select_layout.setContentsMargins(0, 0, 0, 0)
@@ -824,6 +824,41 @@ class MainWindow(QMainWindow):
                     select_layout.addWidget(row_widget)
 
                 layout.addWidget(select_container)
+
+            elif opt_type == "select":
+                combo_box = QComboBox(container_widget)
+                combo_box.setObjectName("optionSelect")
+                combo_box.setProperty("optionName", opt_name)
+                combo_box.setAccessibleName(opt.get("label", opt_name))
+
+                for case in cases:
+                    case_name = case.get("name")
+                    if not case_name:
+                        continue
+                    combo_box.addItem(case.get("label", case_name), case_name)
+                    description = case.get("description")
+                    if description:
+                        combo_box.setItemData(
+                            combo_box.count() - 1, description, Qt.ToolTipRole
+                        )
+
+                selected_cases = item_widget.selected_options.get(opt_name, [])
+                selected_name = selected_cases[0] if selected_cases else None
+                selected_index = combo_box.findData(selected_name)
+                if selected_index < 0 and combo_box.count() > 0:
+                    selected_index = 0
+                    item_widget.selected_options[opt_name] = [combo_box.itemData(0)]
+                combo_box.setCurrentIndex(selected_index)
+
+                def make_select_slot(w, o_name, select_widget):
+                    return lambda index: self.update_widget_option_select(
+                        w, o_name, select_widget, index
+                    )
+
+                combo_box.currentIndexChanged.connect(
+                    make_select_slot(item_widget, opt_name, combo_box)
+                )
+                layout.addWidget(combo_box)
 
             elif opt_type == "checkbox":
                 for case in cases:
@@ -943,6 +978,13 @@ class MainWindow(QMainWindow):
         if is_checked:
             widget.selected_options[opt_name] = [case_name]
             self.on_user_config_changed()
+
+    def update_widget_option_select(self, widget, opt_name, combo_box, index):
+        case_name = combo_box.itemData(index)
+        if case_name is None:
+            return
+        widget.selected_options[opt_name] = [case_name]
+        self.on_user_config_changed()
 
     def update_widget_option_checkbox(self, widget, opt_name, case_name, is_checked):
         if opt_name not in widget.selected_options:

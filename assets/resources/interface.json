@@ -142,7 +142,7 @@
         },
         "Bounty_Location_Selection": {
             "label": "현상 수배 의뢰 선택",
-            "type": "select",
+            "type": "radio",
             "cases": [
                 {
                     "name": "Highway",
@@ -179,7 +179,7 @@
         },
         "AcaEM_Location_Selection": {
             "label": "학원 선택",
-            "type": "select",
+            "type": "radio",
             "cases": [
                 {
                     "name": "Trinity",

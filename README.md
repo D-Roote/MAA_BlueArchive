@@ -2,7 +2,6 @@
 
 # Runtime
 - [ ] runtime.py 에서 interface.json 선택 기능 구현
-- [ ] winUI.py 에서 드롭 박스 기능 구현
 
 # Pipeline
 - [ ] 로그인 로직 개선

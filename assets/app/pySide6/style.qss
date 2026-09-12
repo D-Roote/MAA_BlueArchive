@@ -215,6 +215,39 @@ QLabel#optionInputError {
     font-size: 9pt;
 }
 
+QComboBox#optionSelect {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    padding: 7px 10px;
+    min-height: 20px;
+}
+
+QComboBox#optionSelect:hover,
+QComboBox#optionSelect:focus {
+    border-color: #00AEEF;
+}
+
+QComboBox#optionSelect:disabled {
+    background-color: #E2E8F0;
+    color: #94A3B8;
+}
+
+QComboBox#optionSelect::drop-down {
+    border: none;
+    width: 28px;
+}
+
+QComboBox#optionSelect QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    selection-background-color: #00AEEF;
+    selection-color: #FFFFFF;
+    outline: none;
+}
+
 /* =========================================
    로그 출력 (QTextEdit)
    ========================================= */
