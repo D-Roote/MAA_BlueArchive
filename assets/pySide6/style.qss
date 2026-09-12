@@ -172,27 +172,76 @@ QTextEdit {
 }
 
 /* =========================================
-   스크롤바 (수직)
+   스크롤바
    ========================================= */
 QScrollBar:vertical {
     border: none;
-    background: #F4F7FB;
+    background-color: #E2E8F0;
     width: 10px;
     border-radius: 5px;
     margin: 0px;
 }
 
 QScrollBar::handle:vertical {
-    background: #CBD5E0;
+    background-color: #00AEEF;
     min-height: 20px;
     border-radius: 5px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #00AEEF;
+    background-color: #00AEEF;
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     border: none;
-    background: none;
+    background-color: transparent;
+    height: 0px;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    border: none;
+    background-color: #E2E8F0;
+    border-radius: 5px;
+}
+
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
+    image: none;
+    width: 0px;
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background-color: #E2E8F0;
+    height: 10px;
+    border-radius: 5px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #00AEEF;
+    min-width: 20px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #00AEEF;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    border: none;
+    background-color: transparent;
+    width: 0px;
+}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    border: none;
+    background-color: #E2E8F0;
+    border-radius: 5px;
+}
+
+QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal {
+    image: none;
+    width: 0px;
+    height: 0px;
 }

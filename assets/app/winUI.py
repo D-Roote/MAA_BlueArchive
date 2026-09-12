@@ -1,7 +1,12 @@
 from pathlib import Path
 from datetime import datetime
+from copy import deepcopy
+from enum import Enum
+import ctypes
 import json
-import cv2
+import sys
+
+from ctypes import wintypes
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
@@ -18,6 +23,90 @@ WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+
+
+class TitleBarTheme(str, Enum):
+    """설정 UI에서 그대로 선택값으로 사용할 수 있는 제목 표시줄 테마."""
+
+    LIGHT = "light"
+    DARK = "dark"
+    SYSTEM = "system"
+
+
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_CAPTION_COLOR = 35
+DWMWA_TEXT_COLOR = 36
+DWM_COLOR_DEFAULT = 0xFFFFFFFF
+
+
+def _create_dwmapi():
+    if sys.platform != "win32":
+        return None
+
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+    except OSError:
+        return None
+
+    dwmapi.DwmSetWindowAttribute.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        wintypes.LPCVOID,
+        wintypes.DWORD,
+    ]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+    return dwmapi
+
+
+def apply_windows_title_bar_theme(hwnd, theme, dwmapi=None):
+    """Windows 제목 표시줄 테마를 적용하고 지원 여부를 반환한다."""
+    theme = TitleBarTheme(theme)
+    if sys.platform != "win32" or not hwnd:
+        return False
+
+    dwmapi = dwmapi or _create_dwmapi()
+    if dwmapi is None:
+        return False
+
+    dark_mode = wintypes.BOOL(theme != TitleBarTheme.LIGHT)
+    if theme == TitleBarTheme.LIGHT:
+        caption_color = wintypes.DWORD(0x00FFFFFF)
+        text_color = wintypes.DWORD(0x00000000)
+    elif theme == TitleBarTheme.DARK:
+        caption_color = wintypes.DWORD(0x00202020)
+        text_color = wintypes.DWORD(0x00FFFFFF)
+    else:
+        caption_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
+        text_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
+
+    result = dwmapi.DwmSetWindowAttribute(
+        wintypes.HWND(hwnd),
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        ctypes.byref(dark_mode),
+        ctypes.sizeof(dark_mode),
+    )
+
+    # 색상 속성은 Windows 11부터 지원된다. 미지원 환경에서는 위의 테마 속성만 사용한다.
+    for attribute, value in (
+        (DWMWA_CAPTION_COLOR, caption_color),
+        (DWMWA_TEXT_COLOR, text_color),
+    ):
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            attribute,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+
+    return result == 0
+
+
+def merge_pipeline_override(target, source):
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge_pipeline_override(target[key], value)
+        else:
+            target[key] = deepcopy(value)
 
 
 def find_switch_cases(cases):
@@ -92,7 +181,8 @@ class OptionItemWidget(QWidget):
 
     def set_locked(self, locked: bool):
         self.checkbox.setEnabled(not locked)
-        self.setting_btn.setEnabled(not locked)
+        # 실행 중에도 세부 설정 화면은 열 수 있도록 한다.
+        self.setting_btn.setEnabled(True)
         if locked:
             self.label.setStyleSheet("background: transparent; color: #94A3B8;")
         else:
@@ -188,6 +278,8 @@ class MainWindow(QMainWindow):
         qss_path = Path(__file__).resolve().parent.parent / "pySide6" / QSS_FILENAME
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
+        if self.ui is None:
+            raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
         
         self.ui.tabWidget.setUsesScrollButtons(False)
 
@@ -199,12 +291,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_SIZE[0], WINDOW_SIZE[1])
+        self._title_bar_theme = TitleBarTheme.LIGHT
+        self.set_title_bar_theme(self._title_bar_theme)
 
         self.runtime = AppRuntime()
         self.log_sink = self.runtime.log_sink
         self.worker = None
         self.stop_worker = None
         self.isRunning = False
+        self._close_pending = False
+        self._options_locked = False
+        self._allow_option_edits_while_running = False
 
         self.setup_connections()
 
@@ -216,6 +313,11 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.toggled.connect(self.on_user_config_changed)
+
+    def set_title_bar_theme(self, theme):
+        """현재 테마를 저장하고 즉시 적용한다. 추후 설정 탭에서 호출할 진입점이다."""
+        self._title_bar_theme = TitleBarTheme(theme)
+        return apply_windows_title_bar_theme(int(self.winId()), self._title_bar_theme)
 
     def update_tab_widths(self):
         tab_bar = self.ui.tabWidget.tabBar()
@@ -259,6 +361,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.set_title_bar_theme(self._title_bar_theme)
         QTimer.singleShot(0, self.update_tab_widths)
 
     def resizeEvent(self, event):
@@ -293,6 +396,8 @@ class MainWindow(QMainWindow):
         self.ui.logPrintText.ensureCursorVisible()
 
     def on_task_start(self):
+        if self.worker is not None or self.stop_worker is not None or self._close_pending:
+            return
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 
@@ -305,7 +410,7 @@ class MainWindow(QMainWindow):
         self.worker = RuntimeWorker(self.runtime, execution_queue, minimize_window)
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
-        self.worker.task_finished.connect(self.on_task_finished)
+        self.worker.finished.connect(self.on_task_finished)
 
         self.runtime.log_sink.set_log_callback(self.worker.log.emit)
 
@@ -324,32 +429,76 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(False)
 
         if not self.worker:
+            self.check_start_button_state()
             return
 
+        # MaaFW task가 아직 시작되지 않은 초기화 단계도 취소할 수 있게 한다.
+        self.worker.requestInterruption()
+
         # 정지 요청이 이미 진행 중이면 재실행하지 않음
-        if self.stop_worker is not None and self.stop_worker.isRunning():
+        if self.stop_worker is not None:
             return
 
         self.stop_worker = StopWorker(self.runtime)
-        self.stop_worker.finished_stop.connect(self.on_stop_worker_finished)
+        self.stop_worker.finished.connect(self.on_stop_worker_finished)
         self.stop_worker.start()
 
     def on_stop_worker_finished(self):
         if self.stop_worker is not None:
+            if self.stop_worker.succeeded:
+                self.append_log(self.stop_worker.result_message)
+            elif self.stop_worker.result_message != "실행 중인 Tasker가 없습니다.":
+                self.append_log(self.stop_worker.result_message)
             self.stop_worker.deleteLater()
         self.stop_worker = None
+        self._finish_run_if_idle()
 
     def on_task_finished(self):
-        self.isRunning = False
+        worker = self.worker
         self.runtime.log_sink.set_log_callback(None)
-        self.ui.workStartBtn.setText("작업 시작")
-        self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
-        self.ui.workStartBtn.clicked.connect(self.on_task_start)
-        self.ui.workStartBtn.setEnabled(True)
 
+        if worker is not None:
+            prefix = "▶" if worker.succeeded else "⚠"
+            self.append_log(f"{prefix} {worker.result_message}\n")
+            worker.deleteLater()
+        self.worker = None
+        self.ui.workStartBtn.setEnabled(False)
+        self._finish_run_if_idle()
+
+    def _finish_run_if_idle(self):
+        # 두 finished 콜백이 모두 처리되기 전에는 새 실행을 허용하지 않는다.
+        if self.worker is not None or self.stop_worker is not None:
+            return
+        if self.isRunning:
+            self.isRunning = False
+            self.ui.workStartBtn.setText("작업 시작")
+            self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
+            self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.set_options_locked(False)
+        self.check_start_button_state()
+        self._finish_pending_close()
 
-        self.append_log("▶ 작업이 종료 되었습니다.\n")
+    def closeEvent(self, event):
+        worker_running = self.worker is not None
+        stop_running = self.stop_worker is not None
+
+        if worker_running or stop_running:
+            self._close_pending = True
+            event.ignore()
+            if worker_running:
+                self.on_task_stop()
+            return
+
+        super().closeEvent(event)
+
+    def _finish_pending_close(self):
+        if not self._close_pending:
+            return
+
+        worker_running = self.worker is not None
+        stop_running = self.stop_worker is not None
+        if not worker_running and not stop_running:
+            QTimer.singleShot(0, self.close)
 
     def setup_dynamic_options(self):
         self.option_list_widget = DragDropListWidget()
@@ -370,7 +519,10 @@ class MainWindow(QMainWindow):
         raw_tasks = self.runtime.interface.get("task", [])
         options_dict = self.runtime.interface.get("option", {})
         
-        task_dict = {t["entry"]: t for t in raw_tasks}
+        task_dict = {t["name"]: t for t in raw_tasks}
+        task_dict_by_entry = {}
+        for task in raw_tasks:
+            task_dict_by_entry.setdefault(task["entry"], task)
 
         user_config_path = self.runtime.user_dir / "config" / "user_config.json"
         user_config = {}
@@ -378,6 +530,8 @@ class MainWindow(QMainWindow):
             try:
                 with open(user_config_path, "r", encoding="utf-8") as f:
                     user_config = json.load(f)
+                if not isinstance(user_config, dict):
+                    user_config = {}
             except Exception as e:
                 print(f"설정 파일 로드 실패: {e}")
 
@@ -388,12 +542,14 @@ class MainWindow(QMainWindow):
             self.ui.minimizeEnableBtn.blockSignals(False)
 
         saved_tasks = user_config.get("tasks", [])
-        added_entries = set()
+        if not isinstance(saved_tasks, list):
+            saved_tasks = []
+        added_tasks = set()
 
         def add_task_widget(task_data, is_checked, saved_options):
             item = QListWidgetItem()
             item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
-            item.setData(Qt.UserRole, task_data["entry"])
+            item.setData(Qt.UserRole, task_data["name"])
             self.option_list_widget.addItem(item)
             
             task_options = []
@@ -409,10 +565,19 @@ class MainWindow(QMainWindow):
                 self.on_task_checkbox_toggled
             )
             
-            if saved_options:
-                for opt_name in custom_widget.selected_options.keys():
-                    if opt_name in saved_options:
-                        custom_widget.selected_options[opt_name] = saved_options[opt_name]
+            if isinstance(saved_options, dict):
+                for opt_name, opt in custom_widget.task_options:
+                    saved_value = saved_options.get(opt_name)
+                    if not isinstance(saved_value, list):
+                        continue
+
+                    valid_names = [case.get("name") for case in opt.get("cases", [])]
+                    selected = [name for name in valid_names if name in saved_value]
+                    if opt.get("type", "select") != "checkbox":
+                        selected = selected[:1]
+
+                    if selected or opt.get("type", "select") == "checkbox":
+                        custom_widget.selected_options[opt_name] = selected
             
             custom_widget.checkbox.blockSignals(True)
             custom_widget.checkbox.setChecked(is_checked)
@@ -421,20 +586,24 @@ class MainWindow(QMainWindow):
             item.setSizeHint(custom_widget.sizeHint())
             
             self.option_list_widget.setItemWidget(item, custom_widget)
-            added_entries.add(task_data["entry"])
+            added_tasks.add(task_data["name"])
 
         for saved_task in saved_tasks:
-            entry = saved_task.get("entry")
-            if entry in task_dict:
+            task_data = task_dict.get(saved_task.get("name"))
+            if task_data is None:
+                # 기존 entry 기반 설정 파일을 name 기반 형식으로 자동 마이그레이션한다.
+                task_data = task_dict_by_entry.get(saved_task.get("entry"))
+
+            if task_data is not None and task_data["name"] not in added_tasks:
                 add_task_widget(
-                    task_dict[entry],
-                    saved_task.get("checked", True),
+                    task_data,
+                    saved_task.get("checked", task_data.get("default_check", False)),
                     saved_task.get("selected_options", None)
                 )
 
         for task_data in raw_tasks:
-            if task_data["entry"] not in added_entries:
-                add_task_widget(task_data, True, None)
+            if task_data["name"] not in added_tasks:
+                add_task_widget(task_data, task_data.get("default_check", False), None)
 
         self.check_start_button_state()
 
@@ -464,18 +633,21 @@ class MainWindow(QMainWindow):
             cases = opt.get("cases", [])
 
             if opt_type == "select":
-                button_group = QButtonGroup(container_widget)
+                select_container = QWidget(container_widget)
+                select_layout = QVBoxLayout(select_container)
+                select_layout.setContentsMargins(0, 0, 0, 0)
+                select_layout.setSpacing(0)
+                button_group = QButtonGroup(select_container)
                 
                 for case in cases:
                     case_name = case["name"]
 
-                    row_widget = QWidget()
+                    row_widget = QWidget(select_container)
                     row_layout = QHBoxLayout(row_widget)
                     row_layout.setContentsMargins(0, 2, 0, 2)
                     row_layout.setSpacing(8)
 
                     radio_btn = QRadioButton("")
-                    radio_btn.setAutoExclusive(False)
                     button_group.addButton(radio_btn)
                     
                     if case_name in item_widget.selected_options.get(opt_name, []):
@@ -491,8 +663,10 @@ class MainWindow(QMainWindow):
                     radio_btn.toggled.connect(make_radio_slot(item_widget, opt_name, case_name))
                     
                     row_layout.addWidget(radio_btn)
-                    row_layout.addWidget(case_label, 1) # 🌟 stretch=1
-                    layout.addWidget(row_widget)
+                    row_layout.addWidget(case_label, 1)
+                    select_layout.addWidget(row_widget)
+
+                layout.addWidget(select_container)
 
             elif opt_type == "checkbox":
                 for case in cases:
@@ -584,6 +758,9 @@ class MainWindow(QMainWindow):
         self.on_user_config_changed()
 
     def check_start_button_state(self):
+        if self.isRunning or self.stop_worker is not None or self._close_pending:
+            self.ui.workStartBtn.setEnabled(False)
+            return
         any_checked = False
         for i in range(self.option_list_widget.count()):
             item = self.option_list_widget.item(i)
@@ -601,6 +778,7 @@ class MainWindow(QMainWindow):
         self.save_user_config()
 
     def set_options_locked(self, locked: bool):
+        self._options_locked = locked
         for i in range(self.option_list_widget.count()):
             item = self.option_list_widget.item(i)
             widget = self.option_list_widget.itemWidget(item)
@@ -613,7 +791,17 @@ class MainWindow(QMainWindow):
             self.ui.minimizeEnableBtn.setEnabled(not locked)
 
         if hasattr(self.ui, 'scrollSettingContents'):
-            self.ui.scrollSettingContents.setEnabled(not locked)
+            self.ui.scrollSettingContents.setEnabled(
+                not locked or self._allow_option_edits_while_running
+            )
+
+    def set_runtime_option_editing_enabled(self, enabled: bool):
+        """실행 중 세부 옵션 편집 정책을 설정한다. 추후 설정 탭에서 호출할 진입점이다."""
+        self._allow_option_edits_while_running = bool(enabled)
+        if hasattr(self.ui, 'scrollSettingContents'):
+            self.ui.scrollSettingContents.setEnabled(
+                not self._options_locked or self._allow_option_edits_while_running
+            )
 
     def build_execution_queue(self):
         execution_queue = []
@@ -625,6 +813,9 @@ class MainWindow(QMainWindow):
             if widget_in_item and widget_in_item.is_checked():
                 task_entry = widget_in_item.task_data["entry"]
                 override_params = {}
+                task_override = widget_in_item.task_data.get("pipeline_override", {})
+                if isinstance(task_override, dict):
+                    merge_pipeline_override(override_params, task_override)
                 
                 for opt_name, opt in widget_in_item.task_options:
                     selected_cases = widget_in_item.selected_options.get(opt_name, [])
@@ -635,10 +826,8 @@ class MainWindow(QMainWindow):
                     for case in opt.get("cases", []):
                         if case["name"] in selected_cases:
                             pipeline_override = case.get("pipeline_override", {})
-                            for node_name, node_params in pipeline_override.items():
-                                if node_name not in override_params:
-                                    override_params[node_name] = {}
-                                override_params[node_name].update(node_params)
+                            if isinstance(pipeline_override, dict):
+                                merge_pipeline_override(override_params, pipeline_override)
                 
                 execution_queue.append((task_entry, override_params))
                 
@@ -656,6 +845,7 @@ class MainWindow(QMainWindow):
             widget = self.option_list_widget.itemWidget(item)
             if widget:
                 tasks_data.append({
+                    "name": widget.task_data["name"],
                     "entry": widget.task_data["entry"],
                     "checked": widget.is_checked(),
                     "selected_options": widget.selected_options
@@ -666,50 +856,66 @@ class MainWindow(QMainWindow):
             minimize_enabled = self.ui.minimizeEnableBtn.isChecked()
                 
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
+            temp_path = config_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "minimize_enabled": minimize_enabled,
                     "tasks": tasks_data
                 }, f, ensure_ascii=False, indent=4)
+                f.flush()
+            temp_path.replace(config_path)
         except Exception as e:
             print(f"설정 파일 저장 실패: {e}")
 
 # 정지 요청 전용 스레드
 class StopWorker(QThread):
-    finished_stop = Signal()
-
     def __init__(self, runtime, parent=None):
         super().__init__(parent)
         self.runtime = runtime
+        self.succeeded = False
+        self.result_message = ""
 
     def run(self):
-        self.runtime.stop_task()
-        self.finished_stop.emit()
+        self.succeeded, self.result_message = self.runtime.stop_task()
 
 # Tasker 스레드
 class RuntimeWorker(QThread):
     log = Signal(str)
-    task_finished = Signal()
 
     def __init__(self, runtime, execution_queue, minimize_window=False):
         super().__init__()
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
+        self.succeeded = False
+        self.result_message = "작업을 시작하지 못했습니다."
 
     def run(self):
-        initialized, init_message = self.runtime.initialize(self.minimize_window)
-        self.log.emit(init_message)
+        try:
+            initialized, init_message = self.runtime.initialize(self.minimize_window)
+            if not initialized:
+                self.result_message = init_message
+                return
 
-        if not initialized:
-            self.task_finished.emit()
-            return
-        
-        self.log.emit("▶ 작업 시작...")
-        tasked, _ = self.runtime.run_task(self.execution_queue, self.minimize_window)
+            self.log.emit(init_message)
+            if self.isInterruptionRequested():
+                self.result_message = "작업 시작이 취소되었습니다."
+                return
 
-        if not tasked:
-            self.task_finished.emit()
-            return
-
-        self.task_finished.emit()
+            self.log.emit("▶ 작업 시작...")
+            self.succeeded, self.result_message = self.runtime.run_task(
+                self.execution_queue,
+                self.minimize_window,
+                cancellation_requested=self.isInterruptionRequested,
+            )
+            if self.isInterruptionRequested():
+                self.succeeded = False
+                self.result_message = "작업이 중지되었습니다."
+        except Exception as error:
+            self.succeeded = False
+            self.result_message = f"Runtime에서 예기치 않은 오류가 발생했습니다: {error}"
+        finally:
+            released, release_message = self.runtime.release_session()
+            if not released:
+                self.succeeded = False
+                self.result_message += f"\n{release_message}"
