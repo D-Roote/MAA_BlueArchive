@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit, QRadioButton
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
 
@@ -322,12 +322,12 @@ class UILifecycleTests(unittest.TestCase):
                     "name": "Test",
                     "entry": "Test_Main",
                     "default_check": True,
-                    "option": ["Test_Mode"],
+                    "option": ["Test_Mode", "Test_Dropdown", "Test_Input"],
                 }
             ],
             "option": {
                 "Test_Mode": {
-                    "type": "select",
+                    "type": "radio",
                     "default_case": "A",
                     "cases": [
                         {
@@ -339,7 +339,59 @@ class UILifecycleTests(unittest.TestCase):
                             "pipeline_override": {"Test_Node": {"next": ["B"]}},
                         },
                     ],
-                }
+                },
+                "Test_Dropdown": {
+                    "type": "select",
+                    "cases": [
+                        {
+                            "name": "First",
+                            "label": "첫 번째 선택지",
+                            "pipeline_override": {
+                                "Dropdown_Node": {"next": ["First"]}
+                            },
+                        },
+                        {
+                            "name": "Second",
+                            "label": "두 번째 선택지",
+                            "pipeline_override": {
+                                "Dropdown_Node": {"next": ["Second"]}
+                            },
+                        },
+                    ],
+                },
+                "Test_Input": {
+                    "type": "input",
+                    "inputs": [
+                        {
+                            "name": "Chapter",
+                            "label": "Chapter",
+                            "default": "4",
+                            "pipeline_type": "string",
+                            "verify": "^\\d+$",
+                            "pattern_msg": "숫자만 입력해 주세요.",
+                        },
+                        {
+                            "name": "Timeout",
+                            "label": "Timeout",
+                            "default": "20000",
+                            "pipeline_type": "int",
+                            "verify": "^\\d+$",
+                        },
+                        {
+                            "name": "Enabled",
+                            "label": "Enabled",
+                            "default": "true",
+                            "pipeline_type": "bool",
+                        },
+                    ],
+                    "pipeline_override": {
+                        "Input_Node": {
+                            "next": "Chapter_{Chapter}",
+                            "timeout": "{Timeout}",
+                            "enabled": "{Enabled}",
+                        }
+                    },
+                },
             },
         }
         runtime.log_sink = LogSinkFocus()
@@ -399,6 +451,71 @@ class UILifecycleTests(unittest.TestCase):
         self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
         self.window.on_task_finished()
         self.window.on_stop_worker_finished()
+
+    def test_input_option_renders_and_builds_typed_pipeline_override(self):
+        item = self.window.option_list_widget.item(0)
+        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget.setting_btn.click()
+
+        input_widgets = {
+            widget.property("inputName"): widget
+            for widget in self.window.ui.scrollSettingContents.findChildren(QLineEdit)
+        }
+        self.assertEqual(set(input_widgets), {"Chapter", "Timeout", "Enabled"})
+        self.assertEqual(input_widgets["Chapter"].text(), "4")
+
+        input_widgets["Chapter"].setText("12")
+        input_widgets["Timeout"].setText("3500")
+        input_widgets["Enabled"].setText("false")
+
+        override = self.window.build_execution_queue()[0][1]["Input_Node"]
+        self.assertEqual(override["next"], "Chapter_12")
+        self.assertEqual(override["timeout"], 3500)
+        self.assertIs(override["enabled"], False)
+
+    def test_standard_select_uses_dropdown_and_radio_extension_stays_separate(self):
+        item = self.window.option_list_widget.item(0)
+        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget.setting_btn.click()
+
+        radio_buttons = self.window.ui.scrollSettingContents.findChildren(QRadioButton)
+        self.assertEqual(len(radio_buttons), 2)
+
+        combo_boxes = self.window.ui.scrollSettingContents.findChildren(QComboBox)
+        self.assertEqual(len(combo_boxes), 1)
+        combo_box = combo_boxes[0]
+        self.assertEqual(combo_box.property("optionName"), "Test_Dropdown")
+        self.assertEqual(combo_box.currentData(), "First")
+        self.assertEqual(combo_box.itemText(1), "두 번째 선택지")
+
+        combo_box.setCurrentIndex(1)
+
+        self.assertEqual(task_widget.selected_options["Test_Dropdown"], ["Second"])
+        override = self.window.build_execution_queue()[0][1]
+        self.assertEqual(override["Dropdown_Node"]["next"], ["Second"])
+
+    def test_invalid_input_disables_start_and_displays_pattern_message(self):
+        item = self.window.option_list_widget.item(0)
+        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget.setting_btn.click()
+        chapter_input = next(
+            widget
+            for widget in self.window.ui.scrollSettingContents.findChildren(QLineEdit)
+            if widget.property("inputName") == "Chapter"
+        )
+
+        chapter_input.setText("invalid")
+
+        self.assertFalse(self.window.ui.workStartBtn.isEnabled())
+        self.assertFalse(chapter_input.property("inputValid"))
+        error_labels = self.window.ui.scrollSettingContents.findChildren(
+            QLabel, "optionInputError"
+        )
+        self.assertIn("숫자만 입력해 주세요.", [label.text() for label in error_labels])
+
+        chapter_input.setText("7")
+        self.assertTrue(self.window.ui.workStartBtn.isEnabled())
+        self.assertTrue(chapter_input.property("inputValid"))
 
     def test_restart_waits_for_both_finished_callbacks(self):
         self.start_mock_run()
