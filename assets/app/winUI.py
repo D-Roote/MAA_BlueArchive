@@ -8,9 +8,9 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
-                           QColor, QPainter, QPen)
+                           QColor, QIcon, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QMainWindow, QAbstractItemView, QHBoxLayout, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QWidget, 
@@ -170,8 +170,13 @@ class OptionItemWidget(QWidget):
         layout.addWidget(self.label, 1) 
 
         self.setting_btn = QPushButton()
-        self.setting_btn.setFixedSize(10, 10)
-        self.setting_btn.setContentsMargins(1, 1, 1, 1)
+        self.setting_btn.setObjectName("taskSettingsButton")
+        self.setting_btn.setFixedSize(30, 30)
+        self.setting_btn.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
+        self.setting_btn.setIconSize(QSize(20, 20))
+        self.setting_btn.setToolTip(f"{display_name} 세부 설정")
+        self.setting_btn.setAccessibleName(f"{display_name} 세부 설정")
+        self.checkbox.setAccessibleName(f"{display_name} 실행 선택")
         
         if self.task_options:
             layout.addWidget(self.setting_btn)
@@ -279,6 +284,8 @@ class MainWindow(QMainWindow):
 
         ui_path = UI_DIR / UI_FILENAME
         qss_path = UI_DIR / QSS_FILENAME
+        # QSS의 아이콘 경로도 작업 디렉토리와 무관하게 해석한다.
+        QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
