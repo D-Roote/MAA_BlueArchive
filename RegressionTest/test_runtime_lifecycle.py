@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -702,15 +702,74 @@ class UILifecycleTests(unittest.TestCase):
                     dark_stylesheet,
                     r"(?s)QTabBar::tab\s*\{.*?border:\s*1px solid #30415E;",
                 )
+                self.assertRegex(
+                    dark_stylesheet,
+                    r"(?s)QFrame#line,.*?QFrame#line_4\s*\{.*?color:\s*#30415E;",
+                )
                 widget = window.option_list_widget.itemWidget(window.option_list_widget.item(0))
-                self.assertFalse(widget.setting_btn.icon().pixmap(20, 20).isNull())
+                task_settings_icon = widget.setting_btn.icon().pixmap(20, 20)
+                end_settings_icon = window.ui.endSettingBtn.icon().pixmap(20, 20)
+                self.assertFalse(task_settings_icon.isNull())
+                self.assertFalse(end_settings_icon.isNull())
+                self.assertEqual(
+                    task_settings_icon.toImage(),
+                    end_settings_icon.toImage(),
+                )
+                for button in (widget.setting_btn, window.ui.endSettingBtn):
+                    with self.subTest(button=button.objectName()):
+                        QApplication.sendEvent(
+                            button,
+                            QEvent(QEvent.Type.Enter),
+                        )
+                        self.assertEqual(button.iconSize(), QSize(24, 24))
+                        QApplication.sendEvent(
+                            button,
+                            QEvent(QEvent.Type.Leave),
+                        )
+                        self.assertEqual(button.iconSize(), QSize(20, 20))
                 stylesheet = (UI_DIR / "style.qss").read_text(encoding="utf-8")
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QScrollArea#scrollSettingWidget\s*\{.*?"
+                    r"border:\s*1px solid transparent;",
+                )
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QFrame#line,.*?QFrame#line_4\s*\{.*?"
+                    r"color:\s*#E2E8F0;",
+                )
+                self.assertEqual(
+                    {
+                        getattr(window.ui, name).frameShape()
+                        for name in ("line", "line_2", "line_3", "line_4")
+                    },
+                    {QFrame.Shape.HLine, QFrame.Shape.VLine},
+                )
                 referenced_icons = re.findall(r'maabaicons:([^"\s)]+)', stylesheet)
                 self.assertTrue(referenced_icons)
                 for relative_path in referenced_icons:
                     with self.subTest(icon=relative_path):
                         self.assertTrue((UI_RESOURCE_DIR / "icons" / relative_path).is_file())
                         self.assertTrue(QSvgRenderer("maabaicons:" + relative_path).isValid())
+
+                for filename in (
+                    "checkbox-unchecked.svg",
+                    "checkbox-unchecked-hover.svg",
+                    "checkbox-unchecked-disabled.svg",
+                    "radio-unchecked.svg",
+                    "radio-unchecked-hover.svg",
+                    "radio-unchecked-disabled.svg",
+                    "radio-checked.svg",
+                    "radio-checked-hover.svg",
+                    "radio-checked-disabled.svg",
+                ):
+                    control_svg = (
+                        UI_RESOURCE_DIR / "icons" / "controls" / filename
+                    ).read_text(encoding="utf-8")
+                    with self.subTest(icon=filename):
+                        self.assertIn('fill="none"', control_svg)
+                        self.assertNotIn('fill="#FFFFFF"', control_svg)
+                        self.assertNotIn('fill="#E2E8F0"', control_svg)
             finally:
                 os.chdir(original_directory)
 
