@@ -17,10 +17,19 @@ QScrollArea#scrollSettingWidget {
 }
 
 QFrame#line,
-QFrame#line_2,
-QFrame#line_3,
 QFrame#line_4 {
-    color: #E2E8F0;
+    min-height: 1px;
+    max-height: 1px;
+    border: none;
+    background-color: #E2E8F0;
+}
+
+QFrame#line_2,
+QFrame#line_3 {
+    min-width: 1px;
+    max-width: 1px;
+    border: none;
+    background-color: #E2E8F0;
 }
 
 /* =========================================
@@ -28,10 +37,16 @@ QFrame#line_4 {
    ========================================= */
 QTabWidget::pane {
     border: 1px solid #E2E8F0;
-    background-color: #FFFFFF;
+    background-color: #F4F7FB;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
     margin-top: -1px;
+}
+
+QTabWidget#tabWidget > QStackedWidget,
+QWidget#mainTab,
+QWidget#settingTab {
+    background-color: transparent;
 }
 
 QTabBar::tab {
@@ -70,6 +85,10 @@ QListWidget {
 QListWidget::item {
     background: transparent;
     border: none;
+}
+
+QListWidget#taskOptionList::item {
+    border-radius: 6px;
 }
 
 QListWidget::item:hover {

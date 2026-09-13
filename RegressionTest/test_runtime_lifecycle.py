@@ -700,12 +700,19 @@ class UILifecycleTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     dark_stylesheet,
+                    r"(?s)QTabWidget::pane\s*\{.*?"
+                    r"background-color:\s*#111A2B;",
+                )
+                self.assertRegex(
+                    dark_stylesheet,
                     r"(?s)QTabBar::tab\s*\{.*?border:\s*1px solid #30415E;",
                 )
                 self.assertRegex(
                     dark_stylesheet,
-                    r"(?s)QFrame#line,.*?QFrame#line_4\s*\{.*?color:\s*#30415E;",
+                    r"(?s)QFrame#line,.*?QFrame#line_4\s*\{.*?"
+                    r"background-color:\s*#30415E;",
                 )
+                self.assertEqual(window.option_list_widget.objectName(), "taskOptionList")
                 widget = window.option_list_widget.itemWidget(window.option_list_widget.item(0))
                 task_settings_icon = widget.setting_btn.icon().pixmap(20, 20)
                 end_settings_icon = window.ui.endSettingBtn.icon().pixmap(20, 20)
@@ -735,8 +742,33 @@ class UILifecycleTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     stylesheet,
-                    r"(?s)QFrame#line,.*?QFrame#line_4\s*\{.*?"
-                    r"color:\s*#E2E8F0;",
+                    r"(?s)QTabWidget::pane\s*\{.*?"
+                    r"background-color:\s*#F4F7FB;.*?"
+                    r"border-bottom-left-radius:\s*8px;.*?"
+                    r"border-bottom-right-radius:\s*8px;",
+                )
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QTabWidget#tabWidget > QStackedWidget,\s*"
+                    r"QWidget#mainTab,\s*QWidget#settingTab\s*\{.*?"
+                    r"background-color:\s*transparent;",
+                )
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QFrame#line,\s*QFrame#line_4\s*\{.*?"
+                    r"min-height:\s*1px;.*?max-height:\s*1px;.*?"
+                    r"background-color:\s*#E2E8F0;",
+                )
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QFrame#line_2,\s*QFrame#line_3\s*\{.*?"
+                    r"min-width:\s*1px;.*?max-width:\s*1px;.*?"
+                    r"background-color:\s*#E2E8F0;",
+                )
+                self.assertRegex(
+                    stylesheet,
+                    r"(?s)QListWidget#taskOptionList::item\s*\{.*?"
+                    r"border-radius:\s*6px;",
                 )
                 self.assertEqual(
                     {

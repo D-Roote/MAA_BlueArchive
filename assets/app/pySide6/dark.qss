@@ -14,12 +14,12 @@ QFrame#line,
 QFrame#line_2,
 QFrame#line_3,
 QFrame#line_4 {
-    color: #30415E;
+    background-color: #30415E;
 }
 
 QTabWidget::pane {
     border: 1px solid #30415E;
-    background-color: #172238;
+    background-color: #111A2B;
 }
 
 QTabBar::tab {

@@ -765,6 +765,7 @@ class MainWindow(QMainWindow):
 
     def setup_dynamic_options(self):
         self.option_list_widget = DragDropListWidget()
+        self.option_list_widget.setObjectName("taskOptionList")
         
         self.option_list_widget.setDragDropMode(QAbstractItemView.InternalMove)
         self.option_list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
