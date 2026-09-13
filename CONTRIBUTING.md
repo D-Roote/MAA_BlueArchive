@@ -6,7 +6,7 @@
   - [Runtime](#runtime)
   - [Pipeline](#pipeline)
 - [`interface.json` 옵션 활용](#interfacejson-옵션-활용)
-  - [Task와 Option 연결](#task와-option-연결)
+  - [`task`와 `option` 연결](#task와-option-연결)
   - [`select`: 드롭다운 단일 선택](#select-드롭다운-단일-선택)
   - [`radio`: 라디오 단일 선택](#radio-라디오-단일-선택)
   - [`checkbox`: 다중 선택](#checkbox-다중-선택)
@@ -30,63 +30,93 @@
 
 ## `interface.json` 옵션 활용
 
-Task의 `option` 배열에는 최상위 `option` 객체의 키를 작성합니다. 배열에 작성된
-순서대로 옵션이 표시되고, 선택된 case의 `pipeline_override`가 실행할 Task에
-병합됩니다.
+옵션의 기본 구조와 필드는 [공식 Project Interface V2 문서](https://maafw.com/en/docs/3.3-ProjectInterfaceV2/)를
+따릅니다. `task[].option`에는 최상위 `option` 객체에 정의한 옵션 ID를 문자열
+배열로 지정합니다. 옵션은 배열에 지정한 순서대로 표시되며, 선택 결과의
+`pipeline_override`는 해당 작업을 시작할 때 파이프라인에 병합됩니다.
 
-### Task와 Option 연결
+### `task`와 `option` 연결
 
 ```json
 {
     "task": [
         {
-            "name": "ExampleTask",
-            "label": "예제 작업",
-            "entry": "Example_Main",
+            "name": "DailyRoutine",
+            "label": "일일 작업",
+            "entry": "DailyRoutine",
             "option": [
-                "Example_Mode",
-                "Example_Count"
+                "ExecutionMode",
+                "TimeoutSettings"
             ]
         }
     ],
     "option": {
-        "Example_Mode": {},
-        "Example_Count": {}
+        "ExecutionMode": {
+            "label": "실행 모드",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Normal",
+                    "label": "일반"
+                }
+            ],
+            "default_case": "Normal"
+        },
+        "TimeoutSettings": {
+            "label": "제한 시간 설정",
+            "type": "input",
+            "inputs": [
+                {
+                    "name": "Timeout",
+                    "label": "제한 시간(ms)",
+                    "default": "20000",
+                    "pipeline_type": "int"
+                }
+            ],
+            "pipeline_override": {
+                "DailyRoutine": {
+                    "timeout": "{Timeout}"
+                }
+            }
+        }
     }
 }
 ```
 
 ### `select`: 드롭다운 단일 선택
 
-공식 Project Interface v2의 `select`입니다. `cases`가 많아도 하나의 드롭다운만
-차지하며, `default_case`가 없거나 유효하지 않으면 첫 번째 case를 선택합니다.
+공식 Project Interface V2의 단일 선택 옵션입니다. `cases`에 정의한 항목을
+`QComboBox` 형식의 단일 드롭다운으로 표시합니다. `default_case`가 없거나
+유효하지 않으면 첫 번째 항목을 선택합니다.
 
 ```json
 {
-    "Example_Mode": {
-        "label": "실행 모드",
-        "type": "select",
-        "cases": [
-            {
-                "name": "Normal",
-                "label": "일반",
-                "pipeline_override": {
-                    "Example_Main": {
-                        "next": "Example_Normal"
+    "option": {
+        "BattleStage": {
+            "label": "전투 스테이지",
+            "type": "select",
+            "cases": [
+                {
+                    "name": "Chapter3",
+                    "label": "3장",
+                    "pipeline_override": {
+                        "EnterStage": {
+                            "next": "MainChapter_3"
+                        }
+                    }
+                },
+                {
+                    "name": "Chapter4",
+                    "label": "4장",
+                    "pipeline_override": {
+                        "EnterStage": {
+                            "next": "MainChapter_4"
+                        }
                     }
                 }
-            },
-            {
-                "name": "Advanced",
-                "label": "고급",
-                "pipeline_override": {
-                    "Example_Main": {
-                        "next": "Example_Advanced"
-                    }
-                }
-            }
-        ],
-        "default_case": "Normal"
+            ],
+            "default_case": "Chapter4"
+        }
     }
 }
 ```
@@ -94,112 +124,124 @@ Task의 `option` 배열에는 최상위 `option` 객체의 키를 작성합니�
 ### `radio`: 라디오 단일 선택
 
 `radio`는 기존 라디오 목록 UI를 유지하기 위한 MAABA 전용 확장 타입입니다.
-데이터 구조와 override 동작은 `select`와 같지만 공식 Project Interface v2 타입은
-아닙니다. 다른 범용 UI와 호환해야 하는 설정에는 `select`를 사용하세요.
+데이터 구조와 `pipeline_override` 병합 방식은 `select`와 같지만 공식 Project
+Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설정에는 `select`를
+사용하세요.
 
 ```json
 {
-    "Example_Location": {
-        "label": "지역 선택",
-        "type": "radio",
-        "cases": [
-            {
-                "name": "First",
-                "label": "첫 번째 지역"
-            },
-            {
-                "name": "Second",
-                "label": "두 번째 지역",
-                "pipeline_override": {
-                    "Example_Select_Location": {
-                        "action": {
-                            "param": {
-                                "target": [1000, 300, 1, 1]
+    "option": {
+        "BountyLocation": {
+            "label": "현상수배 지역",
+            "type": "radio",
+            "cases": [
+                {
+                    "name": "Highway",
+                    "label": "고가도로"
+                },
+                {
+                    "name": "DesertRailroad",
+                    "label": "사막 기찻길",
+                    "pipeline_override": {
+                        "SelectBountyLocation": {
+                            "action": {
+                                "param": {
+                                    "target": [1000, 300, 1, 1]
+                                }
                             }
                         }
                     }
                 }
-            }
-        ],
-        "default_case": "First"
+            ],
+            "default_case": "Highway"
+        }
     }
 }
 ```
 
 ### `checkbox`: 다중 선택
 
-여러 case를 동시에 선택합니다. 선택 순서와 관계없이 `cases`에 선언된 순서대로
-각 `pipeline_override`가 병합됩니다.
+여러 항목을 동시에 선택하는 공식 옵션입니다. 사용자가 항목을 선택한 순서와
+관계없이 `cases`에 선언된 순서대로 각 `pipeline_override`를 병합합니다.
 
 ```json
 {
-    "Example_Rewards": {
-        "label": "수령할 보상",
-        "type": "checkbox",
-        "cases": [
-            {
-                "name": "Daily",
-                "label": "일일 보상",
-                "pipeline_override": {
-                    "Example_Main": {
-                        "next": "Example_Daily"
+    "option": {
+        "RewardTypes": {
+            "label": "수령할 보상",
+            "type": "checkbox",
+            "cases": [
+                {
+                    "name": "DailyReward",
+                    "label": "일일 보상",
+                    "pipeline_override": {
+                        "CollectDailyReward": {
+                            "enabled": true
+                        }
+                    }
+                },
+                {
+                    "name": "WeeklyReward",
+                    "label": "주간 보상",
+                    "pipeline_override": {
+                        "CollectWeeklyReward": {
+                            "enabled": true
+                        }
                     }
                 }
-            },
-            {
-                "name": "Weekly",
-                "label": "주간 보상",
-                "pipeline_override": {
-                    "Example_Daily": {
-                        "next": "Example_Weekly"
-                    }
-                }
-            }
-        ],
-        "default_case": [
-            "Daily",
-            "Weekly"
-        ]
+            ],
+            "default_case": [
+                "DailyReward",
+                "WeeklyReward"
+            ]
+        }
     }
 }
 ```
 
 ### `switch`: 활성화 전환
 
-두 개의 case를 사용하는 토글 옵션입니다. case의 `name`은 공식 규칙에 따라
-`Yes`와 `No`를 사용하는 것을 권장합니다.
+두 개의 선택 항목을 사용하는 공식 토글 옵션입니다. 각 항목의 `name`에는
+`Yes`와 `No`를 사용합니다.
 
 ```json
 {
-    "Example_Optional_Task": {
-        "label": "추가 작업 실행",
-        "type": "switch",
-        "cases": [
-            {
-                "name": "Yes",
-                "label": "활성화",
-                "pipeline_override": {
-                    "Example_Main": {
-                        "next": "Example_Optional"
+    "option": {
+        "UseCafeInvitation": {
+            "label": "카페 초대 실행",
+            "type": "switch",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "label": "사용",
+                    "pipeline_override": {
+                        "InviteStudent": {
+                            "enabled": true
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "label": "사용 안 함",
+                    "pipeline_override": {
+                        "InviteStudent": {
+                            "enabled": false
+                        }
                     }
                 }
-            },
-            {
-                "name": "No",
-                "label": "비활성화"
-            }
-        ],
-        "default_case": "Yes"
+            ],
+            "default_case": "Yes"
+        }
     }
 }
 ```
 
 ### `input`: 사용자 입력
 
-`inputs`에 입력 필드를 선언하고 `pipeline_override` 문자열에서 `{필드명}`으로
-값을 참조합니다. 값 전체가 플레이스홀더이면 `pipeline_type`에 따라 실제
-`string`, `int`, `bool` 타입으로 변환됩니다. 다른 문자열 안에 포함된
-플레이스홀더는 문자열로 치환됩니다.
+`inputs`에 입력 필드를 정의하고 `pipeline_override`에서 `{입력 필드 ID}` 형식으로
+값을 참조합니다. 속성값 전체가 플레이스홀더이면 `pipeline_type`에 따라
+`string`, `int`, `bool` 중 지정한 타입으로 변환됩니다. 플레이스홀더가 다른
+문자열에 포함되어 있으면 문자열로 치환됩니다.
 
 지원 필드는 다음과 같습니다.
 
@@ -207,46 +249,48 @@ Task의 `option` 배열에는 최상위 `option` 객체의 키를 작성합니�
 |---|---|
 | `name` | 입력 필드 ID |
 | `label` | UI에 표시할 이름 |
-| `description` | 입력란 툴팁 |
-| `default` | 최초 입력 문자열 |
-| `pipeline_type` | `string`, `int`, `bool` 중 치환할 타입 |
+| `description` | 입력 필드 설명(툴팁) |
+| `default` | 초기 입력값(문자열) |
+| `pipeline_type` | 파이프라인에 치환할 데이터 타입: `string`, `int`, `bool` |
 | `verify` | 전체 입력값을 검사할 정규식 |
 | `pattern_msg` | 정규식 검증 실패 시 표시할 메시지 |
 | `password` | 입력값 마스킹 여부. MAABA에서는 평문을 사용자 설정에 저장하지 않음 |
 
 ```json
 {
-    "Example_Count": {
-        "label": "반복 설정",
-        "type": "input",
-        "inputs": [
-            {
-                "name": "Chapter",
-                "label": "챕터",
-                "default": "4",
-                "pipeline_type": "string",
-                "verify": "^\\d+$",
-                "pattern_msg": "숫자만 입력해 주세요."
-            },
-            {
-                "name": "Timeout",
-                "label": "제한 시간(ms)",
-                "default": "20000",
-                "pipeline_type": "int",
-                "verify": "^[1-9]\\d*$"
-            },
-            {
-                "name": "Enabled",
-                "label": "활성화 여부",
-                "default": "true",
-                "pipeline_type": "bool"
-            }
-        ],
-        "pipeline_override": {
-            "Example_Main": {
-                "next": "Chapter_{Chapter}",
-                "timeout": "{Timeout}",
-                "enabled": "{Enabled}"
+    "option": {
+        "CustomStage": {
+            "label": "스테이지 직접 입력",
+            "type": "input",
+            "inputs": [
+                {
+                    "name": "ChapterNumber",
+                    "label": "챕터 번호",
+                    "default": "4",
+                    "pipeline_type": "string",
+                    "verify": "^\\d+$",
+                    "pattern_msg": "숫자만 입력해 주세요."
+                },
+                {
+                    "name": "Timeout",
+                    "label": "제한 시간(ms)",
+                    "default": "20000",
+                    "pipeline_type": "int",
+                    "verify": "^[1-9]\\d*$"
+                },
+                {
+                    "name": "Enabled",
+                    "label": "활성화 여부",
+                    "default": "true",
+                    "pipeline_type": "bool"
+                }
+            ],
+            "pipeline_override": {
+                "EnterStage": {
+                    "next": "MainChapter_{ChapterNumber}",
+                    "timeout": "{Timeout}",
+                    "enabled": "{Enabled}"
+                }
             }
         }
     }
