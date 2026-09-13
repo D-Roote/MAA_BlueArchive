@@ -1173,17 +1173,24 @@ class StopWorker(QThread):
 class RuntimeWorker(QThread):
     log = Signal(str)
 
-    def __init__(self, runtime, execution_queue, minimize_window=False):
+    def __init__(
+        self,
+        runtime,
+        execution_queue,
+        minimize_window=False,
+        controller_settings=None,
+    ):
         super().__init__()
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
+        self.controller_settings = controller_settings
         self.succeeded = False
         self.result_message = "작업을 시작하지 못했습니다."
 
     def run(self):
         try:
-            initialized, init_message = self.runtime.initialize(self.minimize_window)
+            initialized, init_message = self.runtime.initialize(self.controller_settings)
             if not initialized:
                 self.result_message = init_message
                 return

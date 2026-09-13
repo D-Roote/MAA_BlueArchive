@@ -61,7 +61,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
             self.taskers.append(tasker)
             return tasker
 
-        def create_controller(minimize):
+        def create_controller(controller_settings):
             self.runtime.controller = MagicMock(connected=True)
             self.runtime.controller.post_connection.return_value = make_job()
             self.runtime.controller.post_inactive.return_value = make_job()
@@ -79,20 +79,39 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertIsNone(runtime.resource)
         self.assertIsNone(runtime.tasker)
 
-    def test_window_search_ignores_app_and_preserves_capture_modes(self):
+    def test_window_search_ignores_app_and_uses_controller_settings(self):
         windows = [
             SimpleNamespace(hwnd=111, window_name=WINDOW_TITLE),
             SimpleNamespace(hwnd=222, window_name="Blue Archive - Notes"),
             SimpleNamespace(hwnd=333, window_name="Blue Archive"),
         ]
-        for minimize, controller_name, capture in (
-            (False, "Win32FramePool", MaaWin32ScreencapMethodEnum.FramePool),
-            (True, "Win32PrintWindow", MaaWin32ScreencapMethodEnum.PrintWindow),
+        for settings, controller_name, capture in (
+            (
+                {
+                    "screencap": "FramePool",
+                    "mouse": "PostMessageWithWindowPos",
+                    "keyboard": "PostMessage",
+                },
+                "Win32FramePool",
+                MaaWin32ScreencapMethodEnum.FramePool,
+            ),
+            (
+                {
+                    "name": "SavedController",
+                    "win32": {
+                        "screencap": "PrintWindow",
+                        "mouse": "PostMessageWithWindowPos",
+                        "keyboard": "PostMessage",
+                    },
+                },
+                "Win32PrintWindow",
+                MaaWin32ScreencapMethodEnum.PrintWindow,
+            ),
         ):
-            with self.subTest(minimize=minimize), patch(
+            with self.subTest(settings=settings), patch(
                 "app.runtime.Toolkit.find_desktop_windows", return_value=windows
             ), patch("app.runtime.Win32Controller") as controller:
-                self.assertTrue(self.runtime._create_controller(minimize)[0])
+                self.assertTrue(self.runtime._create_controller(settings)[0])
                 self.assertEqual(self.runtime.controller_config["name"], controller_name)
                 self.assertEqual(controller.call_args.kwargs["hWnd"], 333)
                 self.assertEqual(controller.call_args.kwargs["screencap_method"], capture)
@@ -108,25 +127,109 @@ class RuntimeLifecycleTests(unittest.TestCase):
             controllers["Win32PrintWindow"]["win32"]["screencap"], "PrintWindow"
         )
         self.assertEqual(
-            set(self.runtime.resource_config["controller"]),
-            {"Win32FramePool", "Win32PrintWindow"},
+            self.runtime.interface["controller"][0]["name"], "Win32PrintWindow"
+        )
+        self.assertEqual(
+            self.runtime.resource_config["controller"],
+            ["Win32PrintWindow", "Win32FramePool"],
         )
 
-    def test_missing_minimized_controller_fails_before_native_creation(self):
-        self.runtime.interface["controller"] = [
-            controller
-            for controller in self.runtime.interface["controller"]
-            if controller["name"] == "Win32FramePool"
-        ]
-        with patch("app.runtime.Toolkit.find_desktop_windows") as find_windows, patch(
-            "app.runtime.Win32Controller"
-        ) as controller:
-            succeeded, message = self.runtime._create_controller(minimize_window=True)
+    def test_no_controller_settings_uses_first_supported_win32_controller(self):
+        controller, status = self.runtime._select_controller_config()
 
-        self.assertFalse(succeeded)
-        self.assertIn("PrintWindow", message)
-        find_windows.assert_not_called()
-        controller.assert_not_called()
+        self.assertEqual(controller["name"], "Win32PrintWindow")
+        self.assertEqual(status, "default")
+
+    def test_omitted_controller_methods_match_runtime_defaults(self):
+        self.runtime.interface["controller"] = [
+            {
+                "name": "DefaultMethods",
+                "type": "Win32",
+                "win32": {"window_regex": "^Blue Archive$"},
+            }
+        ]
+        self.runtime.resource_config.pop("controller", None)
+        settings = {
+            "screencap": "Background",
+            "mouse": "PostMessageWithWindowPos",
+            "keyboard": "PostMessage",
+        }
+
+        controller, status = self.runtime._select_controller_config(settings)
+
+        self.assertEqual(controller["name"], "DefaultMethods")
+        self.assertEqual(status, "exact")
+
+    def test_controller_selection_uses_screencap_mouse_keyboard_priority(self):
+        self.runtime.interface["controller"] = [
+            {
+                "name": "KeyboardMatch",
+                "type": "Win32",
+                "win32": {
+                    "window_regex": "^Blue Archive$",
+                    "screencap": "GDI",
+                    "mouse": "SendMessage",
+                    "keyboard": "PostMessage",
+                },
+            },
+            {
+                "name": "ScreencapMatch",
+                "type": "Win32",
+                "win32": {
+                    "window_regex": "^Blue Archive$",
+                    "screencap": "FramePool",
+                    "mouse": "SendMessage",
+                    "keyboard": "SendMessage",
+                },
+            },
+            {
+                "name": "ScreencapMouseMatch",
+                "type": "Win32",
+                "win32": {
+                    "window_regex": "^Blue Archive$",
+                    "screencap": "FramePool",
+                    "mouse": "PostMessageWithWindowPos",
+                    "keyboard": "SendMessage",
+                },
+            },
+        ]
+        self.runtime.resource_config.pop("controller", None)
+        settings = {
+            "screencap": "FramePool",
+            "mouse": "PostMessageWithWindowPos",
+            "keyboard": "PostMessage",
+        }
+
+        controller, status = self.runtime._select_controller_config(settings)
+
+        self.assertEqual(controller["name"], "ScreencapMouseMatch")
+        self.assertEqual(status, "partial")
+
+    def test_unmatched_controller_settings_fall_back_to_first_controller(self):
+        settings = {
+            "screencap": "GDI",
+            "mouse": "SendMessage",
+            "keyboard": "SendMessage",
+        }
+
+        controller, status = self.runtime._select_controller_config(settings)
+
+        self.assertEqual(controller["name"], "Win32PrintWindow")
+        self.assertEqual(status, "fallback")
+
+    def test_controller_log_is_one_line_for_all_selection_results(self):
+        expected_suffixes = {
+            "default": "",
+            "exact": "",
+            "partial": " / 설정 일부 일치",
+            "fallback": " / 폴백",
+        }
+        for status, suffix in expected_suffixes.items():
+            with self.subTest(status=status):
+                self.runtime._controller_selection_status = status
+                message = self.runtime._get_controller_log_message()
+                self.assertEqual(message, f"[화면 캡처: PrintWindow{suffix}]")
+                self.assertNotIn("\n", message)
 
     def test_app_window_alone_is_not_a_game_window(self):
         windows = [SimpleNamespace(hwnd=111, window_name=WINDOW_TITLE)]
@@ -553,9 +656,20 @@ class UILifecycleTests(unittest.TestCase):
         runtime = MagicMock()
         runtime.initialize.return_value = (True, "initialized")
         runtime.release_session.return_value = (True, "released")
-        worker = RuntimeWorker(runtime, [])
+        controller_settings = {
+            "screencap": "FramePool",
+            "mouse": "PostMessageWithWindowPos",
+            "keyboard": "PostMessage",
+        }
+        worker = RuntimeWorker(
+            runtime,
+            [],
+            minimize_window=True,
+            controller_settings=controller_settings,
+        )
         with patch.object(worker, "isInterruptionRequested", return_value=True):
             worker.run()
+        runtime.initialize.assert_called_once_with(controller_settings)
         runtime.run_task.assert_not_called()
         runtime.release_session.assert_called_once()
         self.assertFalse(worker.succeeded)

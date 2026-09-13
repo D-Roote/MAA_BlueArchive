@@ -6,24 +6,24 @@
     "title": "MAA Blue Archive",
     "controller": [
         {
-            "name": "Win32FramePool",
-            "label": "Win32 (FramePool)",
-            "type": "Win32",
-            "win32": {
-                "window_regex": "^Blue Archive$",
-                "screencap": "FramePool",
-                "mouse": "PostMessageWithWindowPos",
-                "keyboard": "PostMessage"
-            },
-            "permission_required": false
-        },
-        {
             "name": "Win32PrintWindow",
             "label": "Win32 (PrintWindow)",
             "type": "Win32",
             "win32": {
                 "window_regex": "^Blue Archive$",
                 "screencap": "PrintWindow",
+                "mouse": "PostMessageWithWindowPos",
+                "keyboard": "PostMessage"
+            },
+            "permission_required": false
+        },
+        {
+            "name": "Win32FramePool",
+            "label": "Win32 (FramePool)",
+            "type": "Win32",
+            "win32": {
+                "window_regex": "^Blue Archive$",
+                "screencap": "FramePool",
                 "mouse": "PostMessageWithWindowPos",
                 "keyboard": "PostMessage"
             },
@@ -37,8 +37,8 @@
                 "./"
             ],
             "controller": [
-                "Win32FramePool",
-                "Win32PrintWindow"
+                "Win32PrintWindow",
+                "Win32FramePool"
             ]
         }
     ],
