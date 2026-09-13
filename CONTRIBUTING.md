@@ -34,6 +34,8 @@
 따릅니다. `task[].option`에는 최상위 `option` 객체에 정의한 옵션 ID를 문자열
 배열로 지정합니다. 옵션은 배열에 지정한 순서대로 표시되며, 선택 결과의
 `pipeline_override`는 해당 작업을 시작할 때 파이프라인에 병합됩니다.
+아래의 작업명, 옵션 ID, 선택 항목 및 파이프라인 노드명은 사용법을 설명하기 위한
+일반화된 예시이므로 실제 프로젝트 구조에 맞게 변경해야 합니다.
 
 ### `task`와 `option` 연결
 
@@ -41,12 +43,12 @@
 {
     "task": [
         {
-            "name": "DailyRoutine",
-            "label": "일일 작업",
-            "entry": "DailyRoutine",
+            "name": "SampleTask",
+            "label": "샘플 작업",
+            "entry": "SampleEntry",
             "option": [
                 "ExecutionMode",
-                "TimeoutSettings"
+                "RuntimeSettings"
             ]
         }
     ],
@@ -56,14 +58,14 @@
             "type": "select",
             "cases": [
                 {
-                    "name": "Normal",
-                    "label": "일반"
+                    "name": "Standard",
+                    "label": "기본"
                 }
             ],
-            "default_case": "Normal"
+            "default_case": "Standard"
         },
-        "TimeoutSettings": {
-            "label": "제한 시간 설정",
+        "RuntimeSettings": {
+            "label": "실행 설정",
             "type": "input",
             "inputs": [
                 {
@@ -74,7 +76,7 @@
                 }
             ],
             "pipeline_override": {
-                "DailyRoutine": {
+                "SampleEntry": {
                     "timeout": "{Timeout}"
                 }
             }
@@ -92,30 +94,30 @@
 ```json
 {
     "option": {
-        "BattleStage": {
-            "label": "전투 스테이지",
+        "ExecutionMode": {
+            "label": "실행 모드",
             "type": "select",
             "cases": [
                 {
-                    "name": "Chapter3",
-                    "label": "3장",
+                    "name": "Standard",
+                    "label": "기본",
                     "pipeline_override": {
-                        "EnterStage": {
-                            "next": "MainChapter_3"
+                        "SelectExecutionMode": {
+                            "next": "StandardFlow"
                         }
                     }
                 },
                 {
-                    "name": "Chapter4",
-                    "label": "4장",
+                    "name": "Advanced",
+                    "label": "고급",
                     "pipeline_override": {
-                        "EnterStage": {
-                            "next": "MainChapter_4"
+                        "SelectExecutionMode": {
+                            "next": "AdvancedFlow"
                         }
                     }
                 }
             ],
-            "default_case": "Chapter4"
+            "default_case": "Standard"
         }
     }
 }
@@ -131,19 +133,19 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
 ```json
 {
     "option": {
-        "BountyLocation": {
-            "label": "현상수배 지역",
+        "TargetPosition": {
+            "label": "대상 위치",
             "type": "radio",
             "cases": [
                 {
-                    "name": "Highway",
-                    "label": "고가도로"
+                    "name": "PositionA",
+                    "label": "위치 A"
                 },
                 {
-                    "name": "DesertRailroad",
-                    "label": "사막 기찻길",
+                    "name": "PositionB",
+                    "label": "위치 B",
                     "pipeline_override": {
-                        "SelectBountyLocation": {
+                        "SelectTargetPosition": {
                             "action": {
                                 "param": {
                                     "target": [1000, 300, 1, 1]
@@ -153,7 +155,7 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
                     }
                 }
             ],
-            "default_case": "Highway"
+            "default_case": "PositionA"
         }
     }
 }
@@ -167,32 +169,32 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
 ```json
 {
     "option": {
-        "RewardTypes": {
-            "label": "수령할 보상",
+        "FeatureSelection": {
+            "label": "추가 기능",
             "type": "checkbox",
             "cases": [
                 {
-                    "name": "DailyReward",
-                    "label": "일일 보상",
+                    "name": "FeatureA",
+                    "label": "기능 A",
                     "pipeline_override": {
-                        "CollectDailyReward": {
+                        "RunFeatureA": {
                             "enabled": true
                         }
                     }
                 },
                 {
-                    "name": "WeeklyReward",
-                    "label": "주간 보상",
+                    "name": "FeatureB",
+                    "label": "기능 B",
                     "pipeline_override": {
-                        "CollectWeeklyReward": {
+                        "RunFeatureB": {
                             "enabled": true
                         }
                     }
                 }
             ],
             "default_case": [
-                "DailyReward",
-                "WeeklyReward"
+                "FeatureA",
+                "FeatureB"
             ]
         }
     }
@@ -207,15 +209,15 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
 ```json
 {
     "option": {
-        "UseCafeInvitation": {
-            "label": "카페 초대 실행",
+        "EnableOptionalStep": {
+            "label": "선택 단계 실행",
             "type": "switch",
             "cases": [
                 {
                     "name": "Yes",
                     "label": "사용",
                     "pipeline_override": {
-                        "InviteStudent": {
+                        "OptionalStep": {
                             "enabled": true
                         }
                     }
@@ -224,7 +226,7 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
                     "name": "No",
                     "label": "사용 안 함",
                     "pipeline_override": {
-                        "InviteStudent": {
+                        "OptionalStep": {
                             "enabled": false
                         }
                     }
@@ -259,17 +261,17 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
 ```json
 {
     "option": {
-        "CustomStage": {
-            "label": "스테이지 직접 입력",
+        "RuntimeParameters": {
+            "label": "실행 매개변수",
             "type": "input",
             "inputs": [
                 {
-                    "name": "ChapterNumber",
-                    "label": "챕터 번호",
-                    "default": "4",
+                    "name": "TargetName",
+                    "label": "대상 이름",
+                    "default": "Default",
                     "pipeline_type": "string",
-                    "verify": "^\\d+$",
-                    "pattern_msg": "숫자만 입력해 주세요."
+                    "verify": "^[A-Za-z0-9_-]+$",
+                    "pattern_msg": "영문자, 숫자, 밑줄 및 하이픈만 입력해 주세요."
                 },
                 {
                     "name": "Timeout",
@@ -286,8 +288,8 @@ Interface V2 타입은 아닙니다. 다른 범용 UI와 호환해야 하는 설
                 }
             ],
             "pipeline_override": {
-                "EnterStage": {
-                    "next": "MainChapter_{ChapterNumber}",
+                "SampleEntry": {
+                    "next": "Target_{TargetName}",
                     "timeout": "{Timeout}",
                     "enabled": "{Enabled}"
                 }
