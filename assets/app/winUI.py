@@ -9,29 +9,36 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QIcon, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import (QMainWindow, QAbstractItemView, QHBoxLayout, QVBoxLayout, 
+from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
+                               QHBoxLayout, QVBoxLayout,
                                QListWidget, QListWidgetItem, QWidget, 
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
                                QPushButton, QRadioButton)
 
 from app.runtime import AppRuntime
+from app.settingsUI import SettingsPanel
 
 
 WINDOW_SIZE = [1200, 800]
 WINDOW_TITLE = "MAA_Blue Archive"
 UI_FILENAME = "baseUI.ui"
 QSS_FILENAME = "style.qss"
+SETTINGS_QSS_FILENAME = "settings.qss"
+DARK_QSS_FILENAME = "dark.qss"
 APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR / "pySide6"
 UI_RESOURCE_DIR = APP_DIR / "resources"
+SETTINGS_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/settings.svg"
+SETTINGS_ICON_SIZE = QSize(20, 20)
+SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 
 
 class TitleBarTheme(str, Enum):
-    """설정 UI에서 그대로 선택값으로 사용할 수 있는 제목 표시줄 테마."""
+    """애플리케이션 전체와 제목 표시줄에 적용하는 색상 모드."""
 
     LIGHT = "light"
     DARK = "dark"
@@ -42,6 +49,20 @@ DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
 DWM_COLOR_DEFAULT = 0xFFFFFFFF
+LIGHT_CAPTION_COLOR = 0x00FFFFFF
+LIGHT_CAPTION_TEXT_COLOR = 0x00000000
+DARK_CAPTION_COLOR = 0x00382217
+DARK_CAPTION_TEXT_COLOR = 0x00F9F5F1
+
+
+def resolve_effective_theme(theme, system_color_scheme=Qt.ColorScheme.Unknown):
+    """설정값과 시스템 색상 모드로 실제 애플리케이션 테마를 결정한다."""
+    theme = TitleBarTheme(theme)
+    if theme != TitleBarTheme.SYSTEM:
+        return theme
+    if system_color_scheme == Qt.ColorScheme.Dark:
+        return TitleBarTheme.DARK
+    return TitleBarTheme.LIGHT
 
 
 def _create_dwmapi():
@@ -63,7 +84,12 @@ def _create_dwmapi():
     return dwmapi
 
 
-def apply_windows_title_bar_theme(hwnd, theme, dwmapi=None):
+def apply_windows_title_bar_theme(
+    hwnd,
+    theme,
+    dwmapi=None,
+    system_color_scheme=Qt.ColorScheme.Unknown,
+):
     """Windows 제목 표시줄 테마를 적용하고 지원 여부를 반환한다."""
     theme = TitleBarTheme(theme)
     if sys.platform != "win32" or not hwnd:
@@ -73,13 +99,14 @@ def apply_windows_title_bar_theme(hwnd, theme, dwmapi=None):
     if dwmapi is None:
         return False
 
-    dark_mode = wintypes.BOOL(theme != TitleBarTheme.LIGHT)
+    effective_theme = resolve_effective_theme(theme, system_color_scheme)
+    dark_mode = wintypes.BOOL(effective_theme == TitleBarTheme.DARK)
     if theme == TitleBarTheme.LIGHT:
-        caption_color = wintypes.DWORD(0x00FFFFFF)
-        text_color = wintypes.DWORD(0x00000000)
+        caption_color = wintypes.DWORD(LIGHT_CAPTION_COLOR)
+        text_color = wintypes.DWORD(LIGHT_CAPTION_TEXT_COLOR)
     elif theme == TitleBarTheme.DARK:
-        caption_color = wintypes.DWORD(0x00202020)
-        text_color = wintypes.DWORD(0x00FFFFFF)
+        caption_color = wintypes.DWORD(DARK_CAPTION_COLOR)
+        text_color = wintypes.DWORD(DARK_CAPTION_TEXT_COLOR)
     else:
         caption_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
         text_color = wintypes.DWORD(DWM_COLOR_DEFAULT)
@@ -207,6 +234,24 @@ def find_switch_cases(cases):
     return yes_case_name, no_case_name
 
 
+class SettingsIconHoverFilter(QObject):
+    """설정 아이콘 버튼의 호버 크기 변경을 공통 처리한다."""
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Enter:
+            watched.setIconSize(SETTINGS_ICON_HOVER_SIZE)
+        elif event.type() == QEvent.Type.Leave:
+            watched.setIconSize(SETTINGS_ICON_SIZE)
+        return super().eventFilter(watched, event)
+
+
+def setup_settings_icon_button(button):
+    button.setIcon(QIcon(str(SETTINGS_ICON_PATH)))
+    button.setIconSize(SETTINGS_ICON_SIZE)
+    button._settings_icon_hover_filter = SettingsIconHoverFilter(button)
+    button.installEventFilter(button._settings_icon_hover_filter)
+
+
 class TaskSettingsButton(QPushButton):
     """클릭 영역은 유지하고 호버 시 아이콘만 확대하는 설정 버튼."""
 
@@ -214,16 +259,7 @@ class TaskSettingsButton(QPushButton):
         super().__init__(parent)
         self.setObjectName("taskSettingsButton")
         self.setFixedSize(30, 30)
-        self.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
-        self.setIconSize(QSize(20, 20))
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self.setIconSize(QSize(24, 24))
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self.setIconSize(QSize(20, 20))
+        setup_settings_icon_button(self)
 
 
 # 동적 List 클래스
@@ -425,28 +461,42 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         ui_path = UI_DIR / UI_FILENAME
-        qss_path = UI_DIR / QSS_FILENAME
+        base_qss_paths = (UI_DIR / QSS_FILENAME, UI_DIR / SETTINGS_QSS_FILENAME)
+        dark_qss_path = UI_DIR / DARK_QSS_FILENAME
         # QSS의 아이콘 경로도 작업 디렉토리와 무관하게 해석한다.
         QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
+
+        setup_settings_icon_button(self.ui.endSettingBtn)
         
         self.ui.tabWidget.setUsesScrollButtons(False)
         # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
         self.ui.tabWidget.setCurrentWidget(self.ui.mainTab)
 
-        if qss_path.exists():
-            with open(qss_path, "r", encoding="utf-8") as f:
-                qss_content = f.read()
-                self.setStyleSheet(qss_content)
+        qss_contents = []
+        for qss_path in base_qss_paths:
+            if qss_path.exists():
+                with open(qss_path, "r", encoding="utf-8") as file:
+                    qss_contents.append(file.read())
+        self._base_style_sheet = "\n".join(qss_contents)
+        self._dark_style_sheet = ""
+        if dark_qss_path.exists():
+            with open(dark_qss_path, "r", encoding="utf-8") as file:
+                self._dark_style_sheet = file.read()
+        self.setStyleSheet(self._base_style_sheet)
 
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_SIZE[0], WINDOW_SIZE[1])
         self._title_bar_theme = TitleBarTheme.LIGHT
-        self.set_title_bar_theme(self._title_bar_theme)
+        self._effective_theme = TitleBarTheme.LIGHT
+        self._style_hints = QApplication.styleHints()
+        self._style_hints.colorSchemeChanged.connect(
+            self.on_system_color_scheme_changed
+        )
 
         self.runtime = AppRuntime()
         self.log_sink = self.runtime.log_sink
@@ -457,6 +507,7 @@ class MainWindow(QMainWindow):
         self._options_locked = False
         self._allow_option_edits_while_running = False
 
+        self.setup_settings_ui()
         self.setup_connections()
 
         self.setup_dynamic_options()
@@ -466,12 +517,80 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
-            self.ui.minimizeEnableBtn.toggled.connect(self.on_user_config_changed)
+            self.ui.minimizeEnableBtn.toggled.connect(
+                self.on_main_minimize_setting_changed
+            )
+
+    def setup_settings_ui(self):
+        config_dir = self.runtime.user_dir / "config"
+        resource_config = (
+            self.runtime.resource_config
+            if isinstance(self.runtime.resource_config, dict)
+            else {}
+        )
+        self.settings_panel = SettingsPanel(
+            config_path=config_dir / "maa_config.json",
+            legacy_user_config_path=config_dir / "user_config.json",
+            controllers=self.runtime.interface.get("controller", []),
+            supported_controller_names=resource_config.get("controller"),
+            parent=self.ui.settingTab,
+        )
+
+        setting_layout = self.ui.settingTab.layout()
+        if setting_layout is None:
+            setting_layout = QVBoxLayout(self.ui.settingTab)
+            setting_layout.setContentsMargins(0, 0, 0, 0)
+        setting_layout.addWidget(self.settings_panel)
+
+        self.settings_panel.minimize_changed.connect(
+            self.sync_main_minimize_setting
+        )
+        self.settings_panel.runtime_option_editing_changed.connect(
+            self.set_runtime_option_editing_enabled
+        )
+        self.settings_panel.theme_changed.connect(self.set_title_bar_theme)
+
+        self.sync_main_minimize_setting(self.settings_panel.minimize_enabled())
+        self.set_runtime_option_editing_enabled(
+            self.settings_panel.runtime_option_editing_enabled()
+        )
+        self.set_title_bar_theme(self.settings_panel.theme())
+
+    def sync_main_minimize_setting(self, enabled):
+        if not hasattr(self.ui, 'minimizeEnableBtn'):
+            return
+        self.ui.minimizeEnableBtn.blockSignals(True)
+        self.ui.minimizeEnableBtn.setChecked(bool(enabled))
+        self.ui.minimizeEnableBtn.blockSignals(False)
+
+    def on_main_minimize_setting_changed(self, enabled):
+        self.settings_panel.set_minimize_enabled(enabled)
+
+    def on_system_color_scheme_changed(self, _color_scheme):
+        if self._title_bar_theme == TitleBarTheme.SYSTEM:
+            self.set_title_bar_theme(TitleBarTheme.SYSTEM)
 
     def set_title_bar_theme(self, theme):
-        """현재 테마를 저장하고 즉시 적용한다. 추후 설정 탭에서 호출할 진입점이다."""
+        """선택한 색상 모드를 애플리케이션 전체와 제목 표시줄에 적용한다."""
         self._title_bar_theme = TitleBarTheme(theme)
-        return apply_windows_title_bar_theme(int(self.winId()), self._title_bar_theme)
+        system_color_scheme = self._style_hints.colorScheme()
+        self._effective_theme = resolve_effective_theme(
+            self._title_bar_theme,
+            system_color_scheme,
+        )
+        style_sheet = self._base_style_sheet
+        if self._effective_theme == TitleBarTheme.DARK:
+            style_sheet = "\n".join(
+                content
+                for content in (style_sheet, self._dark_style_sheet)
+                if content
+            )
+        self.setStyleSheet(style_sheet)
+        return apply_windows_title_bar_theme(
+            int(self.winId()),
+            self._title_bar_theme,
+            system_color_scheme=system_color_scheme,
+        )
 
     def update_tab_widths(self):
         tab_bar = self.ui.tabWidget.tabBar()
@@ -491,25 +610,10 @@ class MainWindow(QMainWindow):
 
         tab_bar.setStyleSheet(f"""
             QTabBar::tab {{
-                background-color: #E6EDF5;
-                color: #475569;
-                padding: 10px 25px;
-                border: 1px solid #E2E8F0;
-                border-bottom: none;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
                 width: {tab_width}px;
             }}
             QTabBar::tab:last {{
                 margin-right: 0px;
-            }}
-            QTabBar::tab:selected {{
-                background-color: #00AEEF;
-                color: #FFFFFF;
-                font-weight: bold;
-            }}
-            QTabBar::tab:hover:!selected {{
-                background-color: #DDE8F5;
             }}
         """)
 
@@ -561,7 +665,12 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'minimizeEnableBtn'):
             minimize_window = self.ui.minimizeEnableBtn.isChecked()
 
-        self.worker = RuntimeWorker(self.runtime, execution_queue, minimize_window)
+        self.worker = RuntimeWorker(
+            self.runtime,
+            execution_queue,
+            minimize_window,
+            controller_settings=self.settings_panel.controller_settings(),
+        )
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
         self.worker.finished.connect(self.on_task_finished)
@@ -656,6 +765,7 @@ class MainWindow(QMainWindow):
 
     def setup_dynamic_options(self):
         self.option_list_widget = DragDropListWidget()
+        self.option_list_widget.setObjectName("taskOptionList")
         
         self.option_list_widget.setDragDropMode(QAbstractItemView.InternalMove)
         self.option_list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -688,12 +798,6 @@ class MainWindow(QMainWindow):
                     user_config = {}
             except Exception as e:
                 print(f"설정 파일 로드 실패: {e}")
-
-        minimize_enabled = user_config.get("minimize_enabled", False)
-        if hasattr(self.ui, 'minimizeEnableBtn'):
-            self.ui.minimizeEnableBtn.blockSignals(True)
-            self.ui.minimizeEnableBtn.setChecked(minimize_enabled)
-            self.ui.minimizeEnableBtn.blockSignals(False)
 
         saved_tasks = user_config.get("tasks", [])
         if not isinstance(saved_tasks, list):
@@ -1142,17 +1246,10 @@ class MainWindow(QMainWindow):
                     "selected_options": widget.get_persisted_options()
                 })
                 
-        minimize_enabled = False
-        if hasattr(self.ui, 'minimizeEnableBtn'):
-            minimize_enabled = self.ui.minimizeEnableBtn.isChecked()
-                
         try:
             temp_path = config_path.with_suffix(".tmp")
             with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "minimize_enabled": minimize_enabled,
-                    "tasks": tasks_data
-                }, f, ensure_ascii=False, indent=4)
+                json.dump({"tasks": tasks_data}, f, ensure_ascii=False, indent=4)
                 f.flush()
             temp_path.replace(config_path)
         except Exception as e:
@@ -1173,17 +1270,24 @@ class StopWorker(QThread):
 class RuntimeWorker(QThread):
     log = Signal(str)
 
-    def __init__(self, runtime, execution_queue, minimize_window=False):
+    def __init__(
+        self,
+        runtime,
+        execution_queue,
+        minimize_window=False,
+        controller_settings=None,
+    ):
         super().__init__()
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
+        self.controller_settings = controller_settings
         self.succeeded = False
         self.result_message = "작업을 시작하지 못했습니다."
 
     def run(self):
         try:
-            initialized, init_message = self.runtime.initialize(self.minimize_window)
+            initialized, init_message = self.runtime.initialize(self.controller_settings)
             if not initialized:
                 self.result_message = init_message
                 return

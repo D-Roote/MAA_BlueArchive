@@ -16,6 +16,14 @@ from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
 
+WIN32_METHOD_PRIORITY = ("screencap", "mouse", "keyboard")
+WIN32_METHOD_DEFAULTS = {
+    "screencap": MaaWin32ScreencapMethodEnum.Background.name,
+    "mouse": MaaWin32InputMethodEnum.PostMessageWithWindowPos.name,
+    "keyboard": MaaWin32InputMethodEnum.PostMessage.name,
+}
+
+
 class WindowPlacement(ctypes.Structure):
     _fields_ = [
         ("length", wintypes.UINT),
@@ -65,8 +73,10 @@ class AppRuntime:
         self.interface_path = self.resource_dir / "interface.json"
 
         self.interface = self._load_interface()
-        self.controller_config = self._get_controller_config()
         self.resource_config = self._get_resource_config()
+        self.controller_config, self._controller_selection_status = (
+            self._select_controller_config()
+        )
 
         self.resource = None
         self.tasker = None
@@ -85,32 +95,81 @@ class AppRuntime:
         with self.interface_path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
-    def _get_controller_config(self, minimize_window: bool = False):
-        controllers = self.interface.get("controller", [])
-        if not controllers:
-            raise ValueError("interface.json에 컨트롤러 항목이 없습니다.")
+    def _get_controller_config(self, controller_settings: dict | None = None):
+        controller, _ = self._select_controller_config(controller_settings)
+        return controller
 
-        screencap_name = (
-            MaaWin32ScreencapMethodEnum.PrintWindow.name
-            if minimize_window
-            else MaaWin32ScreencapMethodEnum.FramePool.name
-        )
+    def _select_controller_config(self, controller_settings: dict | None = None):
+        controllers = self.interface.get("controller", [])
+        if not isinstance(controllers, list) or not controllers:
+            raise ValueError("interface.json의 controller는 비어 있지 않은 목록이어야 합니다.")
+
+        supported_controllers = self.resource_config.get("controller")
+        if supported_controllers is not None and not isinstance(supported_controllers, list):
+            raise ValueError("리소스의 controller 설정은 목록이어야 합니다.")
+
+        win32_controllers = []
         for controller in controllers:
             if not isinstance(controller, dict) or controller.get("type") != "Win32":
                 continue
 
-            win32_config = controller.get("win32", {})
+            controller_name = controller.get("name")
+            win32_config = controller.get("win32")
+            if not isinstance(controller_name, str) or not controller_name.strip():
+                continue
+            if not isinstance(win32_config, dict):
+                continue
             if (
-                isinstance(win32_config, dict)
-                and win32_config.get("screencap") == screencap_name
+                supported_controllers is not None
+                and controller_name not in supported_controllers
             ):
-                if not controller.get("name"):
-                    raise ValueError("선택한 Win32 컨트롤러에 name이 없습니다.")
-                return controller
+                continue
+            win32_controllers.append(controller)
 
-        raise ValueError(
-            f"interface.json에 {screencap_name} 방식의 Win32 컨트롤러가 없습니다."
-        )
+        if not win32_controllers:
+            raise ValueError("현재 리소스에서 사용할 수 있는 Win32 컨트롤러가 없습니다.")
+
+        if not isinstance(controller_settings, dict):
+            return win32_controllers[0], "default"
+
+        nested_settings = controller_settings.get("win32")
+        if isinstance(nested_settings, dict):
+            controller_settings = nested_settings
+
+        requested_methods = {
+            method: controller_settings[method]
+            for method in WIN32_METHOD_PRIORITY
+            if isinstance(controller_settings.get(method), str)
+            and controller_settings[method]
+        }
+        if not requested_methods:
+            return win32_controllers[0], "default"
+
+        for controller in win32_controllers:
+            win32_config = controller["win32"]
+            if all(
+                win32_config.get(method, WIN32_METHOD_DEFAULTS[method]) == value
+                for method, value in requested_methods.items()
+            ):
+                return controller, "exact"
+
+        def match_score(controller):
+            win32_config = controller["win32"]
+            return tuple(
+                int(
+                    method in requested_methods
+                    and win32_config.get(method, WIN32_METHOD_DEFAULTS[method])
+                    == requested_methods[method]
+                )
+                for method in WIN32_METHOD_PRIORITY
+            )
+
+        scores = [match_score(controller) for controller in win32_controllers]
+        best_score = max(scores)
+        if any(best_score):
+            return win32_controllers[scores.index(best_score)], "partial"
+
+        return win32_controllers[0], "fallback"
 
     def _get_resource_config(self):
         resources = self.interface.get("resource", [])
@@ -165,6 +224,14 @@ class AppRuntime:
     def _get_keyboard_method(self):
         win32_config = self.controller_config.get("win32", {})
         return MaaWin32InputMethodEnum[win32_config.get("keyboard", "PostMessage")]
+
+    def _get_controller_log_message(self):
+        screencap_name = self._get_screencap_method().name
+        selection_suffix = {
+            "partial": " / 설정 일부 일치",
+            "fallback": " / 폴백",
+        }.get(self._controller_selection_status, "")
+        return f"[화면 캡처: {screencap_name}{selection_suffix}]"
 
 
     def _resize_window_for_task(self, target_client_w=1280, target_client_h=720):
@@ -229,19 +296,13 @@ class AppRuntime:
         return True
 
 
-    def _create_controller(self, minimize_window: bool = False):
+    def _create_controller(self, controller_settings: dict | None = None):
         try:
-            self.controller_config = self._get_controller_config(minimize_window)
+            self.controller_config, self._controller_selection_status = (
+                self._select_controller_config(controller_settings)
+            )
         except ValueError as error:
             return False, str(error)
-
-        supported_controllers = self.resource_config.get("controller")
-        controller_name = self.controller_config["name"]
-        if supported_controllers is not None:
-            if not isinstance(supported_controllers, list):
-                return False, "리소스의 controller 설정은 목록이어야 합니다."
-            if controller_name not in supported_controllers:
-                return False, f"현재 리소스는 {controller_name} 컨트롤러를 지원하지 않습니다."
 
         windows = Toolkit.find_desktop_windows()
         if not windows:
@@ -310,7 +371,7 @@ class AppRuntime:
     
 
     # winUI.py에서 호출하는 함수
-    def initialize(self, minimize_window: bool = False):
+    def initialize(self, controller_settings: dict | None = None):
         released, release_message = self.release_session()
         if not released:
             return False, release_message
@@ -328,7 +389,7 @@ class AppRuntime:
 
             # 재바인딩 대신 실행마다 새 Tasker를 사용해 이전 컨트롤러 참조를 분리한다.
             self.tasker = Tasker()
-            created, create_message = self._create_controller(minimize_window)
+            created, create_message = self._create_controller(controller_settings)
             if not created:
                 return False, create_message
 
@@ -348,12 +409,7 @@ class AppRuntime:
                 if not released:
                     raise RuntimeError(release_message)
 
-        screencap_name = self._get_screencap_method().name
-
-        return (
-            True, 
-            f"[화면 캡처: {screencap_name}]"
-        )
+        return True, self._get_controller_log_message()
 
     def run_task(
         self,

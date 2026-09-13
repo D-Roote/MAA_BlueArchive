@@ -1,0 +1,227 @@
+/* 어두운 색상 스키마: 검정보다 군청과 남색 계열의 표면색을 사용한다. */
+QWidget {
+    background-color: #111A2B;
+    color: #DCE6F2;
+}
+
+QMainWindow,
+QMenuBar,
+QStatusBar {
+    background-color: #111A2B;
+}
+
+QFrame#line,
+QFrame#line_2,
+QFrame#line_3,
+QFrame#line_4 {
+    background-color: #30415E;
+}
+
+QTabWidget::pane {
+    border: 1px solid #30415E;
+    background-color: #111A2B;
+}
+
+QTabBar::tab {
+    background-color: #22314A;
+    color: #AEBFD2;
+    border: 1px solid #30415E;
+    border-bottom: none;
+}
+
+QTabBar::tab:selected {
+    background-color: #168FBE;
+    color: #F5F9FD;
+    border: 1px solid #30415E;
+    border-bottom: none;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #2A3B58;
+}
+
+QListWidget {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QListWidget::item:hover {
+    background-color: #22314A;
+}
+
+QPushButton {
+    background-color: #168FBE;
+    color: #F5F9FD;
+}
+
+QPushButton:hover {
+    background-color: #1AA6D8;
+}
+
+QPushButton:pressed {
+    background-color: #11779F;
+}
+
+QPushButton:disabled {
+    background-color: #34445E;
+    color: #8192A9;
+}
+
+QPushButton#taskSettingsButton,
+QPushButton#endSettingBtn {
+    background-color: transparent;
+}
+
+QPushButton#stopBtn {
+    background-color: #D95F6A;
+}
+
+QPushButton#stopBtn:hover {
+    background-color: #EB7180;
+}
+
+QWidget#OptionItemWidget,
+QWidget > QLabel,
+QCheckBox,
+QRadioButton {
+    background-color: transparent;
+}
+
+QLineEdit#optionInput,
+QComboBox#optionSelect {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+    selection-background-color: #168FBE;
+}
+
+QLineEdit#optionInput:hover,
+QLineEdit#optionInput:focus,
+QComboBox#optionSelect:hover,
+QComboBox#optionSelect:focus {
+    border-color: #2BB3E3;
+}
+
+QLineEdit#optionInput:disabled,
+QComboBox#optionSelect:disabled {
+    background-color: #293950;
+    color: #7E90A8;
+}
+
+QLineEdit#optionInput[inputValid="false"] {
+    border-color: #EB7180;
+}
+
+QLabel#optionInputError {
+    color: #F08A94;
+}
+
+QComboBox#optionSelect QAbstractItemView {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+    selection-background-color: #168FBE;
+    selection-color: #F5F9FD;
+}
+
+QTextEdit {
+    background-color: #172238;
+    border-color: #30415E;
+    color: #BBC9D9;
+}
+
+QScrollBar:vertical,
+QScrollBar:horizontal,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background-color: #263650;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal,
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background-color: #168FBE;
+}
+
+QWidget#settingsPanel,
+QWidget#settingsDetailContents {
+    background-color: transparent;
+}
+
+QListWidget#settingsNavigation {
+    background-color: transparent;
+    border: none;
+}
+
+QListWidget#settingsNavigation::item {
+    background-color: transparent;
+    color: #AEBFD2;
+}
+
+QListWidget#settingsNavigation::item:hover {
+    background-color: #22314A;
+}
+
+QListWidget#settingsNavigation::item:selected {
+    background-color: #243E5C;
+    color: #47C2ED;
+}
+
+QScrollArea#settingsDetailScroll {
+    background-color: transparent;
+}
+
+QFrame#settingsSection {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QLabel#settingsSectionTitle {
+    color: #E7EEF8;
+}
+
+QLabel#settingsSectionDescription,
+QLabel#settingsRowDescription {
+    color: #9FAFC3;
+}
+
+QLabel#settingsRowTitle {
+    color: #DCE6F2;
+}
+
+QFrame#settingsRow {
+    border-top-color: #263650;
+}
+
+QLabel#controllerDetails {
+    background-color: #1E2D46;
+    color: #AEBFD2;
+    border-color: #405474;
+}
+
+QComboBox#settingsComboBox {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+}
+
+QComboBox#settingsComboBox:hover,
+QComboBox#settingsComboBox:focus {
+    border-color: #2BB3E3;
+}
+
+QComboBox#settingsComboBox:disabled {
+    background-color: #293950;
+    color: #7E90A8;
+}
+
+QComboBox#settingsComboBox QAbstractItemView {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+    selection-background-color: #168FBE;
+    selection-color: #F5F9FD;
+}

@@ -5,7 +5,8 @@
 - [개발 TODO](#개발-todo)
   - [Runtime](#runtime)
   - [Pipeline](#pipeline)
-- [`interface.json` 옵션 활용](#interfacejson-옵션-활용)
+- [`interface.json` 구성 및 옵션 활용](#interfacejson-구성-및-옵션-활용)
+  - [`controller` 선택 규칙](#controller-선택-규칙)
   - [`task`와 `option` 연결](#task와-option-연결)
   - [`select`: 드롭다운 단일 선택](#select-드롭다운-단일-선택)
   - [`radio`: 라디오 단일 선택](#radio-라디오-단일-선택)
@@ -28,16 +29,95 @@
 - [ ] 카페 모모톡 초대 작동 확인
 - [ ] `interface.json`에 스케줄 학원 선택 옵션 추가
 
-## `interface.json` 옵션 활용
+## `interface.json` 구성 및 옵션 활용
 
-옵션의 기본 구조와 필드는 [공식 Project Interface V2 문서](https://maafw.com/en/docs/3.3-ProjectInterfaceV2/)를
-따릅니다. `task[].option`에는 최상위 `option` 객체에 정의한 옵션 ID를 문자열
-배열로 지정합니다. 옵션은 배열에 지정한 순서대로 표시되며, 선택 결과의
-`pipeline_override`는 해당 작업을 시작할 때 파이프라인에 병합됩니다.
-아래의 작업명, 옵션 ID, 선택 항목 및 파이프라인 노드명은 사용법을 설명하기 위한
-일반화된 예시이므로 실제 프로젝트 구조에 맞게 변경해야 합니다.
+기본 구조와 필드는 [공식 Project Interface V2 문서](https://maafw.com/en/docs/3.3-ProjectInterfaceV2/)를
+따릅니다. 아래의 이름과 값은 사용법을 설명하기 위한 일반화된 예시이므로 실제
+프로젝트 구조와 지원 방식에 맞게 변경해야 합니다.
+
+### `controller` 선택 규칙
+
+`controller[].name`은 컨트롤러의 고유 ID이며 캡처 방식이나 입력 방식을 이름에서
+추론하지 않습니다. `resource[].controller`를 작성한 경우에는 사용할 컨트롤러의
+ID를 정확히 참조해야 합니다. 이 필드를 생략하면 해당 리소스가 모든 컨트롤러를
+지원하는 것으로 처리합니다.
+
+현재 UI에는 컨트롤러 설정 화면이 구현되어 있지 않습니다. 따라서
+`controller` 배열에서 현재 리소스가 지원하는 첫 번째 Win32 컨트롤러를 기본으로
+사용합니다. 안정성과 범용성이 높은 구성을 먼저 선언하고, 성능 등 다른 목적의
+구성을 그 뒤에 선언하세요.
+
+향후 설정에서 원하는 컨트롤러 값이 전달되면 `win32` 내부의 `screencap`, `mouse`,
+`keyboard`를 비교합니다. 선택 순서는 다음과 같습니다.
+
+1. 설정된 값이 모두 일치하는 첫 번째 컨트롤러를 선택합니다.
+2. 완전히 일치하는 항목이 없으면 `screencap` > `mouse` > `keyboard` 순으로
+   일치 여부를 비교합니다.
+3. 일치도가 같으면 `controller` 배열에 먼저 선언된 항목을 선택합니다.
+4. 어떤 값도 일치하지 않으면 첫 번째 컨트롤러로 폴백합니다.
+
+각 방식이 생략된 컨트롤러는 현재 런타임 기본값인 `Background`,
+`PostMessageWithWindowPos`, `PostMessage`를 사용해 비교합니다. 최소화 체크박스는
+선택된 컨트롤러를 변경하지 않고 대상 창의 최소화 여부만 제어합니다. 따라서
+최소화 캡처를 지원하지 않는 프로그램에서는 체크박스를 사용하지 않아야 합니다.
+
+로그는 다음과 같이 한 줄로 출력합니다.
+
+```text
+[화면 캡처: PrintWindow]
+[화면 캡처: FramePool / 설정 일부 일치]
+[화면 캡처: PrintWindow / 폴백]
+```
+
+다음 예제에서는 범용 컨트롤러를 먼저 선언하므로 별도 설정이 없을 때
+`PrimaryController`가 선택됩니다.
+
+```json
+{
+    "controller": [
+        {
+            "name": "PrimaryController",
+            "label": "기본 컨트롤러",
+            "type": "Win32",
+            "win32": {
+                "window_regex": "^Example App$",
+                "screencap": "PrintWindow",
+                "mouse": "PostMessageWithWindowPos",
+                "keyboard": "PostMessage"
+            }
+        },
+        {
+            "name": "PerformanceController",
+            "label": "성능 우선 컨트롤러",
+            "type": "Win32",
+            "win32": {
+                "window_regex": "^Example App$",
+                "screencap": "FramePool",
+                "mouse": "PostMessageWithWindowPos",
+                "keyboard": "PostMessage"
+            }
+        }
+    ],
+    "resource": [
+        {
+            "name": "DefaultResource",
+            "path": [
+                "./"
+            ],
+            "controller": [
+                "PrimaryController",
+                "PerformanceController"
+            ]
+        }
+    ]
+}
+```
 
 ### `task`와 `option` 연결
+
+`task[].option`에는 최상위 `option` 객체에 정의한 옵션 ID를 문자열 배열로
+지정합니다. 옵션은 배열에 지정한 순서대로 표시되며, 선택 결과의
+`pipeline_override`는 해당 작업을 시작할 때 파이프라인에 병합됩니다.
 
 ```json
 {
