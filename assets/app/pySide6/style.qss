@@ -12,6 +12,17 @@ QMainWindow {
     background-color: #FFFFFF;
 }
 
+QScrollArea#scrollSettingWidget {
+    border: 1px solid transparent;
+}
+
+QFrame#line,
+QFrame#line_2,
+QFrame#line_3,
+QFrame#line_4 {
+    color: #E2E8F0;
+}
+
 /* =========================================
    탭 위젯 (QTabWidget) - 기존 패딩 및 모서리 크기 유지
    ========================================= */

@@ -1,0 +1,112 @@
+/* 설정 탭 전용 스타일 */
+QWidget#settingsPanel,
+QWidget#settingsDetailContents {
+    background-color: transparent;
+}
+
+QListWidget#settingsNavigation {
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    margin: 0px;
+    padding: 0px;
+    outline: none;
+}
+
+QListWidget#settingsNavigation::item {
+    background-color: transparent;
+    color: #475569;
+    border: none;
+    border-radius: 6px;
+    padding: 11px 12px;
+    margin-bottom: 4px;
+}
+
+QListWidget#settingsNavigation::item:hover {
+    background-color: #EDF4FA;
+}
+
+QListWidget#settingsNavigation::item:selected {
+    background-color: #DDEFF8;
+    color: #0284C7;
+    font-weight: bold;
+}
+
+QScrollArea#settingsDetailScroll {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#settingsSection {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+
+QLabel#settingsSectionTitle {
+    background-color: transparent;
+    color: #1E293B;
+    font-size: 13pt;
+    font-weight: bold;
+}
+
+QLabel#settingsSectionDescription,
+QLabel#settingsRowDescription {
+    background-color: transparent;
+    color: #64748B;
+    font-size: 9pt;
+}
+
+QLabel#settingsRowTitle {
+    background-color: transparent;
+    color: #334155;
+    font-size: 10pt;
+    font-weight: bold;
+}
+
+QFrame#settingsRow {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid #EEF2F7;
+}
+
+QLabel#controllerDetails {
+    background-color: #F8FAFC;
+    color: #475569;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+QComboBox#settingsComboBox {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    padding: 7px 10px;
+    min-height: 20px;
+}
+
+QComboBox#settingsComboBox:hover,
+QComboBox#settingsComboBox:focus {
+    border-color: #00AEEF;
+}
+
+QComboBox#settingsComboBox:disabled {
+    background-color: #E2E8F0;
+    color: #94A3B8;
+}
+
+QComboBox#settingsComboBox::drop-down {
+    border: none;
+    width: 28px;
+}
+
+QComboBox#settingsComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    selection-background-color: #00AEEF;
+    selection-color: #FFFFFF;
+    outline: none;
+}
