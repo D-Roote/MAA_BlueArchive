@@ -1,5 +1,6 @@
 """Run with .venv/Scripts/python.exe -m unittest discover -s RegressionTest -v."""
 
+import json
 import os
 import re
 from contextlib import ExitStack
@@ -14,12 +15,25 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit, QRadioButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QRadioButton,
+)
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
 
 from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
+from app.settingsUI import SettingsStore
 from app.winUI import (
+    DARK_CAPTION_COLOR,
+    DARK_CAPTION_TEXT_COLOR,
+    DARK_QSS_FILENAME,
     DWM_COLOR_DEFAULT,
     DWMWA_CAPTION_COLOR,
     DWMWA_TEXT_COLOR,
@@ -31,6 +45,7 @@ from app.winUI import (
     UI_RESOURCE_DIR,
     WINDOW_TITLE,
     apply_windows_title_bar_theme,
+    resolve_effective_theme,
 )
 
 
@@ -395,17 +410,147 @@ class TitleBarThemeTests(unittest.TestCase):
         )
         self.assertEqual([call.args[2]._obj.value for call in calls], [0, 0x00FFFFFF, 0])
 
+    def test_dark_theme_uses_navy_caption_and_light_text(self):
+        dwmapi = MagicMock()
+        dwmapi.DwmSetWindowAttribute.return_value = 0
+
+        self.assertTrue(apply_windows_title_bar_theme(123, TitleBarTheme.DARK, dwmapi))
+
+        calls = dwmapi.DwmSetWindowAttribute.call_args_list
+        self.assertEqual(
+            [call.args[2]._obj.value for call in calls],
+            [1, DARK_CAPTION_COLOR, DARK_CAPTION_TEXT_COLOR],
+        )
+
     def test_system_theme_restores_default_caption_colors(self):
         dwmapi = MagicMock()
         dwmapi.DwmSetWindowAttribute.return_value = 0
 
-        self.assertTrue(apply_windows_title_bar_theme(123, TitleBarTheme.SYSTEM, dwmapi))
+        self.assertTrue(
+            apply_windows_title_bar_theme(
+                123,
+                TitleBarTheme.SYSTEM,
+                dwmapi,
+                Qt.ColorScheme.Dark,
+            )
+        )
 
         calls = dwmapi.DwmSetWindowAttribute.call_args_list
         self.assertEqual(
             [call.args[2]._obj.value for call in calls],
             [1, DWM_COLOR_DEFAULT, DWM_COLOR_DEFAULT],
         )
+
+    def test_system_theme_resolves_to_current_color_scheme(self):
+        self.assertEqual(
+            resolve_effective_theme(TitleBarTheme.SYSTEM, Qt.ColorScheme.Dark),
+            TitleBarTheme.DARK,
+        )
+        self.assertEqual(
+            resolve_effective_theme(TitleBarTheme.SYSTEM, Qt.ColorScheme.Light),
+            TitleBarTheme.LIGHT,
+        )
+
+
+class SettingsStoreTests(unittest.TestCase):
+    def setUp(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        config_dir = Path(temp_dir.name) / "config"
+        self.maa_config_path = config_dir / "maa_config.json"
+        self.user_config_path = config_dir / "user_config.json"
+        self.store = SettingsStore(
+            self.maa_config_path,
+            self.user_config_path,
+        )
+
+    @staticmethod
+    def controller(name="Win32PrintWindow", screencap="PrintWindow"):
+        return {
+            "name": name,
+            "label": f"Win32 ({screencap})",
+            "type": "Win32",
+            "win32": {
+                "window_regex": "^Example$",
+                "screencap": screencap,
+                "mouse": "PostMessageWithWindowPos",
+                "keyboard": "PostMessage",
+            },
+        }
+
+    @staticmethod
+    def read_json(path):
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_first_load_writes_defaults_and_first_controller(self):
+        controller = self.controller()
+
+        config = self.store.load(controller)
+
+        self.assertFalse(config["general"]["minimize_enabled"])
+        self.assertFalse(
+            config["general"]["allow_option_edits_while_running"]
+        )
+        self.assertEqual(config["appearance"]["theme"], "light")
+        self.assertEqual(config["controller"]["name"], controller["name"])
+        self.assertNotIn("label", config["controller"])
+        self.assertEqual(self.read_json(self.maa_config_path), config)
+        self.assertFalse(self.user_config_path.exists())
+
+    def test_only_minimize_enabled_is_migrated_from_user_config(self):
+        tasks = [
+            {
+                "name": "Example Task",
+                "entry": "ExampleTask",
+                "checked": True,
+                "selected_options": {"Mode": ["Default"]},
+            }
+        ]
+        legacy_config = {
+            "minimize_enabled": True,
+            "tasks": tasks,
+            "task_schema_version": 2,
+        }
+        self.user_config_path.parent.mkdir(parents=True)
+        self.user_config_path.write_text(
+            json.dumps(legacy_config, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        config = self.store.load(self.controller())
+
+        self.assertTrue(config["general"]["minimize_enabled"])
+        self.assertNotIn("tasks", self.read_json(self.maa_config_path))
+        self.assertEqual(
+            self.read_json(self.user_config_path),
+            {"tasks": tasks, "task_schema_version": 2},
+        )
+
+    def test_existing_maa_config_wins_during_minimize_migration(self):
+        self.maa_config_path.parent.mkdir(parents=True)
+        self.maa_config_path.write_text(
+            json.dumps(
+                {
+                    "general": {
+                        "minimize_enabled": False,
+                        "allow_option_edits_while_running": True,
+                    },
+                    "appearance": {"theme": "dark"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.user_config_path.write_text(
+            json.dumps({"minimize_enabled": True, "tasks": []}),
+            encoding="utf-8",
+        )
+
+        config = self.store.load(self.controller())
+
+        self.assertFalse(config["general"]["minimize_enabled"])
+        self.assertTrue(config["general"]["allow_option_edits_while_running"])
+        self.assertEqual(config["appearance"]["theme"], "dark")
+        self.assertEqual(self.read_json(self.user_config_path), {"tasks": []})
 
 
 class UILifecycleTests(unittest.TestCase):
@@ -420,6 +565,30 @@ class UILifecycleTests(unittest.TestCase):
         runtime = MagicMock()
         runtime.user_dir = Path(temp)
         runtime.interface = {
+            "controller": [
+                {
+                    "name": "Win32PrintWindow",
+                    "label": "Win32 (PrintWindow)",
+                    "type": "Win32",
+                    "win32": {
+                        "window_regex": "^Example$",
+                        "screencap": "PrintWindow",
+                        "mouse": "PostMessageWithWindowPos",
+                        "keyboard": "PostMessage",
+                    },
+                },
+                {
+                    "name": "Win32FramePool",
+                    "label": "Win32 (FramePool)",
+                    "type": "Win32",
+                    "win32": {
+                        "window_regex": "^Example$",
+                        "screencap": "FramePool",
+                        "mouse": "PostMessageWithWindowPos",
+                        "keyboard": "PostMessage",
+                    },
+                },
+            ],
             "task": [
                 {
                     "name": "Test",
@@ -497,6 +666,9 @@ class UILifecycleTests(unittest.TestCase):
                 },
             },
         }
+        runtime.resource_config = {
+            "controller": ["Win32PrintWindow", "Win32FramePool"]
+        }
         runtime.log_sink = LogSinkFocus()
         with patch("app.winUI.AppRuntime", return_value=runtime):
             self.window = MainWindow()
@@ -518,6 +690,18 @@ class UILifecycleTests(unittest.TestCase):
                 with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
                     window = MainWindow()
                 self.addCleanup(window.deleteLater)
+                self.assertTrue((UI_DIR / DARK_QSS_FILENAME).is_file())
+                dark_stylesheet = (UI_DIR / DARK_QSS_FILENAME).read_text(
+                    encoding="utf-8"
+                )
+                self.assertRegex(
+                    dark_stylesheet,
+                    r"(?s)QTabWidget::pane\s*\{.*?border:\s*1px solid #30415E;",
+                )
+                self.assertRegex(
+                    dark_stylesheet,
+                    r"(?s)QTabBar::tab\s*\{.*?border:\s*1px solid #30415E;",
+                )
                 widget = window.option_list_widget.itemWidget(window.option_list_widget.item(0))
                 self.assertFalse(widget.setting_btn.icon().pixmap(20, 20).isNull())
                 stylesheet = (UI_DIR / "style.qss").read_text(encoding="utf-8")
@@ -529,6 +713,93 @@ class UILifecycleTests(unittest.TestCase):
                         self.assertTrue(QSvgRenderer("maabaicons:" + relative_path).isValid())
             finally:
                 os.chdir(original_directory)
+
+    def test_settings_tab_uses_navigation_and_single_scroll_area(self):
+        panel = self.window.settings_panel
+
+        self.assertEqual(panel.navigation.count(), 3)
+        self.assertEqual(
+            [panel.navigation.item(index).text() for index in range(3)],
+            ["일반", "컨트롤러", "외관"],
+        )
+        self.assertIs(panel.detail_scroll.widget(), panel.detail_contents)
+        self.assertEqual(panel.layout().stretch(0), 2)
+        self.assertEqual(panel.layout().stretch(1), 8)
+        self.assertEqual(
+            panel.controller_settings()["name"],
+            "Win32PrintWindow",
+        )
+
+        rows = panel.findChildren(QFrame, "settingsRow")
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(row=row):
+                self.assertIsInstance(row.layout(), QGridLayout)
+                row_margins = row.layout().contentsMargins()
+                self.assertEqual((row_margins.top(), row_margins.bottom()), (12, 12))
+                self.assertIs(
+                    row.layout().itemAtPosition(0, 1).widget(),
+                    row.layout().itemAtPosition(1, 1).widget(),
+                )
+
+        sections = panel.findChildren(QFrame, "settingsSection")
+        self.assertTrue(sections)
+        for section in sections:
+            with self.subTest(section=section):
+                section_margins = section.layout().contentsMargins()
+                self.assertEqual(
+                    (section_margins.top(), section_margins.bottom()),
+                    (12, 12),
+                )
+
+    def test_dark_theme_applies_to_entire_window_and_is_saved(self):
+        panel = self.window.settings_panel
+        panel.theme_combo.setCurrentIndex(panel.theme_combo.findData("dark"))
+        self.window.update_tab_widths()
+
+        self.assertEqual(self.window._effective_theme, TitleBarTheme.DARK)
+        self.assertIn("#111A2B", self.window.styleSheet())
+        tab_bar_style = self.window.ui.tabWidget.tabBar().styleSheet()
+        self.assertNotIn("background-color", tab_bar_style)
+        self.assertNotIn("border", tab_bar_style)
+        config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["appearance"]["theme"], "dark")
+
+        panel.theme_combo.setCurrentIndex(panel.theme_combo.findData("light"))
+        self.assertEqual(self.window._effective_theme, TitleBarTheme.LIGHT)
+        self.assertNotIn("#111A2B", self.window.styleSheet())
+
+    def test_minimize_setting_is_saved_only_to_maa_config(self):
+        self.window.ui.minimizeEnableBtn.setChecked(True)
+        self.window.save_user_config()
+
+        config_dir = self.window.runtime.user_dir / "config"
+        maa_config = json.loads(
+            (config_dir / "maa_config.json").read_text(encoding="utf-8")
+        )
+        user_config = json.loads(
+            (config_dir / "user_config.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(maa_config["general"]["minimize_enabled"])
+        self.assertNotIn("minimize_enabled", user_config)
+        self.assertIn("tasks", user_config)
+
+    def test_selected_controller_is_passed_to_next_runtime_worker(self):
+        self.window.settings_panel.controller_combo.setCurrentIndex(1)
+        worker = MagicMock()
+
+        with patch("app.winUI.RuntimeWorker", return_value=worker) as worker_type:
+            self.window.on_task_start()
+
+        args, kwargs = worker_type.call_args
+        self.assertIs(args[0], self.window.runtime)
+        self.assertEqual(args[2], self.window.ui.minimizeEnableBtn.isChecked())
+        self.assertEqual(
+            kwargs["controller_settings"]["name"],
+            "Win32FramePool",
+        )
+        worker.start.assert_called_once()
 
     def test_task_details_remain_viewable_while_option_values_are_locked(self):
         item = self.window.option_list_widget.item(0)
@@ -542,15 +813,14 @@ class UILifecycleTests(unittest.TestCase):
         task_widget.setting_btn.click()
         self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
 
-        # 추후 설정 탭의 토글이 호출할 정책 진입점. 현재 실행 큐는 이미 복사되어 있다.
-        self.window.set_runtime_option_editing_enabled(True)
+        self.window.settings_panel.runtime_edit_checkbox.setChecked(True)
         self.assertTrue(self.window.ui.scrollSettingContents.isEnabled())
         task_widget.selected_options["Test_Mode"] = ["B"]
         queued_after_change = self.window.build_execution_queue()
         self.assertEqual(queued_before_start[0][1]["Test_Node"]["next"], ["A"])
         self.assertEqual(queued_after_change[0][1]["Test_Node"]["next"], ["B"])
 
-        self.window.set_runtime_option_editing_enabled(False)
+        self.window.settings_panel.runtime_edit_checkbox.setChecked(False)
         self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
         self.window.on_task_finished()
         self.window.on_stop_worker_finished()
