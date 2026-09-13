@@ -67,7 +67,8 @@ QPushButton:disabled {
     color: #8192A9;
 }
 
-QPushButton#taskSettingsButton {
+QPushButton#taskSettingsButton,
+QPushButton#endSettingBtn {
     background-color: transparent;
 }
 

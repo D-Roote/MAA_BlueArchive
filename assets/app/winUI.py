@@ -9,7 +9,7 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QIcon, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
@@ -32,6 +32,9 @@ DARK_QSS_FILENAME = "dark.qss"
 APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR / "pySide6"
 UI_RESOURCE_DIR = APP_DIR / "resources"
+SETTINGS_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/settings.svg"
+SETTINGS_ICON_SIZE = QSize(20, 20)
+SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 
 
 class TitleBarTheme(str, Enum):
@@ -231,6 +234,24 @@ def find_switch_cases(cases):
     return yes_case_name, no_case_name
 
 
+class SettingsIconHoverFilter(QObject):
+    """설정 아이콘 버튼의 호버 크기 변경을 공통 처리한다."""
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Enter:
+            watched.setIconSize(SETTINGS_ICON_HOVER_SIZE)
+        elif event.type() == QEvent.Type.Leave:
+            watched.setIconSize(SETTINGS_ICON_SIZE)
+        return super().eventFilter(watched, event)
+
+
+def setup_settings_icon_button(button):
+    button.setIcon(QIcon(str(SETTINGS_ICON_PATH)))
+    button.setIconSize(SETTINGS_ICON_SIZE)
+    button._settings_icon_hover_filter = SettingsIconHoverFilter(button)
+    button.installEventFilter(button._settings_icon_hover_filter)
+
+
 class TaskSettingsButton(QPushButton):
     """클릭 영역은 유지하고 호버 시 아이콘만 확대하는 설정 버튼."""
 
@@ -238,16 +259,7 @@ class TaskSettingsButton(QPushButton):
         super().__init__(parent)
         self.setObjectName("taskSettingsButton")
         self.setFixedSize(30, 30)
-        self.setIcon(QIcon(str(UI_RESOURCE_DIR / "icons/actions/settings.svg")))
-        self.setIconSize(QSize(20, 20))
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self.setIconSize(QSize(24, 24))
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self.setIconSize(QSize(20, 20))
+        setup_settings_icon_button(self)
 
 
 # 동적 List 클래스
@@ -457,6 +469,8 @@ class MainWindow(QMainWindow):
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
+
+        setup_settings_icon_button(self.ui.endSettingBtn)
         
         self.ui.tabWidget.setUsesScrollButtons(False)
         # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
