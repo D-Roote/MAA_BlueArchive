@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from copy import deepcopy
 from enum import Enum
+from uuid import uuid4
 import ctypes
 import json
 import re
@@ -9,15 +10,15 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QObject, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QObject, QPoint, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
-                           QColor, QIcon, QPainter, QPen)
+                           QColor, QCursor, QIcon, QPainter, QPen)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QListWidget, QListWidgetItem, QWidget, 
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
-                               QPushButton, QRadioButton)
+                               QPushButton, QRadioButton, QToolTip)
 
 from app.runtime import AppRuntime
 from app.settingsUI import SettingsPanel
@@ -35,6 +36,8 @@ UI_RESOURCE_DIR = APP_DIR / "resources"
 SETTINGS_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/settings.svg"
 SETTINGS_ICON_SIZE = QSize(20, 20)
 SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
+RESET_ICON_SIZE = QSize(18, 18)
+RESET_ICON_HOVER_SIZE = QSize(22, 22)
 
 
 class TitleBarTheme(str, Enum):
@@ -245,6 +248,78 @@ class SettingsIconHoverFilter(QObject):
         return super().eventFilter(watched, event)
 
 
+class ResetIconHoverFilter(QObject):
+    """초기화 버튼의 히트박스는 유지하고 호버 시 아이콘만 확대한다."""
+
+    def __init__(self, button):
+        super().__init__(button)
+        self.button = button
+        self.tooltip_timer = QTimer(self)
+        self.tooltip_timer.setSingleShot(True)
+        self.tooltip_timer.setInterval(200)
+        self.tooltip_timer.timeout.connect(self._show_tooltip)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Enter:
+            watched.setIconSize(RESET_ICON_HOVER_SIZE)
+            self.tooltip_timer.start()
+        elif event.type() == QEvent.Type.Leave:
+            watched.setIconSize(RESET_ICON_SIZE)
+            self.tooltip_timer.stop()
+            QToolTip.hideText()
+        return super().eventFilter(watched, event)
+
+    def _show_tooltip(self):
+        if not self.button.isEnabled() or not self.button.underMouse():
+            return
+        position = self.button.mapToGlobal(
+            QPoint(self.button.width() // 2, self.button.height() + 3)
+        )
+        QToolTip.showText(position, self.button.toolTip(), self.button)
+
+
+class TaskFooterHoverFilter(QObject):
+    """두 버튼을 하나의 작업 영역처럼 호버 표시한다."""
+
+    def __init__(self, footer, watched_widgets):
+        super().__init__(footer)
+        self.footer = footer
+        for widget in watched_widgets:
+            widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Enter:
+            self._set_hovered(True)
+        elif event.type() == QEvent.Type.Leave:
+            QTimer.singleShot(0, self._sync_hovered)
+        return super().eventFilter(watched, event)
+
+    def _sync_hovered(self):
+        local_position = self.footer.mapFromGlobal(QCursor.pos())
+        self._set_hovered(self.footer.rect().contains(local_position))
+
+    def _set_hovered(self, hovered):
+        if self.footer.property("groupHovered") == hovered:
+            return
+        self.footer.setProperty("groupHovered", hovered)
+        self.footer.style().unpolish(self.footer)
+        self.footer.style().polish(self.footer)
+        self.footer.update()
+
+
+class DeleteDropEventFilter(QObject):
+    """삭제 영역 위에서 드래그 가능 커서를 유지하되 삭제는 목록이 처리한다."""
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            event.acceptProposedAction()
+            return True
+        if event.type() == QEvent.Type.Drop:
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
+
+
 def setup_settings_icon_button(button):
     button.setIcon(QIcon(str(SETTINGS_ICON_PATH)))
     button.setIconSize(SETTINGS_ICON_SIZE)
@@ -260,6 +335,108 @@ class TaskSettingsButton(QPushButton):
         self.setObjectName("taskSettingsButton")
         self.setFixedSize(30, 30)
         setup_settings_icon_button(self)
+
+
+class TaskPickerPopup(QListWidget):
+    task_selected = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._anchor_button = None
+        self.setObjectName("taskPickerPopup")
+        self.setWindowFlags(
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._dismiss_timer = QTimer(self)
+        self._dismiss_timer.setSingleShot(True)
+        self._dismiss_timer.setInterval(80)
+        self._dismiss_timer.timeout.connect(self._hide_if_pointer_outside)
+        self.itemClicked.connect(self._select_task)
+        self.itemActivated.connect(self._select_task)
+
+    def set_anchor_button(self, button):
+        if self._anchor_button is not None:
+            self._anchor_button.removeEventFilter(self)
+        self._anchor_button = button
+        button.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_anchor_button", None):
+            if event.type() == QEvent.Type.Enter:
+                self._dismiss_timer.stop()
+            elif event.type() == QEvent.Type.Leave:
+                self._dismiss_timer.start()
+        return super().eventFilter(watched, event)
+
+    def enterEvent(self, event):
+        self._dismiss_timer.stop()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._dismiss_timer.start()
+        super().leaveEvent(event)
+
+    @staticmethod
+    def _contains_global_position(widget, global_position):
+        return widget.rect().contains(widget.mapFromGlobal(global_position))
+
+    def _hide_if_pointer_outside(self):
+        if not self.isVisible():
+            return
+        global_position = QCursor.pos()
+        if self._contains_global_position(self, global_position):
+            return
+        if self._anchor_button is not None and self._contains_global_position(
+            self._anchor_button, global_position
+        ):
+            return
+        self.hide()
+
+    def show_above(self, anchor, task_list, tasks, width_reference=None):
+        self.clear()
+        task_row_height = task_list.sizeHintForRow(0)
+        if task_row_height <= 0:
+            task_row_height = 34
+        for task in tasks:
+            item = QListWidgetItem(task.get("label", task["name"]))
+            item.setData(Qt.UserRole, task)
+            item.setSizeHint(QSize(0, task_row_height))
+            self.addItem(item)
+        if not self.count():
+            return
+
+        self.ensurePolished()
+        position = anchor.mapToGlobal(QPoint(0, 0))
+        available_height = max(1, position.y() - anchor.screen().availableGeometry().top())
+        viewport_chrome = max(0, self.height() - self.viewport().height())
+        height = min(
+            task_row_height * self.count() + viewport_chrome,
+            task_list.height(),
+            available_height,
+        )
+        width_reference = width_reference or task_list
+        horizontal_position = width_reference.mapToGlobal(QPoint(0, 0))
+        self.setFixedSize(width_reference.width(), height)
+        self.move(horizontal_position.x(), position.y() - height)
+        self.setCurrentRow(0)
+        self.show()
+        self.setFocus()
+
+    def _select_task(self, item):
+        task = item.data(Qt.UserRole)
+        self.hide()
+        self.task_selected.emit(task)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 # 동적 List 클래스
@@ -372,10 +549,13 @@ class OptionItemWidget(QWidget):
         if locked:
             self.label.setStyleSheet("background: transparent; color: #94A3B8;")
         else:
-            self.label.setStyleSheet("background: transparent; color: #000000;")
+            self.label.setStyleSheet("background: transparent;")
 
 # 커스텀 리스트 위젯
 class DragDropListWidget(QListWidget):
+    drag_started = Signal()
+    drag_finished = Signal(object, object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDropIndicatorShown(False)
@@ -388,6 +568,18 @@ class DragDropListWidget(QListWidget):
         self.setDragDropMode(
             QAbstractItemView.NoDragDrop if locked else QAbstractItemView.InternalMove
         )
+
+    def startDrag(self, supported_actions):
+        dragged_item = self.currentItem()
+        if dragged_item is None:
+            return
+        self.drag_started.emit()
+        try:
+            super().startDrag(supported_actions)
+        finally:
+            self.drag_line_y = -1
+            self.viewport().update()
+            self.drag_finished.emit(dragged_item, QCursor.pos())
 
     def dragMoveEvent(self, event):
         super().dragMoveEvent(event)
@@ -420,21 +612,21 @@ class DragDropListWidget(QListWidget):
         self.drag_line_y = -1
         self.viewport().update()
 
-        widget_by_entry = {}
+        widget_by_id = {}
         for i in range(self.count()):
             item = self.item(i)
             widget = self.itemWidget(item)
-            entry = item.data(Qt.UserRole)
-            if widget is not None and entry is not None:
-                widget_by_entry[entry] = widget
+            instance_id = item.data(Qt.UserRole + 1)
+            if widget is not None and instance_id is not None:
+                widget_by_id[instance_id] = widget
 
         super().dropEvent(event)
 
         for i in range(self.count()):
             item = self.item(i)
-            entry = item.data(Qt.UserRole)
-            if self.itemWidget(item) is None and entry in widget_by_entry:
-                widget = widget_by_entry[entry]
+            instance_id = item.data(Qt.UserRole + 1)
+            if self.itemWidget(item) is None and instance_id in widget_by_id:
+                widget = widget_by_id[instance_id]
                 self.setItemWidget(item, widget)
                 item.setSizeHint(widget.sizeHint())
 
@@ -466,6 +658,7 @@ class MainWindow(QMainWindow):
         # QSS의 아이콘 경로도 작업 디렉토리와 무관하게 해석한다.
         QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
+        loader.registerCustomWidget(DragDropListWidget)
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
@@ -764,24 +957,45 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def setup_dynamic_options(self):
-        self.option_list_widget = DragDropListWidget()
-        self.option_list_widget.setObjectName("taskOptionList")
-        
-        self.option_list_widget.setDragDropMode(QAbstractItemView.InternalMove)
-        self.option_list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-
-        target_layout = self.ui.settingStartWidget_1
-        if isinstance(target_layout, QWidget):
-            if target_layout.layout() is None:
-                QVBoxLayout(target_layout)
-            target_layout = target_layout.layout()
-            
-        target_layout.insertWidget(0, self.option_list_widget)
-        target_layout.setStretchFactor(self.option_list_widget, 1)
+        self.option_list_widget = self.ui.taskOptionList
         self.option_list_widget.on_order_changed_callback = self.on_user_config_changed
 
+        self.task_list_actions = self.ui.taskListFooter
+        self.task_list_actions_stack = self.ui.taskListActionsStack
+        self.task_delete_page = self.ui.taskDeletePage
+        self.task_delete_drop_zone = self.ui.taskDeleteDropZone
+        self.task_reset_button = self.ui.taskResetButton
+        self.task_add_button = self.ui.taskAddButton
+        self.task_reset_button._reset_icon_hover_filter = ResetIconHoverFilter(
+            self.task_reset_button
+        )
+
+        self.task_reset_button.installEventFilter(
+            self.task_reset_button._reset_icon_hover_filter
+        )
+        self.task_list_actions._footer_hover_filter = TaskFooterHoverFilter(
+            self.task_list_actions,
+            (
+                self.task_list_actions,
+                self.task_reset_button,
+                self.task_add_button,
+            ),
+        )
+        self.task_delete_drop_zone._drop_event_filter = DeleteDropEventFilter(
+            self.task_delete_drop_zone
+        )
+        self.task_delete_drop_zone.installEventFilter(
+            self.task_delete_drop_zone._drop_event_filter
+        )
+        self.option_list_widget.drag_started.connect(self.on_task_drag_started)
+        self.option_list_widget.drag_finished.connect(self.on_task_drag_finished)
+        self.task_picker = TaskPickerPopup(self)
+        self.task_picker.set_anchor_button(self.task_add_button)
+        self.task_picker.task_selected.connect(self.add_task)
+        self.task_add_button.clicked.connect(self.show_task_picker)
+        self.task_reset_button.clicked.connect(self.reset_task_list)
+
         raw_tasks = self.runtime.interface.get("task", [])
-        options_dict = self.runtime.interface.get("option", {})
         
         task_dict = {t["name"]: t for t in raw_tasks}
         task_dict_by_entry = {}
@@ -804,79 +1018,144 @@ class MainWindow(QMainWindow):
             saved_tasks = []
         added_tasks = set()
 
-        def add_task_widget(task_data, is_checked, saved_options):
-            item = QListWidgetItem()
-            item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
-            item.setData(Qt.UserRole, task_data["name"])
-            self.option_list_widget.addItem(item)
-            
-            task_options = []
-            if "option" in task_data:
-                for opt_name in task_data["option"]:
-                    if opt_name in options_dict:
-                        task_options.append((opt_name, options_dict[opt_name]))
-
-            custom_widget = OptionItemWidget(
-                task_data, 
-                task_options, 
-                self.show_sub_cases, 
-                self.on_task_checkbox_toggled
-            )
-            
-            if isinstance(saved_options, dict):
-                for opt_name, opt in custom_widget.task_options:
-                    saved_value = saved_options.get(opt_name)
-                    if opt.get("type", "select") == "input":
-                        if not isinstance(saved_value, dict):
-                            continue
-                        current_values = custom_widget.selected_options[opt_name]
-                        for input_config in opt.get("inputs", []):
-                            input_name = input_config.get("name")
-                            if not input_name or input_config.get("password"):
-                                continue
-                            saved_input = saved_value.get(input_name)
-                            if isinstance(saved_input, str):
-                                current_values[input_name] = saved_input
-                        continue
-
-                    if not isinstance(saved_value, list):
-                        continue
-
-                    valid_names = [case.get("name") for case in opt.get("cases", [])]
-                    selected = [name for name in valid_names if name in saved_value]
-                    if opt.get("type", "select") != "checkbox":
-                        selected = selected[:1]
-
-                    if selected or opt.get("type", "select") == "checkbox":
-                        custom_widget.selected_options[opt_name] = selected
-            
-            custom_widget.checkbox.blockSignals(True)
-            custom_widget.checkbox.setChecked(is_checked)
-            custom_widget.checkbox.blockSignals(False)
-            custom_widget.adjustSize()
-            item.setSizeHint(custom_widget.sizeHint())
-            
-            self.option_list_widget.setItemWidget(item, custom_widget)
-            added_tasks.add(task_data["name"])
-
         for saved_task in saved_tasks:
+            if not isinstance(saved_task, dict):
+                continue
             task_data = task_dict.get(saved_task.get("name"))
             if task_data is None:
                 # 기존 entry 기반 설정 파일을 name 기반 형식으로 자동 마이그레이션한다.
                 task_data = task_dict_by_entry.get(saved_task.get("entry"))
 
-            if task_data is not None and task_data["name"] not in added_tasks:
-                add_task_widget(
+            if task_data is not None:
+                self.add_task_widget(
                     task_data,
                     saved_task.get("checked", task_data.get("default_check", False)),
                     saved_task.get("selected_options", None)
                 )
+                added_tasks.add(task_data["name"])
 
         for task_data in raw_tasks:
             if task_data["name"] not in added_tasks:
-                add_task_widget(task_data, task_data.get("default_check", False), None)
+                self.add_task_widget(task_data, task_data.get("default_check", False), None)
 
+        self._apply_option_editing_policy()
         self.check_start_button_state()
+
+    def add_task_widget(self, task_data, is_checked, saved_options=None):
+        item = QListWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
+        item.setData(Qt.UserRole, task_data["name"])
+        # 같은 Task를 여러 번 추가해도 드래그 시 각 항목의 옵션을 유지한다.
+        item.setData(Qt.UserRole + 1, uuid4().hex)
+        self.option_list_widget.addItem(item)
+
+        options_dict = self.runtime.interface.get("option", {})
+        task_options = [
+            (name, options_dict[name])
+            for name in task_data.get("option", [])
+            if name in options_dict
+        ]
+        custom_widget = OptionItemWidget(
+            task_data, task_options, self.show_sub_cases, self.on_task_checkbox_toggled
+        )
+        if isinstance(saved_options, dict):
+            for opt_name, opt in custom_widget.task_options:
+                saved_value = saved_options.get(opt_name)
+                if opt.get("type", "select") == "input":
+                    if not isinstance(saved_value, dict):
+                        continue
+                    current_values = custom_widget.selected_options[opt_name]
+                    for input_config in opt.get("inputs", []):
+                        input_name = input_config.get("name")
+                        if not input_name or input_config.get("password"):
+                            continue
+                        saved_input = saved_value.get(input_name)
+                        if isinstance(saved_input, str):
+                            current_values[input_name] = saved_input
+                    continue
+
+                if not isinstance(saved_value, list):
+                    continue
+                valid_names = [case.get("name") for case in opt.get("cases", [])]
+                selected = [name for name in valid_names if name in saved_value]
+                if opt.get("type", "select") != "checkbox":
+                    selected = selected[:1]
+                if selected or opt.get("type", "select") == "checkbox":
+                    custom_widget.selected_options[opt_name] = selected
+
+        custom_widget.checkbox.blockSignals(True)
+        custom_widget.checkbox.setChecked(is_checked)
+        custom_widget.checkbox.blockSignals(False)
+        custom_widget.adjustSize()
+        item.setSizeHint(custom_widget.sizeHint())
+        self.option_list_widget.setItemWidget(item, custom_widget)
+
+    def show_task_picker(self):
+        if not self.task_add_button.isEnabled():
+            return
+        self.task_picker.show_above(
+            self.task_list_actions,
+            self.option_list_widget,
+            self.runtime.interface.get("task", []),
+            self.ui.taskListContainer,
+        )
+
+    def on_task_drag_started(self):
+        self.task_picker.hide()
+        self.ui.taskListSeparator.hide()
+        self.task_list_actions_stack.setCurrentWidget(self.task_delete_page)
+
+    def on_task_drag_finished(self, dragged_item, global_position):
+        try:
+            drop_position = self.task_delete_drop_zone.mapFromGlobal(global_position)
+            if not self.task_delete_drop_zone.rect().contains(drop_position):
+                return
+            row = self.option_list_widget.row(dragged_item)
+            if row < 0:
+                return
+            item_widget = self.option_list_widget.itemWidget(dragged_item)
+            removed_item = self.option_list_widget.takeItem(row)
+            if item_widget is not None:
+                item_widget.hide()
+                item_widget.deleteLater()
+            del removed_item
+            self.clear_sub_cases()
+            self.check_start_button_state()
+            self.save_user_config()
+        finally:
+            self.task_list_actions_stack.setCurrentWidget(self.task_list_actions)
+            self.ui.taskListSeparator.show()
+
+    def add_task(self, task_data):
+        if not self.task_add_button.isEnabled():
+            return
+        self.add_task_widget(task_data, task_data.get("default_check", False))
+        self.option_list_widget.scrollToBottom()
+        self._apply_option_editing_policy()
+        self.check_start_button_state()
+        self.save_user_config()
+
+    def reset_task_list(self):
+        if not self.task_reset_button.isEnabled():
+            return
+        self.task_picker.hide()
+        # 삭제되는 항목을 참조하는 세부 옵션 컨트롤도 함께 비운다.
+        self.clear_sub_cases()
+        self.option_list_widget.clear()
+        for task in self.runtime.interface.get("task", []):
+            self.add_task_widget(task, task.get("default_check", False))
+        self._apply_option_editing_policy()
+        self.check_start_button_state()
+        self.save_user_config()
+
+    def clear_sub_cases(self):
+        layout = self.ui.scrollSettingContents.layout()
+        if layout is not None:
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().hide()
+                    child.widget().deleteLater()
 
     def show_sub_cases(self, item_widget):
         task_options = item_widget.task_options
@@ -888,10 +1167,7 @@ class MainWindow(QMainWindow):
             layout = QVBoxLayout(container_widget)
             layout.setContentsMargins(10, 10, 10, 10)
             
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        self.clear_sub_cases()
 
         for opt_name, opt in task_options:
             opt_type = opt.get("type", "select")
@@ -1186,6 +1462,15 @@ class MainWindow(QMainWindow):
                     widget.set_locked(controls_locked)
 
             self.option_list_widget.set_locked(controls_locked)
+
+        if hasattr(self, "task_list_actions"):
+            self.task_list_actions.setEnabled(not controls_locked)
+            self.task_reset_button.setEnabled(not controls_locked)
+            self.task_add_button.setEnabled(
+                not controls_locked and bool(self.runtime.interface.get("task"))
+            )
+            if controls_locked:
+                self.task_picker.hide()
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.setEnabled(not controls_locked)

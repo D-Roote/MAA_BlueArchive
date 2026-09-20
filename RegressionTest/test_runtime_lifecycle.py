@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -682,6 +683,251 @@ class UILifecycleTests(unittest.TestCase):
         stop_worker = MagicMock(succeeded=True, result_message="stopped")
         self.window.stop_worker = stop_worker
         return worker
+
+    def test_task_picker_opens_above_full_width_and_appends_on_click(self):
+        self.window.show()
+        self.app.processEvents()
+        task_list = self.window.option_list_widget
+        actions = self.window.task_list_actions
+        self.assertEqual(actions.width(), task_list.width())
+        self.assertEqual(
+            actions.mapToGlobal(QPoint(0, 0)).x(),
+            task_list.mapToGlobal(QPoint(0, 0)).x(),
+        )
+        reset = self.window.task_reset_button
+        add = self.window.task_add_button
+        self.assertIs(task_list, self.window.ui.taskOptionList)
+        self.assertIs(actions, self.window.ui.taskListFooter)
+        self.assertIs(reset, self.window.ui.taskResetButton)
+        self.assertIs(add, self.window.ui.taskAddButton)
+        self.assertEqual(add.x() - (reset.x() + reset.width()), 0)
+        self.assertEqual(reset.width(), 34)
+        self.assertEqual(add.width() + reset.width(), actions.width())
+        self.assertEqual(add.height(), 34)
+        separator = self.window.ui.taskListSeparator
+        self.assertEqual(separator.height(), 1)
+        self.assertGreaterEqual(separator.y(), task_list.y() + task_list.height())
+        self.assertGreaterEqual(
+            self.window.ui.taskListActionsStack.y(),
+            separator.y() + separator.height(),
+        )
+        self.assertEqual(reset.toolTip(), "초기화")
+        self.assertFalse(reset.icon().isNull())
+        self.assertEqual(reset.iconSize(), QSize(18, 18))
+        QApplication.sendEvent(reset, QEvent(QEvent.Type.Enter))
+        self.assertEqual(reset.iconSize(), QSize(22, 22))
+        QApplication.sendEvent(reset, QEvent(QEvent.Type.Leave))
+        self.assertEqual(reset.iconSize(), QSize(18, 18))
+
+        add.click()
+        self.app.processEvents()
+        popup = self.window.task_picker
+        self.assertTrue(popup.isVisible())
+        container = self.window.ui.taskListContainer
+        self.assertEqual(popup.width(), container.width())
+        self.assertEqual(popup.x(), container.mapToGlobal(QPoint(0, 0)).x())
+        self.assertEqual(popup.sizeHintForRow(0), task_list.sizeHintForRow(0))
+        popup_chrome = popup.height() - popup.viewport().height()
+        self.assertEqual(
+            popup.height(),
+            popup.sizeHintForRow(0) * popup.count() + popup_chrome,
+        )
+        self.assertLess(popup.height(), task_list.height())
+        self.assertEqual(popup.y() + popup.height(), actions.mapToGlobal(QPoint(0, 0)).y())
+        self.assertTrue(popup.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
+        self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]))
+        self.assertEqual(popup.item(0).toolTip(), "")
+        self.assertEqual(popup._dismiss_timer.interval(), 80)
+        popup_position = popup.mapToGlobal(popup.rect().center())
+        with patch("app.winUI.QCursor.pos", return_value=popup_position):
+            popup._hide_if_pointer_outside()
+        self.assertTrue(popup.isVisible())
+        with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+            popup._hide_if_pointer_outside()
+        self.assertFalse(popup.isVisible())
+        add.click()
+        self.app.processEvents()
+        QTest.mouseClick(
+            popup.viewport(), Qt.MouseButton.LeftButton,
+            pos=popup.visualItemRect(popup.item(0)).center(),
+        )
+        self.assertFalse(popup.isVisible())
+        self.assertEqual(task_list.count(), 2)
+        self.assertEqual(task_list.item(1).data(Qt.UserRole), "Test")
+
+        add.click()
+        QTest.keyClick(popup, Qt.Key.Key_Escape)
+        self.assertFalse(popup.isVisible())
+        self.assertEqual(task_list.count(), 2)
+        self.window.hide()
+
+    def test_duplicate_tasks_keep_independent_options_on_reload_and_execution(self):
+        task_list = self.window.option_list_widget
+        first = task_list.itemWidget(task_list.item(0))
+        first.selected_options["Test_Mode"] = ["B"]
+        self.window.add_task(self.window.runtime.interface["task"][0])
+        second = task_list.itemWidget(task_list.item(1))
+        self.assertEqual(second.selected_options["Test_Mode"], ["A"])
+        second.checkbox.setChecked(False)
+        self.assertNotEqual(
+            task_list.item(0).data(Qt.UserRole + 1),
+            task_list.item(1).data(Qt.UserRole + 1),
+        )
+
+        with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+            restored = MainWindow()
+        self.addCleanup(restored.deleteLater)
+        restored_list = restored.option_list_widget
+        self.assertEqual(restored_list.count(), 2)
+        widgets = [restored_list.itemWidget(restored_list.item(i)) for i in range(2)]
+        self.assertEqual([w.selected_options["Test_Mode"] for w in widgets], [["B"], ["A"]])
+        self.assertEqual([w.is_checked() for w in widgets], [True, False])
+        self.assertEqual(len(restored.build_execution_queue()), 1)
+        widgets[1].checkbox.setChecked(True)
+        queue = restored.build_execution_queue()
+        self.assertEqual([entry for entry, _ in queue], ["Test_Main", "Test_Main"])
+        self.assertEqual([override["Test_Node"]["next"] for _, override in queue], [["B"], ["A"]])
+
+    def test_dragging_replaces_actions_with_delete_zone_and_removes_dropped_task(self):
+        task_list = self.window.option_list_widget
+        stack = self.window.task_list_actions_stack
+        delete_page = self.window.task_delete_page
+        delete_zone = self.window.task_delete_drop_zone
+        self.window.show()
+        self.app.processEvents()
+
+        self.assertIs(stack.currentWidget(), self.window.task_list_actions)
+        self.window.on_task_drag_started()
+        self.app.processEvents()
+        self.assertIs(stack.currentWidget(), delete_page)
+        self.assertTrue(self.window.ui.taskListSeparator.isHidden())
+        self.assertLess(delete_zone.width(), stack.width())
+        self.assertLess(delete_zone.height(), stack.height())
+        margins = delete_page.layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (4, 4, 4, 4),
+        )
+        self.assertEqual(self.window.ui.taskDeleteLabel.text(), "제거")
+        self.assertFalse(
+            (UI_RESOURCE_DIR / "icons/actions/trash.svg").exists()
+        )
+
+        dragged_item = task_list.item(0)
+        drop_position = delete_zone.mapToGlobal(delete_zone.rect().center())
+        self.window.on_task_drag_finished(dragged_item, drop_position)
+        self.assertIs(stack.currentWidget(), self.window.task_list_actions)
+        self.assertFalse(self.window.ui.taskListSeparator.isHidden())
+        self.assertEqual(task_list.count(), 0)
+        self.assertFalse(self.window.ui.workStartBtn.isEnabled())
+        config_path = self.window.runtime.user_dir / "config" / "user_config.json"
+        saved = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["tasks"], [])
+        self.window.hide()
+
+    def test_drag_release_outside_delete_zone_keeps_task(self):
+        task_list = self.window.option_list_widget
+        dragged_item = task_list.item(0)
+        self.window.on_task_drag_started()
+        outside = self.window.option_list_widget.mapToGlobal(QPoint(2, 2))
+        self.window.on_task_drag_finished(dragged_item, outside)
+        self.assertEqual(task_list.count(), 1)
+        self.assertFalse(self.window.ui.taskListSeparator.isHidden())
+        self.assertIs(
+            self.window.task_list_actions_stack.currentWidget(),
+            self.window.task_list_actions,
+        )
+
+    def test_reset_tooltip_and_footer_hover_are_compact_and_fast(self):
+        reset = self.window.task_reset_button
+        footer = self.window.task_list_actions
+        hover_filter = reset._reset_icon_hover_filter
+        self.assertEqual(hover_filter.tooltip_timer.interval(), 200)
+        QApplication.sendEvent(reset, QEvent(QEvent.Type.Enter))
+        self.assertTrue(footer.property("groupHovered"))
+        self.assertEqual(reset.iconSize(), QSize(22, 22))
+        stylesheet = self.window.styleSheet()
+        self.assertIn("font-size: 7.5pt", stylesheet)
+        self.assertIn('QWidget#taskListFooter[groupHovered="true"]', stylesheet)
+
+    def test_long_task_picker_scrolls_and_supports_keyboard_selection(self):
+        self.window.runtime.interface["task"] = [
+            {"name": f"Task{i}", "label": "Long task label " * 10, "entry": f"Entry{i}"}
+            for i in range(40)
+        ]
+        self.window.show()
+        self.app.processEvents()
+        self.window.task_add_button.click()
+        self.app.processEvents()
+        popup = self.window.task_picker
+        self.assertEqual(popup.count(), 40)
+        self.assertEqual(popup.width(), self.window.ui.taskListContainer.width())
+        self.assertEqual(
+            popup.sizeHintForRow(0),
+            self.window.option_list_widget.sizeHintForRow(0),
+        )
+        self.assertEqual(popup.height(), self.window.option_list_widget.height())
+        self.assertGreater(popup.verticalScrollBar().maximum(), 0)
+        QTest.keyClick(popup, Qt.Key.Key_End)
+        QTest.keyClick(popup, Qt.Key.Key_Return)
+        self.assertFalse(popup.isVisible())
+        task_list = self.window.option_list_widget
+        self.assertEqual(task_list.item(task_list.count() - 1).data(Qt.UserRole), "Task39")
+        self.window.hide()
+
+    def test_reset_restores_interface_defaults_and_clears_detail_controls(self):
+        self.window.runtime.interface["task"].append({
+            "name": "Other", "entry": "Other_Main", "default_check": False,
+        })
+        task_list = self.window.option_list_widget
+        first = task_list.itemWidget(task_list.item(0))
+        first.selected_options["Test_Mode"] = ["B"]
+        first.checkbox.setChecked(False)
+        self.window.show_sub_cases(first)
+        self.window.add_task(self.window.runtime.interface["task"][0])
+        self.window.task_reset_button.click()
+
+        self.assertEqual(task_list.count(), 2)
+        self.assertEqual([task_list.item(i).data(Qt.UserRole) for i in range(2)], ["Test", "Other"])
+        widgets = [task_list.itemWidget(task_list.item(i)) for i in range(2)]
+        self.assertEqual([w.is_checked() for w in widgets], [True, False])
+        self.assertEqual(widgets[0].selected_options["Test_Mode"], ["A"])
+        self.assertEqual(self.window.ui.scrollSettingContents.layout().count(), 0)
+        path = self.window.runtime.user_dir / "config" / "user_config.json"
+        saved = json.loads(path.read_text(encoding="utf-8"))["tasks"]
+        self.assertEqual([task["name"] for task in saved], ["Test", "Other"])
+        self.assertEqual(saved[0]["selected_options"]["Test_Mode"], ["A"])
+
+    def test_task_list_actions_follow_runtime_edit_policy_without_changing_active_queue(self):
+        worker = MagicMock()
+        expected_queue = self.window.build_execution_queue()
+        with patch("app.winUI.RuntimeWorker", return_value=worker) as worker_type:
+            self.window.on_task_start()
+        active_queue = worker_type.call_args.args[1]
+        original_count = self.window.option_list_widget.count()
+        self.assertFalse(self.window.task_reset_button.isEnabled())
+        self.assertFalse(self.window.task_add_button.isEnabled())
+        self.window.add_task(self.window.runtime.interface["task"][0])
+        self.assertEqual(self.window.option_list_widget.count(), original_count)
+
+        self.window.set_runtime_option_editing_enabled(True)
+        self.assertTrue(self.window.task_reset_button.isEnabled())
+        self.assertTrue(self.window.task_add_button.isEnabled())
+        with patch("app.winUI.RuntimeWorker") as worker_type:
+            self.window.add_task(self.window.runtime.interface["task"][0])
+            self.assertEqual(self.window.option_list_widget.count(), original_count + 1)
+            self.window.task_reset_button.click()
+            self.assertEqual(self.window.option_list_widget.count(), original_count)
+        worker_type.assert_not_called()
+        self.assertIs(self.window.worker, worker)
+        self.assertEqual(active_queue, expected_queue)
+
+    def test_empty_interface_reset_disables_start_and_add(self):
+        self.window.runtime.interface["task"] = []
+        self.window.task_reset_button.click()
+        self.assertEqual(self.window.option_list_widget.count(), 0)
+        self.assertFalse(self.window.task_add_button.isEnabled())
+        self.assertFalse(self.window.ui.workStartBtn.isEnabled())
 
     def test_relocated_ui_and_svg_assets_load_outside_project_directory(self):
         original_directory = Path.cwd()

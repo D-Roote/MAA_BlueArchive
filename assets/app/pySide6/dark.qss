@@ -45,8 +45,45 @@ QListWidget {
     border-color: #30415E;
 }
 
+QFrame#taskListContainer {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QWidget#taskDeletePage {
+    background-color: #172238;
+}
+
+QFrame#taskListSeparator {
+    background-color: #30415E;
+}
+
+QWidget#taskListFooter {
+    background-color: #168FBE;
+}
+
+QWidget#taskListFooter[groupHovered="true"]:!disabled {
+    background-color: #1AA6D8;
+}
+
+QWidget#taskListFooter:disabled {
+    background-color: #34445E;
+}
+
 QListWidget::item:hover {
     background-color: #22314A;
+}
+
+QListWidget#taskPickerPopup::item:hover,
+QListWidget#taskPickerPopup::item:selected {
+    background-color: #168FBE;
+    color: #F5F9FD;
+}
+
+QToolTip {
+    background-color: #22314A;
+    color: #F5F9FD;
+    border-color: #405474;
 }
 
 QPushButton {
