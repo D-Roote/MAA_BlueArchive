@@ -167,9 +167,6 @@
                        <height>34</height>
                       </size>
                      </property>
-                     <property name="toolTip">
-                      <string>초기화</string>
-                     </property>
                      <property name="accessibleName">
                       <string>작업 목록 초기화</string>
                      </property>

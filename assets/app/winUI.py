@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QListWidget, QListWidgetItem, QWidget, 
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
-                               QPushButton, QRadioButton, QToolTip)
+                               QPushButton, QRadioButton)
 
 from app.runtime import AppRuntime
 from app.settingsUI import SettingsPanel
@@ -251,31 +251,12 @@ class SettingsIconHoverFilter(QObject):
 class ResetIconHoverFilter(QObject):
     """초기화 버튼의 히트박스는 유지하고 호버 시 아이콘만 확대한다."""
 
-    def __init__(self, button):
-        super().__init__(button)
-        self.button = button
-        self.tooltip_timer = QTimer(self)
-        self.tooltip_timer.setSingleShot(True)
-        self.tooltip_timer.setInterval(200)
-        self.tooltip_timer.timeout.connect(self._show_tooltip)
-
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Enter:
             watched.setIconSize(RESET_ICON_HOVER_SIZE)
-            self.tooltip_timer.start()
         elif event.type() == QEvent.Type.Leave:
             watched.setIconSize(RESET_ICON_SIZE)
-            self.tooltip_timer.stop()
-            QToolTip.hideText()
         return super().eventFilter(watched, event)
-
-    def _show_tooltip(self):
-        if not self.button.isEnabled() or not self.button.underMouse():
-            return
-        position = self.button.mapToGlobal(
-            QPoint(self.button.width() // 2, self.button.height() + 3)
-        )
-        QToolTip.showText(position, self.button.toolTip(), self.button)
 
 
 class TaskFooterHoverFilter(QObject):

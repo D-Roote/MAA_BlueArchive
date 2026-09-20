@@ -711,7 +711,7 @@ class UILifecycleTests(unittest.TestCase):
             self.window.ui.taskListActionsStack.y(),
             separator.y() + separator.height(),
         )
-        self.assertEqual(reset.toolTip(), "초기화")
+        self.assertEqual(reset.toolTip(), "")
         self.assertFalse(reset.icon().isNull())
         self.assertEqual(reset.iconSize(), QSize(18, 18))
         QApplication.sendEvent(reset, QEvent(QEvent.Type.Enter))
@@ -919,16 +919,13 @@ class UILifecycleTests(unittest.TestCase):
         self.assertFalse(source.isHidden())
         self.window.hide()
 
-    def test_reset_tooltip_and_footer_hover_are_compact_and_fast(self):
+    def test_reset_and_footer_hover_keep_icon_scale_and_group_background(self):
         reset = self.window.task_reset_button
         footer = self.window.task_list_actions
-        hover_filter = reset._reset_icon_hover_filter
-        self.assertEqual(hover_filter.tooltip_timer.interval(), 200)
         QApplication.sendEvent(reset, QEvent(QEvent.Type.Enter))
         self.assertTrue(footer.property("groupHovered"))
         self.assertEqual(reset.iconSize(), QSize(22, 22))
         stylesheet = self.window.styleSheet()
-        self.assertIn("font-size: 7.5pt", stylesheet)
         self.assertIn('QWidget#taskListFooter[groupHovered="true"]', stylesheet)
 
     def test_long_task_picker_scrolls_and_supports_keyboard_selection(self):
