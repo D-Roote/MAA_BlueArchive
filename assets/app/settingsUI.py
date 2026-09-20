@@ -6,12 +6,15 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -19,6 +22,13 @@ from PySide6.QtWidgets import (
 )
 
 from app.runtime import WIN32_METHOD_DEFAULTS, WIN32_METHOD_PRIORITY
+from app.program import (
+    DEFAULT_PROGRAM_CONFIG,
+    find_auto_program_executable,
+    find_program_executable,
+    normalize_program_config,
+    resolve_manual_program_path,
+)
 
 
 DEFAULT_MAA_CONFIG = {
@@ -27,6 +37,7 @@ DEFAULT_MAA_CONFIG = {
         "allow_option_edits_while_running": False,
     },
     "controller": {},
+    "program": DEFAULT_PROGRAM_CONFIG,
     "appearance": {
         "theme": "light",
     },
@@ -79,6 +90,8 @@ class SettingsStore:
             if isinstance(raw_controller, dict):
                 config["controller"] = deepcopy(raw_controller)
 
+            config["program"] = normalize_program_config(raw_config.get("program"))
+
             raw_appearance = raw_config.get("appearance")
             if isinstance(raw_appearance, dict):
                 theme = raw_appearance.get("theme")
@@ -126,6 +139,7 @@ class SettingsPanel(QWidget):
     runtime_option_editing_changed = Signal(bool)
     theme_changed = Signal(str)
     controller_changed = Signal(object)
+    program_changed = Signal(object)
 
     def __init__(
         self,
@@ -185,7 +199,7 @@ class SettingsPanel(QWidget):
         self.navigation.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        for label in ("일반", "컨트롤러", "외관"):
+        for label in ("일반", "프로그램", "컨트롤러", "외관"):
             item = QListWidgetItem(label)
             self.navigation.addItem(item)
 
@@ -220,6 +234,45 @@ class SettingsPanel(QWidget):
             ),
             self.runtime_edit_checkbox,
         )
+
+        program, program_layout = self._create_section(
+            "프로그램", "자동 실행에 사용할 대상 프로그램을 확인하거나 직접 지정합니다."
+        )
+        self.program_auto_status = QLabel()
+        self.program_auto_status.setObjectName("programPathStatus")
+        self.program_auto_status.setWordWrap(True)
+        program_layout.addWidget(self.program_auto_status)
+        program_layout.addSpacing(8)
+
+        self.program_path_input = QLineEdit()
+        self.program_path_input.setObjectName("programPathInput")
+        self.program_path_input.setPlaceholderText(
+            "실행 파일 또는 실행 파일이 있는 폴더 경로"
+        )
+        self.program_path_input.setMinimumWidth(260)
+        self.program_browse_button = QPushButton("찾아보기")
+        self.program_browse_button.setObjectName("programBrowseButton")
+        self.program_apply_button = QPushButton("확인")
+        self.program_apply_button.setObjectName("programApplyButton")
+
+        program_path_controls = QWidget()
+        program_path_controls.setObjectName("programPathControls")
+        program_path_layout = QHBoxLayout(program_path_controls)
+        program_path_layout.setContentsMargins(0, 0, 0, 0)
+        program_path_layout.setSpacing(6)
+        program_path_layout.addWidget(self.program_path_input, 1)
+        program_path_layout.addWidget(self.program_browse_button)
+        program_path_layout.addWidget(self.program_apply_button)
+        self._add_setting_row(
+            program_layout,
+            "수동 경로",
+            "비워 두면 자동 검색 결과를 사용합니다. 폴더 또는 실행 파일을 지정할 수 있습니다.",
+            program_path_controls,
+        )
+        self.program_active_status = QLabel()
+        self.program_active_status.setObjectName("programPathStatus")
+        self.program_active_status.setWordWrap(True)
+        program_layout.addWidget(self.program_active_status)
 
         controller, controller_layout = self._create_section(
             "컨트롤러", "실행에 사용할 컨트롤러를 선택합니다."
@@ -330,6 +383,10 @@ class SettingsPanel(QWidget):
             general["allow_option_edits_while_running"]
         )
 
+        self._confirmed_manual_path = self.config["program"]["manual_path"]
+        self.program_path_input.setText(self._confirmed_manual_path)
+        self._refresh_program_status()
+
         theme = self.config["appearance"]["theme"]
         theme_index = self.theme_combo.findData(theme)
         self.theme_combo.setCurrentIndex(theme_index if theme_index >= 0 else 1)
@@ -373,6 +430,8 @@ class SettingsPanel(QWidget):
         )
         self.minimize_checkbox.toggled.connect(self._on_minimize_changed)
         self.runtime_edit_checkbox.toggled.connect(self._on_runtime_edit_changed)
+        self.program_browse_button.clicked.connect(self._browse_program_path)
+        self.program_apply_button.clicked.connect(self._apply_program_path)
         self.controller_combo.currentIndexChanged.connect(
             self._on_controller_changed
         )
@@ -416,6 +475,10 @@ class SettingsPanel(QWidget):
             "controller": SettingsStore.serialize_controller(
                 self.controller_combo.currentData()
             ),
+            "program": {
+                **normalize_program_config(self.config.get("program")),
+                "manual_path": self._confirmed_manual_path,
+            },
             "appearance": {
                 "theme": self.theme_combo.currentData() or "light",
             },
@@ -432,6 +495,66 @@ class SettingsPanel(QWidget):
     def _on_runtime_edit_changed(self, enabled):
         self._save()
         self.runtime_option_editing_changed.emit(enabled)
+
+    def _browse_program_path(self):
+        initial_path = self.program_path_input.text().strip()
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "프로그램 설치 폴더 선택",
+            initial_path if Path(initial_path).is_dir() else "",
+        )
+        if selected:
+            self.program_path_input.setText(selected)
+
+    def _apply_program_path(self):
+        manual_path = self.program_path_input.text().strip()
+        config = normalize_program_config(self.config.get("program"))
+        if manual_path and resolve_manual_program_path(
+            manual_path, config["executable_name"]
+        ) is None:
+            self.program_active_status.setProperty("pathValid", False)
+            self.program_active_status.setText(
+                f"{config['executable_name']} 파일을 확인할 수 없습니다."
+            )
+            self._refresh_status_style(self.program_active_status)
+            return
+
+        self._confirmed_manual_path = manual_path
+        self._save()
+        self._refresh_program_status()
+        self.program_changed.emit(self.program_settings())
+
+    @staticmethod
+    def _refresh_status_style(label):
+        label.style().unpolish(label)
+        label.style().polish(label)
+        label.update()
+
+    def _refresh_program_status(self):
+        config = {
+            **normalize_program_config(self.config.get("program")),
+            "manual_path": self._confirmed_manual_path,
+        }
+        auto_path = find_auto_program_executable(config)
+        if auto_path is None:
+            self.program_auto_status.setText("자동 검색: 설치 위치를 찾지 못했습니다.")
+            self.program_auto_status.setProperty("pathValid", False)
+        else:
+            self.program_auto_status.setText(f"자동 검색: {auto_path}")
+            self.program_auto_status.setProperty("pathValid", True)
+
+        active_path = find_program_executable(config)
+        if active_path is None:
+            self.program_active_status.setText(
+                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다."
+            )
+            self.program_active_status.setProperty("pathValid", False)
+        else:
+            source = "수동 경로" if self._confirmed_manual_path else "자동 경로"
+            self.program_active_status.setText(f"사용 경로 ({source}): {active_path}")
+            self.program_active_status.setProperty("pathValid", True)
+        self._refresh_status_style(self.program_auto_status)
+        self._refresh_status_style(self.program_active_status)
 
     def _on_controller_changed(self, _index):
         self._update_controller_details()
@@ -473,3 +596,12 @@ class SettingsPanel(QWidget):
         return SettingsStore.serialize_controller(
             self.controller_combo.currentData()
         )
+
+    def program_settings(self):
+        config = {
+            **normalize_program_config(self.config.get("program")),
+            "manual_path": self._confirmed_manual_path,
+        }
+        resolved_path = find_program_executable(config)
+        config["resolved_path"] = str(resolved_path) if resolved_path else ""
+        return config

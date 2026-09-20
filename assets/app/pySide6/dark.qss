@@ -239,6 +239,33 @@ QLabel#controllerDetails {
     border-color: #405474;
 }
 
+QLabel#programPathStatus {
+    background-color: #1E2D46;
+    color: #AEBFD2;
+    border-color: #405474;
+}
+
+QLabel#programPathStatus[pathValid="true"] {
+    border-color: #4FAF83;
+    color: #8ED9B6;
+}
+
+QLabel#programPathStatus[pathValid="false"] {
+    border-color: #D95F6A;
+    color: #F08A94;
+}
+
+QLineEdit#programPathInput {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+}
+
+QLineEdit#programPathInput:hover,
+QLineEdit#programPathInput:focus {
+    border-color: #2BB3E3;
+}
+
 QComboBox#settingsComboBox {
     background-color: #1E2D46;
     color: #E5EDF6;

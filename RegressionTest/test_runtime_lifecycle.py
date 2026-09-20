@@ -30,6 +30,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
 
+from app.program import (
+    DEFAULT_PROGRAM_CONFIG,
+    find_auto_program_executable,
+    find_program_executable,
+    normalize_program_config,
+    resolve_manual_program_path,
+)
 from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
 from app.settingsUI import SettingsStore
 from app.winUI import (
@@ -494,6 +501,7 @@ class SettingsStoreTests(unittest.TestCase):
             config["general"]["allow_option_edits_while_running"]
         )
         self.assertEqual(config["appearance"]["theme"], "light")
+        self.assertEqual(config["program"], DEFAULT_PROGRAM_CONFIG)
         self.assertEqual(config["controller"]["name"], controller["name"])
         self.assertNotIn("label", config["controller"])
         self.assertEqual(self.read_json(self.maa_config_path), config)
@@ -553,6 +561,81 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertTrue(config["general"]["allow_option_edits_while_running"])
         self.assertEqual(config["appearance"]["theme"], "dark")
         self.assertEqual(self.read_json(self.user_config_path), {"tasks": []})
+
+    def test_program_config_is_normalized_and_saved_at_top_level(self):
+        self.maa_config_path.parent.mkdir(parents=True)
+        self.maa_config_path.write_text(
+            json.dumps(
+                {
+                    "program": {
+                        "executable_name": "Example.exe",
+                        "manual_path": " C:/Games/Example ",
+                        "search_paths": ["Games/Example/Example.exe"],
+                        "startup_wait_seconds": 12.8,
+                        "recognition_timeout_seconds": 90,
+                        "poll_interval_seconds": 0.5,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = self.store.load(self.controller())
+
+        self.assertEqual(config["program"]["executable_name"], "Example.exe")
+        self.assertEqual(config["program"]["manual_path"], "C:/Games/Example")
+        self.assertEqual(config["program"]["startup_wait_seconds"], 12)
+        self.assertEqual(config["program"]["poll_interval_seconds"], 0.5)
+        self.assertEqual(self.read_json(self.maa_config_path)["program"], config["program"])
+
+
+class ProgramLocatorTests(unittest.TestCase):
+    def setUp(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.root = Path(temp_dir.name)
+
+    def test_auto_search_checks_each_configured_drive_relative_path(self):
+        executable = (
+            self.root
+            / "SteamLibrary"
+            / "steamapps"
+            / "common"
+            / "BlueArchive"
+            / "BlueArchive.exe"
+        )
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"")
+
+        detected = find_auto_program_executable(
+            DEFAULT_PROGRAM_CONFIG, drive_roots=[self.root]
+        )
+
+        self.assertEqual(detected, executable.resolve())
+
+    def test_manual_directory_has_priority_and_requires_target_executable(self):
+        manual_directory = self.root / "CustomBlueArchive"
+        manual_directory.mkdir()
+        executable = manual_directory / "BlueArchive.exe"
+        executable.write_bytes(b"")
+        config = normalize_program_config(
+            {"manual_path": str(manual_directory)}
+        )
+
+        self.assertEqual(
+            resolve_manual_program_path(
+                str(manual_directory), config["executable_name"]
+            ),
+            executable.resolve(),
+        )
+        self.assertEqual(
+            find_program_executable(config, drive_roots=[]), executable.resolve()
+        )
+        self.assertIsNone(
+            resolve_manual_program_path(
+                str(manual_directory / "Other.exe"), config["executable_name"]
+            )
+        )
 
 
 class UILifecycleTests(unittest.TestCase):
@@ -1133,10 +1216,10 @@ class UILifecycleTests(unittest.TestCase):
     def test_settings_tab_uses_navigation_and_single_scroll_area(self):
         panel = self.window.settings_panel
 
-        self.assertEqual(panel.navigation.count(), 3)
+        self.assertEqual(panel.navigation.count(), 4)
         self.assertEqual(
-            [panel.navigation.item(index).text() for index in range(3)],
-            ["일반", "컨트롤러", "외관"],
+            [panel.navigation.item(index).text() for index in range(4)],
+            ["일반", "프로그램", "컨트롤러", "외관"],
         )
         self.assertIs(panel.detail_scroll.widget(), panel.detail_contents)
         self.assertEqual(panel.layout().stretch(0), 2)
@@ -1150,6 +1233,7 @@ class UILifecycleTests(unittest.TestCase):
             for label in panel.findChildren(QLabel, "settingsRowTitle")
         }
         self.assertIn("작업 중 옵션 편집", row_titles)
+        self.assertIn("수동 경로", row_titles)
         self.assertNotIn("작업 중 세부 옵션 편집", row_titles)
 
         rows = panel.findChildren(QFrame, "settingsRow")
@@ -1191,6 +1275,27 @@ class UILifecycleTests(unittest.TestCase):
         panel.theme_combo.setCurrentIndex(panel.theme_combo.findData("light"))
         self.assertEqual(self.window._effective_theme, TitleBarTheme.LIGHT)
         self.assertNotIn("#111A2B", self.window.styleSheet())
+
+    def test_program_path_can_be_confirmed_from_custom_directory(self):
+        panel = self.window.settings_panel
+        install_directory = self.window.runtime.user_dir / "CustomGame"
+        install_directory.mkdir()
+        executable = install_directory / "BlueArchive.exe"
+        executable.write_bytes(b"")
+        changed = MagicMock()
+        panel.program_changed.connect(changed)
+
+        panel.program_path_input.setText(str(install_directory))
+        panel._apply_program_path()
+
+        settings = panel.program_settings()
+        self.assertEqual(settings["manual_path"], str(install_directory))
+        self.assertEqual(settings["resolved_path"], str(executable.resolve()))
+        self.assertTrue(panel.program_active_status.property("pathValid"))
+        changed.assert_called_once()
+        config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["program"]["manual_path"], str(install_directory))
 
     def test_minimize_setting_is_saved_only_to_maa_config(self):
         self.window.ui.minimizeEnableBtn.setChecked(True)
