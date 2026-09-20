@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QFrame,
@@ -820,6 +821,12 @@ class UILifecycleTests(unittest.TestCase):
             panel.controller_settings()["name"],
             "Win32PrintWindow",
         )
+        row_titles = {
+            label.text()
+            for label in panel.findChildren(QLabel, "settingsRowTitle")
+        }
+        self.assertIn("작업 중 옵션 편집", row_titles)
+        self.assertNotIn("작업 중 세부 옵션 편집", row_titles)
 
         rows = panel.findChildren(QFrame, "settingsRow")
         self.assertTrue(rows)
@@ -892,29 +899,60 @@ class UILifecycleTests(unittest.TestCase):
         )
         worker.start.assert_called_once()
 
-    def test_task_details_remain_viewable_while_option_values_are_locked(self):
+    def test_runtime_editing_policy_controls_all_execution_options(self):
         item = self.window.option_list_widget.item(0)
         task_widget = self.window.option_list_widget.itemWidget(item)
         queued_before_start = self.window.build_execution_queue()
 
         self.start_mock_run()
+        self.window.stop_worker = None
         self.assertFalse(task_widget.checkbox.isEnabled())
         self.assertTrue(task_widget.setting_btn.isEnabled())
+        self.assertEqual(
+            self.window.option_list_widget.dragDropMode(),
+            QAbstractItemView.DragDropMode.NoDragDrop,
+        )
+        self.assertFalse(self.window.ui.minimizeEnableBtn.isEnabled())
+        self.assertTrue(self.window.ui.workStartBtn.isEnabled())
 
         task_widget.setting_btn.click()
         self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
 
         self.window.settings_panel.runtime_edit_checkbox.setChecked(True)
+        self.assertTrue(task_widget.checkbox.isEnabled())
+        self.assertEqual(
+            self.window.option_list_widget.dragDropMode(),
+            QAbstractItemView.DragDropMode.InternalMove,
+        )
+        self.assertTrue(self.window.ui.minimizeEnableBtn.isEnabled())
         self.assertTrue(self.window.ui.scrollSettingContents.isEnabled())
+
+        task_widget.checkbox.setChecked(False)
+        self.assertTrue(self.window.ui.workStartBtn.isEnabled())
+        task_widget.checkbox.setChecked(True)
+        self.assertTrue(self.window.ui.workStartBtn.isEnabled())
+
         task_widget.selected_options["Test_Mode"] = ["B"]
         queued_after_change = self.window.build_execution_queue()
         self.assertEqual(queued_before_start[0][1]["Test_Node"]["next"], ["A"])
         self.assertEqual(queued_after_change[0][1]["Test_Node"]["next"], ["B"])
 
         self.window.settings_panel.runtime_edit_checkbox.setChecked(False)
+        self.assertFalse(task_widget.checkbox.isEnabled())
+        self.assertEqual(
+            self.window.option_list_widget.dragDropMode(),
+            QAbstractItemView.DragDropMode.NoDragDrop,
+        )
+        self.assertFalse(self.window.ui.minimizeEnableBtn.isEnabled())
         self.assertFalse(self.window.ui.scrollSettingContents.isEnabled())
         self.window.on_task_finished()
-        self.window.on_stop_worker_finished()
+        self.assertTrue(task_widget.checkbox.isEnabled())
+        self.assertEqual(
+            self.window.option_list_widget.dragDropMode(),
+            QAbstractItemView.DragDropMode.InternalMove,
+        )
+        self.assertTrue(self.window.ui.minimizeEnableBtn.isEnabled())
+        self.assertTrue(self.window.ui.scrollSettingContents.isEnabled())
 
     def test_input_option_renders_and_builds_typed_pipeline_override(self):
         item = self.window.option_list_widget.item(0)

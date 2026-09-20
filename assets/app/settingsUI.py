@@ -213,8 +213,11 @@ class SettingsPanel(QWidget):
         self.runtime_edit_checkbox = QCheckBox("허용")
         self._add_setting_row(
             general_layout,
-            "작업 중 세부 옵션 편집",
-            "실행 중 변경한 작업 옵션은 다음 실행부터 적용됩니다.",
+            "작업 중 옵션 편집",
+            (
+                "실행 중에도 작업 활성화, 순서, 세부 옵션 등 모든 실행 옵션을 "
+                "편집합니다. 변경 사항은 다음 실행부터 적용됩니다."
+            ),
             self.runtime_edit_checkbox,
         )
 

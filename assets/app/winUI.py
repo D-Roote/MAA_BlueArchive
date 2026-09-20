@@ -1143,7 +1143,12 @@ class MainWindow(QMainWindow):
         self.on_user_config_changed()
 
     def check_start_button_state(self):
-        if self.isRunning or self.stop_worker is not None or self._close_pending:
+        if self.isRunning:
+            self.ui.workStartBtn.setEnabled(
+                self.stop_worker is None and not self._close_pending
+            )
+            return
+        if self.stop_worker is not None or self._close_pending:
             self.ui.workStartBtn.setEnabled(False)
             return
         any_checked = False
@@ -1166,29 +1171,32 @@ class MainWindow(QMainWindow):
 
     def set_options_locked(self, locked: bool):
         self._options_locked = locked
-        for i in range(self.option_list_widget.count()):
-            item = self.option_list_widget.item(i)
-            widget = self.option_list_widget.itemWidget(item)
-            if widget:
-                widget.set_locked(locked)
+        self._apply_option_editing_policy()
 
-        self.option_list_widget.set_locked(locked)
+    def _apply_option_editing_policy(self):
+        controls_locked = (
+            self._options_locked and not self._allow_option_edits_while_running
+        )
+
+        if hasattr(self, "option_list_widget"):
+            for i in range(self.option_list_widget.count()):
+                item = self.option_list_widget.item(i)
+                widget = self.option_list_widget.itemWidget(item)
+                if widget:
+                    widget.set_locked(controls_locked)
+
+            self.option_list_widget.set_locked(controls_locked)
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
-            self.ui.minimizeEnableBtn.setEnabled(not locked)
+            self.ui.minimizeEnableBtn.setEnabled(not controls_locked)
 
         if hasattr(self.ui, 'scrollSettingContents'):
-            self.ui.scrollSettingContents.setEnabled(
-                not locked or self._allow_option_edits_while_running
-            )
+            self.ui.scrollSettingContents.setEnabled(not controls_locked)
 
     def set_runtime_option_editing_enabled(self, enabled: bool):
-        """실행 중 세부 옵션 편집 정책을 설정한다. 추후 설정 탭에서 호출할 진입점이다."""
+        """실행 중 전체 옵션 편집 정책을 즉시 적용한다."""
         self._allow_option_edits_while_running = bool(enabled)
-        if hasattr(self.ui, 'scrollSettingContents'):
-            self.ui.scrollSettingContents.setEnabled(
-                not self._options_locked or self._allow_option_edits_while_running
-            )
+        self._apply_option_editing_policy()
 
     def build_execution_queue(self):
         execution_queue = []
