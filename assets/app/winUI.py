@@ -10,9 +10,9 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QObject, QPoint, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
-                           QColor, QCursor, QIcon, QPainter, QPen)
+                           QColor, QCursor, QDrag, QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
@@ -484,7 +484,9 @@ class OptionItemWidget(QWidget):
                 self.selected_options[opt_name] = []
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 5, 2)
+        # 설정 아이콘은 30px 버튼 안에서 20px로 중앙 정렬되므로 우측 여백을
+        # 0으로 두어 체크박스의 좌측 5px 라인과 시각적 끝을 맞춘다.
+        layout.setContentsMargins(5, 2, 0, 2)
         layout.setSpacing(8)
 
         self.checkbox = QCheckBox("")
@@ -553,6 +555,8 @@ class OptionItemWidget(QWidget):
 
 # 커스텀 리스트 위젯
 class DragDropListWidget(QListWidget):
+    TASK_DRAG_MIME = "application/x-maaba-task-item"
+    DRAG_LINE_MARGIN = 5
     drag_started = Signal()
     drag_finished = Signal(object, object)
 
@@ -562,6 +566,8 @@ class DragDropListWidget(QListWidget):
         self.drag_line_y = -1
         self.on_order_changed_callback = None
         self._locked = False
+        self._dragged_item = None
+        self._drop_before_item = None
 
     def set_locked(self, locked: bool):
         self._locked = locked
@@ -573,44 +579,163 @@ class DragDropListWidget(QListWidget):
         dragged_item = self.currentItem()
         if dragged_item is None:
             return
+
+        indexes = self.selectedIndexes()
+        mime_data = self.model().mimeData(indexes) if indexes else QMimeData()
+        mime_data.setData(self.TASK_DRAG_MIME, b"1")
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        preview = self._create_drag_preview(dragged_item)
+        drag.setPixmap(preview)
+        cursor_position = self.viewport().mapFromGlobal(QCursor.pos())
+        hotspot_x = max(
+            8,
+            min(
+                preview.width() - 8,
+                round(cursor_position.x() * preview.width() / max(1, self.viewport().width())),
+            ),
+        )
+        drag.setHotSpot(QPoint(hotspot_x, preview.height() // 2))
+
+        self._dragged_item = dragged_item
+        self._drop_before_item = None
+        dragged_item.setHidden(True)
+        self.viewport().update()
         self.drag_started.emit()
         try:
-            super().startDrag(supported_actions)
+            drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
         finally:
+            if self.row(dragged_item) >= 0:
+                dragged_item.setHidden(False)
             self.drag_line_y = -1
+            self._dragged_item = None
+            self._drop_before_item = None
             self.viewport().update()
             self.drag_finished.emit(dragged_item, QCursor.pos())
 
+    def _create_drag_preview(self, item):
+        item_widget = self.itemWidget(item)
+        label = getattr(item_widget, "label", None)
+        text = label.text() if label is not None else item.text()
+        width = max(140, round(self.viewport().width() * 0.86))
+        height = max(24, item.sizeHint().height() - 6)
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        background = self.palette().base().color()
+        background.setAlpha(205)
+        border = QColor("#00AEEF")
+        border.setAlpha(220)
+        foreground = self.palette().text().color()
+        foreground.setAlpha(235)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(background)
+        painter.setPen(QPen(border, 1))
+        painter.drawRoundedRect(pixmap.rect().adjusted(1, 1, -1, -1), 5, 5)
+        painter.setPen(foreground)
+        painter.setFont(label.font() if label is not None else self.font())
+        text_rect = pixmap.rect().adjusted(12, 0, -12, 0)
+        elided_text = painter.fontMetrics().elidedText(
+            text,
+            Qt.TextElideMode.ElideRight,
+            text_rect.width(),
+        )
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            elided_text,
+        )
+        painter.end()
+        return pixmap
+
+    def dragEnterEvent(self, event):
+        super().dragEnterEvent(event)
+        if self._is_internal_task_drag(event):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+
     def dragMoveEvent(self, event):
         super().dragMoveEvent(event)
-        if event.isAccepted():
-            pos = event.position().toPoint()
-            item = self.itemAt(pos)
-            if item:
-                rect = self.visualItemRect(item)
-                if pos.y() < rect.y() + rect.height() / 2:
-                    self.drag_line_y = rect.y()
-                else:
-                    self.drag_line_y = rect.y() + rect.height()
-            else:
-                if self.count() > 0:
-                    last_rect = self.visualItemRect(self.item(self.count() - 1))
-                    self.drag_line_y = last_rect.y() + last_rect.height()
-                else:
-                    self.drag_line_y = 0
+        if self._is_internal_task_drag(event):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+            self._update_drop_target(event.position().toPoint())
             self.viewport().update()
-        else:
-            self.drag_line_y = -1
-            self.viewport().update()
+            return
+
+        if not event.isAccepted():
+            self._clear_drop_indicator()
+
+    def _is_internal_task_drag(self, event):
+        return (
+            event.source() is self
+            and event.mimeData().hasFormat(self.TASK_DRAG_MIME)
+        )
+
+    def _visible_items(self):
+        return [
+            self.item(row)
+            for row in range(self.count())
+            if self.item(row) is not self._dragged_item
+            and not self.item(row).isHidden()
+        ]
+
+    def _update_drop_target(self, position):
+        visible_items = self._visible_items()
+        if not visible_items:
+            self._drop_before_item = None
+            self.drag_line_y = 0
+            return
+
+        first_item = visible_items[0]
+        first_rect = self.visualItemRect(first_item)
+        if position.y() <= first_rect.center().y():
+            self._drop_before_item = first_item
+            self.drag_line_y = first_rect.top()
+            return
+
+        for index, item in enumerate(visible_items):
+            rect = self.visualItemRect(item)
+            if position.y() <= rect.bottom():
+                if position.y() < rect.center().y():
+                    self._drop_before_item = item
+                    self.drag_line_y = rect.top()
+                else:
+                    self._drop_before_item = (
+                        visible_items[index + 1]
+                        if index + 1 < len(visible_items)
+                        else None
+                    )
+                    self.drag_line_y = rect.bottom() + 1
+                return
+
+        last_rect = self.visualItemRect(visible_items[-1])
+        self._drop_before_item = None
+        self.drag_line_y = last_rect.bottom() + 1
+
+    def _clear_drop_indicator(self):
+        self.drag_line_y = -1
+        self._drop_before_item = None
+        self.viewport().update()
 
     def dragLeaveEvent(self, event):
-        self.drag_line_y = -1
-        self.viewport().update()
+        self._clear_drop_indicator()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
-        self.drag_line_y = -1
-        self.viewport().update()
+        if self._is_internal_task_drag(event):
+            self._update_drop_target(event.position().toPoint())
+            moved = self._move_dragged_item(self._drop_before_item)
+            self._clear_drop_indicator()
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+            if moved and self.on_order_changed_callback:
+                self.on_order_changed_callback()
+            return
+
+        self._clear_drop_indicator()
 
         widget_by_id = {}
         for i in range(self.count()):
@@ -633,6 +758,31 @@ class DragDropListWidget(QListWidget):
         if self.on_order_changed_callback:
             self.on_order_changed_callback()
 
+    def _move_dragged_item(self, before_item):
+        dragged_item = self._dragged_item
+        if dragged_item is None:
+            return False
+        source_row = self.row(dragged_item)
+        if source_row < 0:
+            return False
+
+        destination_child = self.count() if before_item is None else self.row(before_item)
+        if destination_child < 0:
+            destination_child = self.count()
+        if destination_child in (source_row, source_row + 1):
+            return False
+
+        # index widget의 소유권은 Qt가 관리하므로 분리/재연결하지 않고 행 자체를 옮긴다.
+        moved = self.model().moveRow(
+            QModelIndex(),
+            source_row,
+            QModelIndex(),
+            destination_child,
+        )
+        if moved:
+            self.setCurrentItem(dragged_item)
+        return moved
+
     def paintEvent(self, event):
         super().paintEvent(event)
         
@@ -640,12 +790,24 @@ class DragDropListWidget(QListWidget):
             painter = QPainter(self.viewport())
             painter.setRenderHint(QPainter.Antialiasing)
             
-            # 사이 가로줄 색, 두께 하드 코딩
             pen = QPen(QColor("#00AEEF"), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
-            
-            painter.drawLine(0, self.drag_line_y, self.viewport().width(), self.drag_line_y)
+
+            # 2px 선의 중심이 경계 밖으로 나가지 않게 해 최상단에서도 두께를 보존한다.
+            line_y = self._bounded_drag_line_y()
+            line_start, line_end = self._drag_line_span()
+            painter.drawLine(line_start, line_y, line_end, line_y)
             painter.end()
+
+    def _bounded_drag_line_y(self):
+        return max(1, min(self.viewport().height() - 2, self.drag_line_y))
+
+    def _drag_line_span(self):
+        return (
+            self.DRAG_LINE_MARGIN,
+            max(self.DRAG_LINE_MARGIN, self.viewport().width() - self.DRAG_LINE_MARGIN),
+        )
 
 # 메인 윈도우
 class MainWindow(QMainWindow):

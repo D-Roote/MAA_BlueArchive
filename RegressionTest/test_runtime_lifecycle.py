@@ -838,6 +838,87 @@ class UILifecycleTests(unittest.TestCase):
             self.window.task_list_actions,
         )
 
+    def test_drag_preview_hides_source_and_uses_text_only_compact_pixmap(self):
+        task_list = self.window.option_list_widget
+        self.window.show()
+        self.app.processEvents()
+        item = task_list.item(0)
+        task_list.setCurrentItem(item)
+        drag = MagicMock()
+
+        def inspect_drag_state(*_args):
+            self.assertTrue(item.isHidden())
+            self.assertTrue(self.window.ui.taskListSeparator.isHidden())
+            self.assertIs(
+                self.window.task_list_actions_stack.currentWidget(),
+                self.window.task_delete_page,
+            )
+            return Qt.DropAction.IgnoreAction
+
+        drag.exec.side_effect = inspect_drag_state
+        cursor_position = task_list.viewport().mapToGlobal(QPoint(20, 20))
+        with patch("app.winUI.QDrag", return_value=drag), patch(
+            "app.winUI.QCursor.pos", return_value=cursor_position
+        ):
+            task_list.startDrag(Qt.DropAction.MoveAction)
+
+        preview = drag.setPixmap.call_args.args[0]
+        self.assertLess(preview.width(), task_list.viewport().width())
+        self.assertLess(preview.height(), item.sizeHint().height())
+        preview_alpha = preview.toImage().pixelColor(2, 2).alpha()
+        self.assertGreater(preview_alpha, 0)
+        self.assertLess(preview_alpha, 255)
+        self.assertFalse(item.isHidden())
+        self.assertFalse(self.window.ui.taskListSeparator.isHidden())
+        self.assertIs(
+            self.window.task_list_actions_stack.currentWidget(),
+            self.window.task_list_actions,
+        )
+        self.window.hide()
+
+    def test_custom_drag_reorders_item_widget_and_top_line_keeps_full_width(self):
+        task_list = self.window.option_list_widget
+        task_data = self.window.runtime.interface["task"][0]
+        self.window.add_task(task_data)
+        self.window.add_task(task_data)
+        self.window.show()
+        self.app.processEvents()
+        source = task_list.item(2)
+        source_widget = task_list.itemWidget(source)
+        first = task_list.item(0)
+        task_list._dragged_item = source
+        source.setHidden(True)
+
+        first_rect = task_list.visualItemRect(first)
+        task_list._update_drop_target(first_rect.topLeft())
+        self.assertIs(task_list._drop_before_item, first)
+        self.assertGreaterEqual(task_list._bounded_drag_line_y(), 1)
+        line_start, line_end = task_list._drag_line_span()
+        self.assertEqual(task_list.DRAG_LINE_MARGIN, 5)
+        self.assertEqual(line_start, task_list.DRAG_LINE_MARGIN)
+        self.assertEqual(line_end, task_list.viewport().width() - task_list.DRAG_LINE_MARGIN)
+        first_widget = task_list.itemWidget(first)
+        checkbox_left = first_widget.checkbox.mapTo(task_list.viewport(), QPoint(0, 0)).x()
+        settings_icon_right = (
+            first_widget.setting_btn.mapTo(task_list.viewport(), QPoint(0, 0)).x()
+            + (first_widget.setting_btn.width() + first_widget.setting_btn.iconSize().width()) // 2
+        )
+        self.assertEqual(line_start, checkbox_left)
+        self.assertEqual(line_end, settings_icon_right)
+        with patch.object(task_list, "removeItemWidget", wraps=task_list.removeItemWidget) as remove:
+            self.assertTrue(task_list._move_dragged_item(first))
+        remove.assert_not_called()
+        self.app.processEvents()
+        self.assertIs(task_list.item(0), source)
+        self.assertIs(task_list.itemWidget(source), source_widget)
+        self.assertTrue(task_list._move_dragged_item(None))
+        self.app.processEvents()
+        self.assertIs(task_list.item(2), source)
+        self.assertIs(task_list.itemWidget(source), source_widget)
+        source.setHidden(False)
+        self.assertFalse(source.isHidden())
+        self.window.hide()
+
     def test_reset_tooltip_and_footer_hover_are_compact_and_fast(self):
         reset = self.window.task_reset_button
         footer = self.window.task_list_actions
