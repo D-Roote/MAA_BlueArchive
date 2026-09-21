@@ -442,21 +442,22 @@ class SettingsPanel(QWidget):
         if self._syncing_navigation or not 0 <= row < len(self._sections):
             return
         section = self._sections[row]
-        self.detail_scroll.verticalScrollBar().setValue(section.y())
+        # Keep an explicit selection even when scrolling to it is clamped.
+        self._syncing_navigation = True
+        try:
+            self.detail_scroll.verticalScrollBar().setValue(section.y())
+        finally:
+            self._syncing_navigation = False
 
     def _sync_navigation_to_scroll(self, value):
-        if not self._sections:
+        if self._syncing_navigation or not self._sections:
             return
-        scrollbar = self.detail_scroll.verticalScrollBar()
-        if value >= scrollbar.maximum() - 2:
-            active_row = len(self._sections) - 1
-        else:
-            active_row = 0
-            for index, section in enumerate(self._sections):
-                if section.y() <= value + 24:
-                    active_row = index
-                else:
-                    break
+        # A partially visible card is still the topmost visible section.
+        active_row = len(self._sections) - 1
+        for index, section in enumerate(self._sections):
+            if section.y() + section.height() > value:
+                active_row = index
+                break
 
         if self.navigation.currentRow() == active_row:
             return

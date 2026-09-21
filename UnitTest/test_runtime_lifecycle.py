@@ -1857,6 +1857,43 @@ class UILifecycleTests(unittest.TestCase):
             finally:
                 os.chdir(original_directory)
 
+    def test_settings_scroll_highlights_topmost_visible_card(self):
+        panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
+        first, second = panel._sections[:2]
+        for value, expected in (
+            (0, 0),
+            (first.y() + first.height() - 1, 0),
+            (first.y() + first.height(), 1),
+            (second.y(), 1),
+        ):
+            with self.subTest(value=value):
+                panel._sync_navigation_to_scroll(value)
+                self.assertEqual(panel.navigation.currentRow(), expected)
+
+        scrollbar = panel.detail_scroll.verticalScrollBar()
+        panel._sync_navigation_to_scroll(scrollbar.maximum())
+        expected = next(
+            i for i, section in enumerate(panel._sections)
+            if section.y() + section.height() > scrollbar.maximum()
+        )
+        self.assertEqual(panel.navigation.currentRow(), expected)
+
+    def test_settings_explicit_selection_survives_clamped_scroll(self):
+        panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
+        panel.navigation.setCurrentRow(3)
+        self.assertEqual(panel.navigation.currentRow(), 3)
+        scrollbar = panel.detail_scroll.verticalScrollBar()
+        self.assertEqual(scrollbar.value(), scrollbar.maximum())
+        self.assertGreater(scrollbar.maximum(), 0)
+        scrollbar.setValue(0)
+        self.assertEqual(panel.navigation.currentRow(), 0)
+
     def test_settings_tab_uses_navigation_and_single_scroll_area(self):
         panel = self.window.settings_panel
 
