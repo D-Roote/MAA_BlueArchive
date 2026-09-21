@@ -34,6 +34,7 @@ from app.pg_init import (
 DEFAULT_MAA_CONFIG = {
     "general": {
         "minimize_enabled": False,
+        "program_launch_task_enabled": True,
         "allow_option_edits_while_running": False,
         "clear_log_on_start": True,
     },
@@ -82,11 +83,20 @@ class SettingsStore:
             if isinstance(raw_general, dict):
                 for key in (
                     "minimize_enabled",
+                    "program_launch_task_enabled",
                     "allow_option_edits_while_running",
                     "clear_log_on_start",
                 ):
                     if isinstance(raw_general.get(key), bool):
                         config["general"][key] = raw_general[key]
+                # 직전 개발 버전에서 저장한 부정형 설정을 긍정형으로 이관한다.
+                if (
+                    not isinstance(raw_general.get("program_launch_task_enabled"), bool)
+                    and isinstance(raw_general.get("remove_program_launch_task"), bool)
+                ):
+                    config["general"]["program_launch_task_enabled"] = not raw_general[
+                        "remove_program_launch_task"
+                    ]
 
             raw_controller = raw_config.get("controller")
             if isinstance(raw_controller, dict):
@@ -138,6 +148,7 @@ class SettingsStore:
 
 class SettingsPanel(QWidget):
     minimize_changed = Signal(bool)
+    program_launch_task_enabled_changed = Signal(bool)
     runtime_option_editing_changed = Signal(bool)
     theme_changed = Signal(str)
     controller_changed = Signal(object)
@@ -225,6 +236,13 @@ class SettingsPanel(QWidget):
             "실행 시 최소화",
             "작업을 시작할 때 대상 프로그램 창을 최소화합니다.",
             self.minimize_checkbox,
+        )
+        self.program_launch_checkbox = QCheckBox("사용")
+        self._add_setting_row(
+            general_layout,
+            "자동 실행 작업",
+            "활성화하면 자동 실행 작업을 목록 최상단에 추가합니다.",
+            self.program_launch_checkbox,
         )
         self.runtime_edit_checkbox = QCheckBox("허용")
         self._add_setting_row(
@@ -396,6 +414,9 @@ class SettingsPanel(QWidget):
     def _apply_config(self):
         general = self.config["general"]
         self.minimize_checkbox.setChecked(general["minimize_enabled"])
+        self.program_launch_checkbox.setChecked(
+            general["program_launch_task_enabled"]
+        )
         self.runtime_edit_checkbox.setChecked(
             general["allow_option_edits_while_running"]
         )
@@ -447,6 +468,9 @@ class SettingsPanel(QWidget):
             self._sync_navigation_to_scroll
         )
         self.minimize_checkbox.toggled.connect(self._on_minimize_changed)
+        self.program_launch_checkbox.toggled.connect(
+            self._on_program_launch_enabled_changed
+        )
         self.runtime_edit_checkbox.toggled.connect(self._on_runtime_edit_changed)
         self.clear_log_checkbox.toggled.connect(self._on_clear_log_changed)
         self.program_browse_button.clicked.connect(self._browse_program_path)
@@ -488,6 +512,9 @@ class SettingsPanel(QWidget):
         return {
             "general": {
                 "minimize_enabled": self.minimize_checkbox.isChecked(),
+                "program_launch_task_enabled": (
+                    self.program_launch_checkbox.isChecked()
+                ),
                 "allow_option_edits_while_running": (
                     self.runtime_edit_checkbox.isChecked()
                 ),
@@ -512,6 +539,10 @@ class SettingsPanel(QWidget):
     def _on_minimize_changed(self, enabled):
         self._save()
         self.minimize_changed.emit(enabled)
+
+    def _on_program_launch_enabled_changed(self, enabled):
+        self._save()
+        self.program_launch_task_enabled_changed.emit(enabled)
 
     def _on_runtime_edit_changed(self, enabled):
         self._save()
@@ -609,6 +640,9 @@ class SettingsPanel(QWidget):
 
     def set_minimize_enabled(self, enabled):
         self.minimize_checkbox.setChecked(bool(enabled))
+
+    def program_launch_task_enabled(self):
+        return self.program_launch_checkbox.isChecked()
 
     def runtime_option_editing_enabled(self):
         return self.runtime_edit_checkbox.isChecked()

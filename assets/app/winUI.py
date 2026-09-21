@@ -933,6 +933,9 @@ class MainWindow(QMainWindow):
         self.settings_panel.minimize_changed.connect(
             self.sync_main_minimize_setting
         )
+        self.settings_panel.program_launch_task_enabled_changed.connect(
+            self.set_program_launch_task_enabled
+        )
         self.settings_panel.runtime_option_editing_changed.connect(
             self.set_runtime_option_editing_enabled
         )
@@ -1244,14 +1247,16 @@ class MainWindow(QMainWindow):
             ),
             None,
         )
-        self.add_task_widget(
-            PROGRAM_LAUNCH_TASK,
-            (
-                saved_program_task.get("checked", True)
-                if saved_program_task is not None
-                else PROGRAM_LAUNCH_TASK["default_check"]
-            ),
+        self._program_launch_checked_before_disable = (
+            saved_program_task.get("checked", True)
+            if saved_program_task is not None
+            else PROGRAM_LAUNCH_TASK["default_check"]
         )
+        if self.settings_panel.program_launch_task_enabled():
+            self.add_task_widget(
+                PROGRAM_LAUNCH_TASK,
+                self._program_launch_checked_before_disable,
+            )
 
         for saved_task in saved_tasks:
             if not isinstance(saved_task, dict):
@@ -1343,9 +1348,42 @@ class MainWindow(QMainWindow):
         self.task_picker.show_above(
             self.task_list_actions,
             self.option_list_widget,
-            [PROGRAM_LAUNCH_TASK, *self.runtime.interface.get("task", [])],
+            self.runtime.interface.get("task", []),
             self.ui.taskListContainer,
         )
+
+    def set_program_launch_task_enabled(self, enabled):
+        launch_item = None
+        for row in range(self.option_list_widget.count()):
+            item = self.option_list_widget.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == PROGRAM_LAUNCH_TASK_NAME:
+                launch_item = item
+                break
+
+        if not enabled and launch_item is not None:
+            widget = self.option_list_widget.itemWidget(launch_item)
+            if widget is not None:
+                self._program_launch_checked_before_disable = widget.is_checked()
+                widget.hide()
+                widget.deleteLater()
+            row = self.option_list_widget.row(launch_item)
+            removed_item = self.option_list_widget.takeItem(row)
+            del removed_item
+        elif enabled and launch_item is None:
+            self.add_task_widget(
+                PROGRAM_LAUNCH_TASK,
+                getattr(
+                    self,
+                    "_program_launch_checked_before_disable",
+                    PROGRAM_LAUNCH_TASK["default_check"],
+                ),
+            )
+            self.option_list_widget.scrollToTop()
+            self._apply_option_editing_policy()
+
+        self.clear_sub_cases()
+        self.check_start_button_state()
+        self.save_user_config()
 
     def on_task_drag_started(self):
         self.task_picker.hide()
@@ -1402,9 +1440,10 @@ class MainWindow(QMainWindow):
         # 삭제되는 항목을 참조하는 세부 옵션 컨트롤도 함께 비운다.
         self.clear_sub_cases()
         self.option_list_widget.clear()
-        self.add_task_widget(
-            PROGRAM_LAUNCH_TASK, PROGRAM_LAUNCH_TASK["default_check"]
-        )
+        if self.settings_panel.program_launch_task_enabled():
+            self.add_task_widget(
+                PROGRAM_LAUNCH_TASK, PROGRAM_LAUNCH_TASK["default_check"]
+            )
         for task in self.runtime.interface.get("task", []):
             self.add_task_widget(task, task.get("default_check", False))
         self._apply_option_editing_policy()

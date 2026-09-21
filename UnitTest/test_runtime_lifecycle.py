@@ -1099,6 +1099,7 @@ class SettingsStoreTests(unittest.TestCase):
         config = self.store.load(controller)
 
         self.assertFalse(config["general"]["minimize_enabled"])
+        self.assertTrue(config["general"]["program_launch_task_enabled"])
         self.assertFalse(
             config["general"]["allow_option_edits_while_running"]
         )
@@ -1139,6 +1140,19 @@ class SettingsStoreTests(unittest.TestCase):
             {"tasks": tasks, "task_schema_version": 2},
         )
 
+    def test_negative_program_launch_setting_is_migrated_to_enabled_setting(self):
+        self.maa_config_path.parent.mkdir(parents=True)
+        self.maa_config_path.write_text(
+            json.dumps({"general": {"remove_program_launch_task": True}}),
+            encoding="utf-8",
+        )
+
+        config = self.store.load(self.controller())
+
+        self.assertFalse(config["general"]["program_launch_task_enabled"])
+        saved_general = self.read_json(self.maa_config_path)["general"]
+        self.assertNotIn("remove_program_launch_task", saved_general)
+
     def test_existing_maa_config_wins_during_minimize_migration(self):
         self.maa_config_path.parent.mkdir(parents=True)
         self.maa_config_path.write_text(
@@ -1146,6 +1160,7 @@ class SettingsStoreTests(unittest.TestCase):
                 {
                     "general": {
                         "minimize_enabled": False,
+                        "program_launch_task_enabled": False,
                         "allow_option_edits_while_running": True,
                         "clear_log_on_start": False,
                     },
@@ -1162,6 +1177,7 @@ class SettingsStoreTests(unittest.TestCase):
         config = self.store.load(self.controller())
 
         self.assertFalse(config["general"]["minimize_enabled"])
+        self.assertFalse(config["general"]["program_launch_task_enabled"])
         self.assertTrue(config["general"]["allow_option_edits_while_running"])
         self.assertFalse(config["general"]["clear_log_on_start"])
         self.assertEqual(config["appearance"]["theme"], "dark")
@@ -1449,8 +1465,8 @@ class UILifecycleTests(unittest.TestCase):
         self.assertLess(popup.height(), task_list.height())
         self.assertEqual(popup.y() + popup.height(), actions.mapToGlobal(QPoint(0, 0)).y())
         self.assertTrue(popup.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
-        self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]) + 1)
-        self.assertEqual(popup.item(0).data(Qt.UserRole)["name"], PROGRAM_LAUNCH_TASK_NAME)
+        self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]))
+        self.assertEqual(popup.item(0).data(Qt.UserRole)["name"], "Test")
         self.assertEqual(popup.item(0).toolTip(), "")
         self.assertEqual(popup._dismiss_timer.interval(), 80)
         popup_position = popup.mapToGlobal(popup.rect().center())
@@ -1467,13 +1483,13 @@ class UILifecycleTests(unittest.TestCase):
             pos=popup.visualItemRect(popup.item(0)).center(),
         )
         self.assertFalse(popup.isVisible())
-        self.assertEqual(task_list.count(), 2)
-        self.assertEqual(task_list.item(1).data(Qt.UserRole), "Test")
+        self.assertEqual(task_list.count(), 3)
+        self.assertEqual(task_list.item(2).data(Qt.UserRole), "Test")
 
         add.click()
         QTest.keyClick(popup, Qt.Key.Key_Escape)
         self.assertFalse(popup.isVisible())
-        self.assertEqual(task_list.count(), 2)
+        self.assertEqual(task_list.count(), 3)
         self.window.hide()
 
     def test_duplicate_tasks_keep_independent_options_on_reload_and_execution(self):
@@ -1678,6 +1694,59 @@ class UILifecycleTests(unittest.TestCase):
         task_list._dragged_item = launch_item
         self.assertFalse(task_list._move_dragged_item(None))
 
+    def test_program_launch_setting_disables_and_restores_task(self):
+        panel = self.window.settings_panel
+        task_list = self.window.option_list_widget
+        self.assertTrue(panel.program_launch_checkbox.isChecked())
+        launch_widget = self.find_task_widget(self.window, PROGRAM_LAUNCH_TASK_NAME)
+        launch_widget.checkbox.setChecked(False)
+
+        panel.program_launch_checkbox.setChecked(False)
+        self.assertEqual(
+            [task_list.item(row).data(Qt.ItemDataRole.UserRole)
+             for row in range(task_list.count())],
+            ["Test"],
+        )
+        config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertFalse(config["general"]["program_launch_task_enabled"])
+        self.window.task_reset_button.click()
+        self.assertNotIn(
+            PROGRAM_LAUNCH_TASK_NAME,
+            [
+                task_list.item(row).data(Qt.ItemDataRole.UserRole)
+                for row in range(task_list.count())
+            ],
+        )
+
+        with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+            restored = MainWindow()
+        self.addCleanup(restored.deleteLater)
+        restored_names = [
+            restored.option_list_widget.item(row).data(Qt.ItemDataRole.UserRole)
+            for row in range(restored.option_list_widget.count())
+        ]
+        self.assertNotIn(PROGRAM_LAUNCH_TASK_NAME, restored_names)
+
+        panel.program_launch_checkbox.setChecked(True)
+        self.assertEqual(
+            task_list.item(0).data(Qt.ItemDataRole.UserRole),
+            PROGRAM_LAUNCH_TASK_NAME,
+        )
+        self.assertFalse(
+            self.find_task_widget(
+                self.window, PROGRAM_LAUNCH_TASK_NAME
+            ).checkbox.isChecked()
+        )
+        self.assertEqual(
+            sum(
+                task_list.item(row).data(Qt.ItemDataRole.UserRole)
+                == PROGRAM_LAUNCH_TASK_NAME
+                for row in range(task_list.count())
+            ),
+            1,
+        )
+
     def test_reset_and_footer_hover_keep_icon_scale_and_group_background(self):
         reset = self.window.task_reset_button
         footer = self.window.task_list_actions
@@ -1697,7 +1766,7 @@ class UILifecycleTests(unittest.TestCase):
         self.window.task_add_button.click()
         self.app.processEvents()
         popup = self.window.task_picker
-        self.assertEqual(popup.count(), 41)
+        self.assertEqual(popup.count(), 40)
         self.assertEqual(popup.width(), self.window.ui.taskListContainer.width())
         self.assertEqual(
             popup.sizeHintForRow(0),
@@ -1955,9 +2024,23 @@ class UILifecycleTests(unittest.TestCase):
             for label in panel.findChildren(QLabel, "settingsRowTitle")
         }
         self.assertIn("작업 중 옵션 편집", row_titles)
+        self.assertIn("자동 실행 작업", row_titles)
         self.assertIn("작업 시작 시 로그 초기화", row_titles)
         self.assertIn("수동 경로", row_titles)
         self.assertNotIn("작업 중 세부 옵션 편집", row_titles)
+        general_titles = [
+            label.text()
+            for label in panel._sections[0].findChildren(QLabel, "settingsRowTitle")
+        ]
+        self.assertEqual(
+            general_titles,
+            [
+                "실행 시 최소화",
+                "자동 실행 작업",
+                "작업 중 옵션 편집",
+                "작업 시작 시 로그 초기화",
+            ],
+        )
 
         rows = panel.findChildren(QFrame, "settingsRow")
         self.assertTrue(rows)
