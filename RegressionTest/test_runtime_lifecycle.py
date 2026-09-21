@@ -48,6 +48,8 @@ from app.winUI import (
     DWMWA_TEXT_COLOR,
     DWMWA_USE_IMMERSIVE_DARK_MODE,
     MainWindow,
+    PROGRAM_LAUNCH_ENTRY,
+    PROGRAM_LAUNCH_TASK_NAME,
     RuntimeWorker,
     TitleBarTheme,
     UI_DIR,
@@ -85,7 +87,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
             self.taskers.append(tasker)
             return tasker
 
-        def create_controller(controller_settings):
+        def create_controller(controller_settings, **_kwargs):
             self.runtime.controller = MagicMock(connected=True)
             self.runtime.controller.post_connection.return_value = make_job()
             self.runtime.controller.post_inactive.return_value = make_job()
@@ -262,6 +264,108 @@ class RuntimeLifecycleTests(unittest.TestCase):
         ) as controller:
             self.assertFalse(self.runtime._create_controller()[0])
         controller.assert_not_called()
+
+    def test_controller_waits_for_launched_program_window(self):
+        game_window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
+        with patch(
+            "app.runtime.Toolkit.find_desktop_windows",
+            side_effect=[[], [game_window]],
+        ) as find_windows, patch("app.runtime.Win32Controller"), patch(
+            "app.runtime.time.sleep"
+        ):
+            succeeded, _message = self.runtime._create_controller(
+                wait_timeout_seconds=5
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(find_windows.call_count, 2)
+
+    def test_program_launch_starts_configured_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            executable = Path(temp) / "BlueArchive.exe"
+            executable.write_bytes(b"")
+            process = MagicMock()
+            settings = {
+                "resolved_path": str(executable),
+                "startup_wait_seconds": 45,
+            }
+
+            with patch.object(
+                self.runtime, "_program_is_running", return_value=False
+            ), patch(
+                "app.runtime.subprocess.Popen", return_value=process
+            ) as popen:
+                succeeded, _message = self.runtime._launch_program(settings)
+
+        self.assertTrue(succeeded)
+        command = popen.call_args.args[0]
+        self.assertEqual(command, [str(executable.resolve())])
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(executable.parent.resolve()))
+        self.assertIs(self.runtime._program_process, process)
+
+    def test_program_launch_skips_executable_when_process_is_running(self):
+        with tempfile.TemporaryDirectory() as temp:
+            executable = Path(temp) / "BlueArchive.exe"
+            executable.write_bytes(b"")
+            settings = {"resolved_path": str(executable)}
+
+            with patch.object(
+                self.runtime, "_program_is_running", return_value=True
+            ), patch("app.runtime.subprocess.Popen") as popen:
+                succeeded, message = self.runtime._launch_program(settings)
+
+        self.assertTrue(succeeded)
+        self.assertIn("이미 실행", message)
+        popen.assert_not_called()
+
+    def test_launch_task_prepares_program_before_waiting_for_controller(self):
+        self.configure_initialization()
+        settings = {
+            "resolved_path": "C:/Games/BlueArchive.exe",
+            "startup_wait_seconds": 25,
+        }
+        with patch.object(
+            self.runtime, "_launch_program", return_value=(True, "started")
+        ) as launch_program:
+            succeeded, _message = self.runtime.initialize(
+                program_settings=settings,
+                execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
+            )
+
+        self.assertTrue(succeeded)
+        launch_program.assert_called_once_with(settings)
+        create_call = self.runtime._create_controller.call_args
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+
+    def test_launch_task_rejects_missing_program_path_before_controller_creation(self):
+        self.configure_initialization()
+
+        succeeded, message = self.runtime.initialize(
+            program_settings={"resolved_path": ""},
+            execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
+        )
+
+        self.assertFalse(succeeded)
+        self.assertIn("경로", message)
+        self.runtime._create_controller.assert_not_called()
+
+    def test_launch_task_is_not_posted_to_tasker(self):
+        tasker = MagicMock()
+        tasker.post_task.return_value = make_job()
+        self.runtime.tasker = tasker
+        self.runtime._target_hwnd = 123
+
+        with patch.object(
+            self.runtime, "_resize_window_for_task", return_value=True
+        ), patch.object(
+            self.runtime, "release_session", return_value=(True, "released")
+        ):
+            succeeded, _message = self.runtime.run_task(
+                [(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})]
+            )
+
+        self.assertTrue(succeeded)
+        tasker.post_task.assert_called_once_with("Login_Main")
 
     def test_all_tasks_are_queued_before_first_wait(self):
         tasker = MagicMock()
@@ -647,6 +751,17 @@ class UILifecycleTests(unittest.TestCase):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         temp = temp_dir.name
+        auto_search_patch = patch(
+            "app.settingsUI.find_auto_program_executable", return_value=None
+        )
+        resolved_path_patch = patch(
+            "app.settingsUI.find_program_executable",
+            side_effect=lambda config: find_program_executable(config, drive_roots=[]),
+        )
+        auto_search_patch.start()
+        resolved_path_patch.start()
+        self.addCleanup(auto_search_patch.stop)
+        self.addCleanup(resolved_path_patch.stop)
         runtime = MagicMock()
         runtime.user_dir = Path(temp)
         runtime.interface = {
@@ -767,6 +882,21 @@ class UILifecycleTests(unittest.TestCase):
         self.window.stop_worker = stop_worker
         return worker
 
+    @staticmethod
+    def find_task_item(window, task_name="Test"):
+        task_list = window.option_list_widget
+        for row in range(task_list.count()):
+            item = task_list.item(row)
+            widget = task_list.itemWidget(item)
+            if widget is not None and widget.task_data.get("name") == task_name:
+                return item
+        raise AssertionError(f"작업 목록에서 {task_name!r} 항목을 찾지 못했습니다.")
+
+    @classmethod
+    def find_task_widget(cls, window, task_name="Test"):
+        item = cls.find_task_item(window, task_name)
+        return window.option_list_widget.itemWidget(item)
+
     def test_task_picker_opens_above_full_width_and_appends_on_click(self):
         self.window.show()
         self.app.processEvents()
@@ -818,7 +948,8 @@ class UILifecycleTests(unittest.TestCase):
         self.assertLess(popup.height(), task_list.height())
         self.assertEqual(popup.y() + popup.height(), actions.mapToGlobal(QPoint(0, 0)).y())
         self.assertTrue(popup.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
-        self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]))
+        self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]) + 1)
+        self.assertEqual(popup.item(0).data(Qt.UserRole)["name"], PROGRAM_LAUNCH_TASK_NAME)
         self.assertEqual(popup.item(0).toolTip(), "")
         self.assertEqual(popup._dismiss_timer.interval(), 80)
         popup_position = popup.mapToGlobal(popup.rect().center())
@@ -846,23 +977,27 @@ class UILifecycleTests(unittest.TestCase):
 
     def test_duplicate_tasks_keep_independent_options_on_reload_and_execution(self):
         task_list = self.window.option_list_widget
-        first = task_list.itemWidget(task_list.item(0))
+        first = self.find_task_widget(self.window)
         first.selected_options["Test_Mode"] = ["B"]
         self.window.add_task(self.window.runtime.interface["task"][0])
-        second = task_list.itemWidget(task_list.item(1))
+        second = task_list.itemWidget(task_list.item(task_list.count() - 1))
         self.assertEqual(second.selected_options["Test_Mode"], ["A"])
         second.checkbox.setChecked(False)
         self.assertNotEqual(
-            task_list.item(0).data(Qt.UserRole + 1),
-            task_list.item(1).data(Qt.UserRole + 1),
+            self.find_task_item(self.window).data(Qt.UserRole + 1),
+            task_list.item(task_list.count() - 1).data(Qt.UserRole + 1),
         )
 
         with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
             restored = MainWindow()
         self.addCleanup(restored.deleteLater)
         restored_list = restored.option_list_widget
-        self.assertEqual(restored_list.count(), 2)
-        widgets = [restored_list.itemWidget(restored_list.item(i)) for i in range(2)]
+        self.assertEqual(restored_list.count(), 3)
+        widgets = [
+            restored_list.itemWidget(restored_list.item(i))
+            for i in range(restored_list.count())
+            if restored_list.item(i).data(Qt.UserRole) == "Test"
+        ]
         self.assertEqual([w.selected_options["Test_Mode"] for w in widgets], [["B"], ["A"]])
         self.assertEqual([w.is_checked() for w in widgets], [True, False])
         self.assertEqual(len(restored.build_execution_queue()), 1)
@@ -896,25 +1031,28 @@ class UILifecycleTests(unittest.TestCase):
             (UI_RESOURCE_DIR / "icons/actions/trash.svg").exists()
         )
 
-        dragged_item = task_list.item(0)
+        dragged_item = self.find_task_item(self.window)
         drop_position = delete_zone.mapToGlobal(delete_zone.rect().center())
         self.window.on_task_drag_finished(dragged_item, drop_position)
         self.assertIs(stack.currentWidget(), self.window.task_list_actions)
         self.assertFalse(self.window.ui.taskListSeparator.isHidden())
-        self.assertEqual(task_list.count(), 0)
+        self.assertEqual(task_list.count(), 1)
         self.assertFalse(self.window.ui.workStartBtn.isEnabled())
         config_path = self.window.runtime.user_dir / "config" / "user_config.json"
         saved = json.loads(config_path.read_text(encoding="utf-8"))
-        self.assertEqual(saved["tasks"], [])
+        self.assertEqual(
+            [task["name"] for task in saved["tasks"]],
+            [PROGRAM_LAUNCH_TASK_NAME],
+        )
         self.window.hide()
 
     def test_drag_release_outside_delete_zone_keeps_task(self):
         task_list = self.window.option_list_widget
-        dragged_item = task_list.item(0)
+        dragged_item = self.find_task_item(self.window)
         self.window.on_task_drag_started()
         outside = self.window.option_list_widget.mapToGlobal(QPoint(2, 2))
         self.window.on_task_drag_finished(dragged_item, outside)
-        self.assertEqual(task_list.count(), 1)
+        self.assertEqual(task_list.count(), 2)
         self.assertFalse(self.window.ui.taskListSeparator.isHidden())
         self.assertIs(
             self.window.task_list_actions_stack.currentWidget(),
@@ -966,9 +1104,9 @@ class UILifecycleTests(unittest.TestCase):
         self.window.add_task(task_data)
         self.window.show()
         self.app.processEvents()
-        source = task_list.item(2)
+        source = task_list.item(task_list.count() - 1)
         source_widget = task_list.itemWidget(source)
-        first = task_list.item(0)
+        first = self.find_task_item(self.window)
         task_list._dragged_item = source
         source.setHidden(True)
 
@@ -992,11 +1130,11 @@ class UILifecycleTests(unittest.TestCase):
             self.assertTrue(task_list._move_dragged_item(first))
         remove.assert_not_called()
         self.app.processEvents()
-        self.assertIs(task_list.item(0), source)
+        self.assertIs(task_list.item(1), source)
         self.assertIs(task_list.itemWidget(source), source_widget)
         self.assertTrue(task_list._move_dragged_item(None))
         self.app.processEvents()
-        self.assertIs(task_list.item(2), source)
+        self.assertIs(task_list.item(task_list.count() - 1), source)
         self.assertIs(task_list.itemWidget(source), source_widget)
         source.setHidden(False)
         self.assertFalse(source.isHidden())
@@ -1021,7 +1159,7 @@ class UILifecycleTests(unittest.TestCase):
         self.window.task_add_button.click()
         self.app.processEvents()
         popup = self.window.task_picker
-        self.assertEqual(popup.count(), 40)
+        self.assertEqual(popup.count(), 41)
         self.assertEqual(popup.width(), self.window.ui.taskListContainer.width())
         self.assertEqual(
             popup.sizeHintForRow(0),
@@ -1041,23 +1179,29 @@ class UILifecycleTests(unittest.TestCase):
             "name": "Other", "entry": "Other_Main", "default_check": False,
         })
         task_list = self.window.option_list_widget
-        first = task_list.itemWidget(task_list.item(0))
+        first = self.find_task_widget(self.window)
         first.selected_options["Test_Mode"] = ["B"]
         first.checkbox.setChecked(False)
         self.window.show_sub_cases(first)
         self.window.add_task(self.window.runtime.interface["task"][0])
         self.window.task_reset_button.click()
 
-        self.assertEqual(task_list.count(), 2)
-        self.assertEqual([task_list.item(i).data(Qt.UserRole) for i in range(2)], ["Test", "Other"])
-        widgets = [task_list.itemWidget(task_list.item(i)) for i in range(2)]
+        self.assertEqual(task_list.count(), 3)
+        self.assertEqual(
+            [task_list.item(i).data(Qt.UserRole) for i in range(3)],
+            [PROGRAM_LAUNCH_TASK_NAME, "Test", "Other"],
+        )
+        widgets = [task_list.itemWidget(task_list.item(i)) for i in range(1, 3)]
         self.assertEqual([w.is_checked() for w in widgets], [True, False])
         self.assertEqual(widgets[0].selected_options["Test_Mode"], ["A"])
         self.assertEqual(self.window.ui.scrollSettingContents.layout().count(), 0)
         path = self.window.runtime.user_dir / "config" / "user_config.json"
         saved = json.loads(path.read_text(encoding="utf-8"))["tasks"]
-        self.assertEqual([task["name"] for task in saved], ["Test", "Other"])
-        self.assertEqual(saved[0]["selected_options"]["Test_Mode"], ["A"])
+        self.assertEqual(
+            [task["name"] for task in saved],
+            [PROGRAM_LAUNCH_TASK_NAME, "Test", "Other"],
+        )
+        self.assertEqual(saved[1]["selected_options"]["Test_Mode"], ["A"])
 
     def test_task_list_actions_follow_runtime_edit_policy_without_changing_active_queue(self):
         worker = MagicMock()
@@ -1083,11 +1227,13 @@ class UILifecycleTests(unittest.TestCase):
         self.assertIs(self.window.worker, worker)
         self.assertEqual(active_queue, expected_queue)
 
-    def test_empty_interface_reset_disables_start_and_add(self):
+    def test_empty_interface_reset_keeps_disabled_builtin_program_task(self):
         self.window.runtime.interface["task"] = []
         self.window.task_reset_button.click()
-        self.assertEqual(self.window.option_list_widget.count(), 0)
-        self.assertFalse(self.window.task_add_button.isEnabled())
+        self.assertEqual(self.window.option_list_widget.count(), 1)
+        builtin = self.find_task_widget(self.window, PROGRAM_LAUNCH_TASK_NAME)
+        self.assertFalse(builtin.checkbox.isEnabled())
+        self.assertTrue(self.window.task_add_button.isEnabled())
         self.assertFalse(self.window.ui.workStartBtn.isEnabled())
 
     def test_relocated_ui_and_svg_assets_load_outside_project_directory(self):
@@ -1121,7 +1267,7 @@ class UILifecycleTests(unittest.TestCase):
                     r"background-color:\s*#30415E;",
                 )
                 self.assertEqual(window.option_list_widget.objectName(), "taskOptionList")
-                widget = window.option_list_widget.itemWidget(window.option_list_widget.item(0))
+                widget = self.find_task_widget(window)
                 task_settings_icon = widget.setting_btn.icon().pixmap(20, 20)
                 end_settings_icon = window.ui.endSettingBtn.icon().pixmap(20, 20)
                 self.assertFalse(task_settings_icon.isNull())
@@ -1278,6 +1424,10 @@ class UILifecycleTests(unittest.TestCase):
 
     def test_program_path_can_be_confirmed_from_custom_directory(self):
         panel = self.window.settings_panel
+        task_list = self.window.option_list_widget
+        self.assertEqual(task_list.item(0).data(Qt.UserRole), PROGRAM_LAUNCH_TASK_NAME)
+        builtin = self.find_task_widget(self.window, PROGRAM_LAUNCH_TASK_NAME)
+        self.assertFalse(builtin.checkbox.isEnabled())
         install_directory = self.window.runtime.user_dir / "CustomGame"
         install_directory.mkdir()
         executable = install_directory / "BlueArchive.exe"
@@ -1292,6 +1442,9 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(settings["manual_path"], str(install_directory))
         self.assertEqual(settings["resolved_path"], str(executable.resolve()))
         self.assertTrue(panel.program_active_status.property("pathValid"))
+        self.assertTrue(builtin.checkbox.isEnabled())
+        builtin.checkbox.setChecked(True)
+        self.assertEqual(self.window.build_execution_queue()[0][0], PROGRAM_LAUNCH_ENTRY)
         changed.assert_called_once()
         config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -1326,11 +1479,14 @@ class UILifecycleTests(unittest.TestCase):
             kwargs["controller_settings"]["name"],
             "Win32FramePool",
         )
+        self.assertEqual(
+            kwargs["program_settings"],
+            self.window.settings_panel.program_settings(),
+        )
         worker.start.assert_called_once()
 
     def test_runtime_editing_policy_controls_all_execution_options(self):
-        item = self.window.option_list_widget.item(0)
-        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget = self.find_task_widget(self.window)
         queued_before_start = self.window.build_execution_queue()
 
         self.start_mock_run()
@@ -1384,8 +1540,7 @@ class UILifecycleTests(unittest.TestCase):
         self.assertTrue(self.window.ui.scrollSettingContents.isEnabled())
 
     def test_input_option_renders_and_builds_typed_pipeline_override(self):
-        item = self.window.option_list_widget.item(0)
-        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget = self.find_task_widget(self.window)
         task_widget.setting_btn.click()
 
         input_widgets = {
@@ -1405,8 +1560,7 @@ class UILifecycleTests(unittest.TestCase):
         self.assertIs(override["enabled"], False)
 
     def test_standard_select_uses_dropdown_and_radio_extension_stays_separate(self):
-        item = self.window.option_list_widget.item(0)
-        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget = self.find_task_widget(self.window)
         task_widget.setting_btn.click()
 
         radio_buttons = self.window.ui.scrollSettingContents.findChildren(QRadioButton)
@@ -1426,8 +1580,7 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(override["Dropdown_Node"]["next"], ["Second"])
 
     def test_invalid_input_disables_start_and_displays_pattern_message(self):
-        item = self.window.option_list_widget.item(0)
-        task_widget = self.window.option_list_widget.itemWidget(item)
+        task_widget = self.find_task_widget(self.window)
         task_widget.setting_btn.click()
         chapter_input = next(
             widget
@@ -1497,7 +1650,12 @@ class UILifecycleTests(unittest.TestCase):
         )
         with patch.object(worker, "isInterruptionRequested", return_value=True):
             worker.run()
-        runtime.initialize.assert_called_once_with(controller_settings)
+        runtime.initialize.assert_called_once()
+        init_args, init_kwargs = runtime.initialize.call_args
+        self.assertEqual(init_args, (controller_settings,))
+        self.assertIsNone(init_kwargs["program_settings"])
+        self.assertEqual(init_kwargs["execution_queue"], [])
+        self.assertTrue(callable(init_kwargs["cancellation_requested"]))
         runtime.run_task.assert_not_called()
         runtime.release_session.assert_called_once()
         self.assertFalse(worker.succeeded)

@@ -1,7 +1,9 @@
 from pathlib import Path
 from typing import Callable
+import csv
 import json
 import re
+import subprocess
 import threading
 import time
 
@@ -22,6 +24,7 @@ WIN32_METHOD_DEFAULTS = {
     "mouse": MaaWin32InputMethodEnum.PostMessageWithWindowPos.name,
     "keyboard": MaaWin32InputMethodEnum.PostMessage.name,
 }
+PROGRAM_LAUNCH_ENTRY = "__LaunchProgram"
 
 
 class WindowPlacement(ctypes.Structure):
@@ -90,6 +93,7 @@ class AppRuntime:
 
         self._target_hwnd = None
         self._original_window_placement = None
+        self._program_process = None
 
     def _load_interface(self):
         with self.interface_path.open("r", encoding="utf-8") as file:
@@ -296,7 +300,12 @@ class AppRuntime:
         return True
 
 
-    def _create_controller(self, controller_settings: dict | None = None):
+    def _create_controller(
+        self,
+        controller_settings: dict | None = None,
+        wait_timeout_seconds: float = 0,
+        cancellation_requested: Callable[[], bool] | None = None,
+    ):
         try:
             self.controller_config, self._controller_selection_status = (
                 self._select_controller_config(controller_settings)
@@ -304,10 +313,6 @@ class AppRuntime:
         except ValueError as error:
             return False, str(error)
 
-        windows = Toolkit.find_desktop_windows()
-        if not windows:
-            return False, "실행 중인 데스크톱 창을 찾을 수 없습니다."
-        
         window_keyword = self._get_window_keyword()
         if not window_keyword:
             return False, "Win32 window_regex 설정이 비어 있습니다."
@@ -317,16 +322,30 @@ class AppRuntime:
         except re.error as error:
             return False, f"Win32 window_regex가 올바르지 않습니다: {error}"
 
+        deadline = time.monotonic() + max(0, wait_timeout_seconds)
         candidates = []
-        for w in windows:
-            title = w.window_name or ""
-            if window_pattern.search(title):
-                candidates.append(w)
-
-        if not candidates:
-            return False, f" ᓀ‸ᓂ \n블루 아카이브가 실행 중이 아닙니다."
+        while True:
+            windows = Toolkit.find_desktop_windows() or []
+            candidates = [
+                window
+                for window in windows
+                if window_pattern.search(window.window_name or "")
+            ]
+            if candidates:
+                break
+            if cancellation_requested is not None and cancellation_requested():
+                return False, "프로그램 창 확인이 취소되었습니다."
+            if (
+                self._program_process is not None
+                and self._program_process.poll() is not None
+            ):
+                return False, "대상 프로그램이 창 생성 전에 종료되었습니다."
+            if time.monotonic() >= deadline:
+                return False, "대상 프로그램 창을 찾지 못했습니다."
+            time.sleep(0.25)
         
         window = candidates[0]
+        self._program_process = None
         self._target_hwnd = window.hwnd
 
         controller = Win32Controller(
@@ -339,6 +358,60 @@ class AppRuntime:
         self.controller = controller
 
         return True, "컨트롤러를 생성했습니다."
+
+    @staticmethod
+    def _program_is_running(process_name):
+        try:
+            result = subprocess.run(
+                [
+                    "tasklist",
+                    "/FI",
+                    f"IMAGENAME eq {process_name}",
+                    "/FO",
+                    "CSV",
+                    "/NH",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode != 0:
+            return False
+        return any(
+            row and row[0].casefold() == process_name.casefold()
+            for row in csv.reader(result.stdout.splitlines())
+        )
+
+    def _launch_program(self, program_settings):
+        if not isinstance(program_settings, dict):
+            return False, "프로그램 실행 설정이 없습니다."
+        resolved_path = program_settings.get("resolved_path")
+        if not isinstance(resolved_path, str) or not resolved_path.strip():
+            return False, "실행할 프로그램 경로가 확인되지 않았습니다."
+        executable_path = Path(resolved_path).resolve()
+        if not executable_path.is_file():
+            return False, f"실행 파일을 찾을 수 없습니다: {executable_path}"
+
+        if self._program_is_running(executable_path.name):
+            self._program_process = None
+            return True, "대상 프로그램이 이미 실행 중입니다."
+
+        try:
+            self._program_process = subprocess.Popen(
+                [str(executable_path)],
+                cwd=str(executable_path.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            return False, f"프로그램 실행에 실패했습니다: {error}"
+        return True, "대상 프로그램을 실행했습니다."
         
     def _execute_controller(self):
         if self.controller is None:
@@ -371,7 +444,13 @@ class AppRuntime:
     
 
     # winUI.py에서 호출하는 함수
-    def initialize(self, controller_settings: dict | None = None):
+    def initialize(
+        self,
+        controller_settings: dict | None = None,
+        program_settings: dict | None = None,
+        execution_queue: list[tuple[str, dict]] | None = None,
+        cancellation_requested: Callable[[], bool] | None = None,
+    ):
         released, release_message = self.release_session()
         if not released:
             return False, release_message
@@ -389,7 +468,22 @@ class AppRuntime:
 
             # 재바인딩 대신 실행마다 새 Tasker를 사용해 이전 컨트롤러 참조를 분리한다.
             self.tasker = Tasker()
-            created, create_message = self._create_controller(controller_settings)
+            program_launch_requested = any(
+                entry == PROGRAM_LAUNCH_ENTRY
+                for entry, _override in (execution_queue or [])
+            )
+            wait_timeout = 0
+            if program_launch_requested:
+                started, start_message = self._launch_program(program_settings)
+                if not started:
+                    return False, start_message
+                wait_timeout = float(program_settings.get("startup_wait_seconds", 60))
+
+            created, create_message = self._create_controller(
+                controller_settings,
+                wait_timeout_seconds=wait_timeout,
+                cancellation_requested=cancellation_requested,
+            )
             if not created:
                 return False, create_message
 
@@ -432,8 +526,15 @@ class AppRuntime:
                 if entry:
                     execution_queue.append((entry, {}))
 
+        execution_queue = [
+            (entry, override_data)
+            for entry, override_data in execution_queue
+            if entry != PROGRAM_LAUNCH_ENTRY
+        ]
+
         if not execution_queue:
-            return False, "실행할 작업이 없습니다."
+            self.release_session()
+            return True, "프로그램 실행 작업을 완료했습니다."
         
         try:
             if not self._resize_window_for_task(1280, 720):
@@ -507,9 +608,11 @@ class AppRuntime:
                         self.tasker.remove_context_sink(self._context_sink_id)
                         self._context_sink_id = None
 
+                cleanup_errors = []
+                self._program_process = None
+
                 # Tasker가 보유하는 controller 참조부터 해제한다.
                 self.tasker = None
-                cleanup_errors = []
                 if self.controller is not None and self.controller.connected:
                     try:
                         if not self.controller.post_inactive().wait().succeeded:

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
                                QPushButton, QRadioButton)
 
-from app.runtime import AppRuntime
+from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import SettingsPanel
 
 
@@ -38,6 +38,15 @@ SETTINGS_ICON_SIZE = QSize(20, 20)
 SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 RESET_ICON_SIZE = QSize(18, 18)
 RESET_ICON_HOVER_SIZE = QSize(22, 22)
+PROGRAM_LAUNCH_TASK_NAME = "__ProgramLaunch"
+PROGRAM_LAUNCH_TASK = {
+    "name": PROGRAM_LAUNCH_TASK_NAME,
+    "label": "게임 실행",
+    "default_check": True,
+    "entry": PROGRAM_LAUNCH_ENTRY,
+    "builtin": True,
+    "requires_program": True,
+}
 
 
 class TitleBarTheme(str, Enum):
@@ -427,6 +436,8 @@ class OptionItemWidget(QWidget):
 
         self.task_data = task_data      
         self.task_options = task_options 
+        self._available = True
+        self._locked = False
         
         self.selected_options = {}
         for opt_name, opt in self.task_options:
@@ -493,7 +504,21 @@ class OptionItemWidget(QWidget):
             self.setting_btn.hide()
 
     def is_checked(self):
-        return self.checkbox.isChecked()
+        return self._available and self.checkbox.isChecked()
+
+    def set_available(self, available, reason=""):
+        self._available = bool(available)
+        if not self._available:
+            self.checkbox.blockSignals(True)
+            self.checkbox.setChecked(False)
+            self.checkbox.blockSignals(False)
+        self.setToolTip("" if self._available else reason)
+        self.checkbox.setEnabled(self._available and not self._locked)
+        self.label.setStyleSheet(
+            "background: transparent;"
+            if self._available and not self._locked
+            else "background: transparent; color: #94A3B8;"
+        )
 
     def has_valid_input(self):
         for opt_name, opt in self.task_options:
@@ -526,10 +551,11 @@ class OptionItemWidget(QWidget):
         return persisted_options
 
     def set_locked(self, locked: bool):
-        self.checkbox.setEnabled(not locked)
+        self._locked = bool(locked)
+        self.checkbox.setEnabled(self._available and not self._locked)
         # 실행 중에도 세부 설정 화면은 열 수 있도록 한다.
         self.setting_btn.setEnabled(True)
-        if locked:
+        if self._locked or not self._available:
             self.label.setStyleSheet("background: transparent; color: #94A3B8;")
         else:
             self.label.setStyleSheet("background: transparent;")
@@ -847,6 +873,7 @@ class MainWindow(QMainWindow):
         self.setup_connections()
 
         self.setup_dynamic_options()
+        self.on_program_settings_changed(self.settings_panel.program_settings())
         self.check_start_button_state()
 
     def setup_connections(self):
@@ -885,6 +912,9 @@ class MainWindow(QMainWindow):
             self.set_runtime_option_editing_enabled
         )
         self.settings_panel.theme_changed.connect(self.set_title_bar_theme)
+        self.settings_panel.program_changed.connect(
+            self.on_program_settings_changed
+        )
 
         self.sync_main_minimize_setting(self.settings_panel.minimize_enabled())
         self.set_runtime_option_editing_enabled(
@@ -901,6 +931,22 @@ class MainWindow(QMainWindow):
 
     def on_main_minimize_setting_changed(self, enabled):
         self.settings_panel.set_minimize_enabled(enabled)
+
+    def on_program_settings_changed(self, program_settings):
+        if not hasattr(self, "option_list_widget"):
+            return
+        available = bool(program_settings.get("resolved_path"))
+        reason = "설정에서 실행할 프로그램 경로를 먼저 확인해 주세요."
+        for row in range(self.option_list_widget.count()):
+            item = self.option_list_widget.item(row)
+            widget = self.option_list_widget.itemWidget(item)
+            if (
+                widget is not None
+                and widget.task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME
+            ):
+                widget.set_available(available, reason)
+        self.check_start_button_state()
+        self.save_user_config()
 
     def on_system_color_scheme_changed(self, _color_scheme):
         if self._title_bar_theme == TitleBarTheme.SYSTEM:
@@ -1006,6 +1052,7 @@ class MainWindow(QMainWindow):
             execution_queue,
             minimize_window,
             controller_settings=self.settings_panel.controller_settings(),
+            program_settings=self.settings_panel.program_settings(),
         )
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
@@ -1161,8 +1208,28 @@ class MainWindow(QMainWindow):
             saved_tasks = []
         added_tasks = set()
 
+        saved_program_task = next(
+            (
+                task
+                for task in saved_tasks
+                if isinstance(task, dict)
+                and task.get("name") == PROGRAM_LAUNCH_TASK_NAME
+            ),
+            None,
+        )
+        self.add_task_widget(
+            PROGRAM_LAUNCH_TASK,
+            (
+                saved_program_task.get("checked", True)
+                if saved_program_task is not None
+                else PROGRAM_LAUNCH_TASK["default_check"]
+            ),
+        )
+
         for saved_task in saved_tasks:
             if not isinstance(saved_task, dict):
+                continue
+            if saved_task.get("name") == PROGRAM_LAUNCH_TASK_NAME:
                 continue
             task_data = task_dict.get(saved_task.get("name"))
             if task_data is None:
@@ -1190,7 +1257,10 @@ class MainWindow(QMainWindow):
         item.setData(Qt.UserRole, task_data["name"])
         # 같은 Task를 여러 번 추가해도 드래그 시 각 항목의 옵션을 유지한다.
         item.setData(Qt.UserRole + 1, uuid4().hex)
-        self.option_list_widget.addItem(item)
+        if task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME:
+            self.option_list_widget.insertItem(0, item)
+        else:
+            self.option_list_widget.addItem(item)
 
         options_dict = self.runtime.interface.get("option", {})
         task_options = [
@@ -1229,6 +1299,12 @@ class MainWindow(QMainWindow):
         custom_widget.checkbox.blockSignals(True)
         custom_widget.checkbox.setChecked(is_checked)
         custom_widget.checkbox.blockSignals(False)
+        if task_data.get("requires_program"):
+            program_settings = self.settings_panel.program_settings()
+            custom_widget.set_available(
+                bool(program_settings.get("resolved_path")),
+                "설정에서 실행할 프로그램 경로를 먼저 확인해 주세요.",
+            )
         custom_widget.adjustSize()
         item.setSizeHint(custom_widget.sizeHint())
         self.option_list_widget.setItemWidget(item, custom_widget)
@@ -1239,7 +1315,7 @@ class MainWindow(QMainWindow):
         self.task_picker.show_above(
             self.task_list_actions,
             self.option_list_widget,
-            self.runtime.interface.get("task", []),
+            [PROGRAM_LAUNCH_TASK, *self.runtime.interface.get("task", [])],
             self.ui.taskListContainer,
         )
 
@@ -1272,8 +1348,21 @@ class MainWindow(QMainWindow):
     def add_task(self, task_data):
         if not self.task_add_button.isEnabled():
             return
+        if task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME:
+            for row in range(self.option_list_widget.count()):
+                widget = self.option_list_widget.itemWidget(
+                    self.option_list_widget.item(row)
+                )
+                if (
+                    widget is not None
+                    and widget.task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME
+                ):
+                    return
         self.add_task_widget(task_data, task_data.get("default_check", False))
-        self.option_list_widget.scrollToBottom()
+        if task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME:
+            self.option_list_widget.scrollToTop()
+        else:
+            self.option_list_widget.scrollToBottom()
         self._apply_option_editing_policy()
         self.check_start_button_state()
         self.save_user_config()
@@ -1285,6 +1374,9 @@ class MainWindow(QMainWindow):
         # 삭제되는 항목을 참조하는 세부 옵션 컨트롤도 함께 비운다.
         self.clear_sub_cases()
         self.option_list_widget.clear()
+        self.add_task_widget(
+            PROGRAM_LAUNCH_TASK, PROGRAM_LAUNCH_TASK["default_check"]
+        )
         for task in self.runtime.interface.get("task", []):
             self.add_task_widget(task, task.get("default_check", False))
         self._apply_option_editing_policy()
@@ -1609,9 +1701,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "task_list_actions"):
             self.task_list_actions.setEnabled(not controls_locked)
             self.task_reset_button.setEnabled(not controls_locked)
-            self.task_add_button.setEnabled(
-                not controls_locked and bool(self.runtime.interface.get("task"))
-            )
+            self.task_add_button.setEnabled(not controls_locked)
             if controls_locked:
                 self.task_picker.hide()
 
@@ -1712,18 +1802,25 @@ class RuntimeWorker(QThread):
         execution_queue,
         minimize_window=False,
         controller_settings=None,
+        program_settings=None,
     ):
         super().__init__()
         self.runtime = runtime
         self.execution_queue = execution_queue
         self.minimize_window = minimize_window
         self.controller_settings = controller_settings
+        self.program_settings = program_settings
         self.succeeded = False
         self.result_message = "작업을 시작하지 못했습니다."
 
     def run(self):
         try:
-            initialized, init_message = self.runtime.initialize(self.controller_settings)
+            initialized, init_message = self.runtime.initialize(
+                self.controller_settings,
+                program_settings=self.program_settings,
+                execution_queue=self.execution_queue,
+                cancellation_requested=self.isInterruptionRequested,
+            )
             if not initialized:
                 self.result_message = init_message
                 return
