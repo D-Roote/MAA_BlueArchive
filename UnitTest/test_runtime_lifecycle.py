@@ -1561,7 +1561,7 @@ class UILifecycleTests(unittest.TestCase):
         task_list = self.window.option_list_widget
         self.window.show()
         self.app.processEvents()
-        item = task_list.item(0)
+        item = self.find_task_item(self.window)
         task_list.setCurrentItem(item)
         drag = MagicMock()
 
@@ -1637,6 +1637,43 @@ class UILifecycleTests(unittest.TestCase):
         source.setHidden(False)
         self.assertFalse(source.isHidden())
         self.window.hide()
+
+    def test_program_launch_task_is_unique_and_pinned_to_top(self):
+        task_list = self.window.option_list_widget
+        self.window.show()
+        self.app.processEvents()
+        launch_item = task_list.item(0)
+        launch_widget = task_list.itemWidget(launch_item)
+        self.assertEqual(launch_widget.task_data["label"], "자동 실행")
+        self.assertFalse(launch_item.flags() & Qt.ItemFlag.ItemIsDragEnabled)
+
+        self.window.add_task(launch_widget.task_data)
+        self.assertEqual(
+            sum(
+                task_list.item(row).data(Qt.ItemDataRole.UserRole)
+                == PROGRAM_LAUNCH_TASK_NAME
+                for row in range(task_list.count())
+            ),
+            1,
+        )
+
+        self.window.add_task(self.window.runtime.interface["task"][0])
+        dragged_item = task_list.item(task_list.count() - 1)
+        task_list._dragged_item = dragged_item
+        dragged_item.setHidden(True)
+        task_list._update_drop_target(QPoint(0, 0))
+        self.assertIsNot(task_list._drop_before_item, launch_item)
+        self.assertGreaterEqual(
+            task_list.drag_line_y,
+            task_list.visualItemRect(launch_item).bottom() + 1,
+        )
+        self.assertTrue(task_list._move_dragged_item(launch_item))
+        self.app.processEvents()
+        self.assertIs(task_list.item(0), launch_item)
+        self.assertIs(task_list.item(1), dragged_item)
+        dragged_item.setHidden(False)
+        task_list._dragged_item = launch_item
+        self.assertFalse(task_list._move_dragged_item(None))
 
     def test_reset_and_footer_hover_keep_icon_scale_and_group_background(self):
         reset = self.window.task_reset_button

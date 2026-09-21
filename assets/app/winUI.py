@@ -41,7 +41,7 @@ RESET_ICON_HOVER_SIZE = QSize(22, 22)
 PROGRAM_LAUNCH_TASK_NAME = "__ProgramLaunch"
 PROGRAM_LAUNCH_TASK = {
     "name": PROGRAM_LAUNCH_TASK_NAME,
-    "label": "게임 실행",
+    "label": "자동 실행",
     "default_check": True,
     "entry": PROGRAM_LAUNCH_ENTRY,
     "builtin": True,
@@ -584,7 +584,7 @@ class DragDropListWidget(QListWidget):
 
     def startDrag(self, supported_actions):
         dragged_item = self.currentItem()
-        if dragged_item is None:
+        if dragged_item is None or self._is_pinned_item(dragged_item):
             return
 
         indexes = self.selectedIndexes()
@@ -689,11 +689,29 @@ class DragDropListWidget(QListWidget):
             and not self.item(row).isHidden()
         ]
 
+    @staticmethod
+    def _is_pinned_item(item):
+        return (
+            item is not None
+            and item.data(Qt.ItemDataRole.UserRole) == PROGRAM_LAUNCH_TASK_NAME
+        )
+
     def _update_drop_target(self, position):
-        visible_items = self._visible_items()
+        visible_items = [
+            item for item in self._visible_items() if not self._is_pinned_item(item)
+        ]
         if not visible_items:
             self._drop_before_item = None
-            self.drag_line_y = 0
+            pinned_items = [
+                self.item(row)
+                for row in range(self.count())
+                if self._is_pinned_item(self.item(row))
+            ]
+            self.drag_line_y = (
+                self.visualItemRect(pinned_items[0]).bottom() + 1
+                if pinned_items
+                else 0
+            )
             return
 
         first_item = visible_items[0]
@@ -767,7 +785,7 @@ class DragDropListWidget(QListWidget):
 
     def _move_dragged_item(self, before_item):
         dragged_item = self._dragged_item
-        if dragged_item is None:
+        if dragged_item is None or self._is_pinned_item(dragged_item):
             return False
         source_row = self.row(dragged_item)
         if source_row < 0:
@@ -776,6 +794,13 @@ class DragDropListWidget(QListWidget):
         destination_child = self.count() if before_item is None else self.row(before_item)
         if destination_child < 0:
             destination_child = self.count()
+        pinned_rows = [
+            row
+            for row in range(self.count())
+            if self._is_pinned_item(self.item(row))
+        ]
+        if pinned_rows:
+            destination_child = max(destination_child, pinned_rows[0] + 1)
         if destination_child in (source_row, source_row + 1):
             return False
 
@@ -1258,6 +1283,7 @@ class MainWindow(QMainWindow):
         # 같은 Task를 여러 번 추가해도 드래그 시 각 항목의 옵션을 유지한다.
         item.setData(Qt.UserRole + 1, uuid4().hex)
         if task_data.get("name") == PROGRAM_LAUNCH_TASK_NAME:
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
             self.option_list_widget.insertItem(0, item)
         else:
             self.option_list_widget.addItem(item)
