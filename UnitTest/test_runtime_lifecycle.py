@@ -1883,6 +1883,7 @@ class UILifecycleTests(unittest.TestCase):
 
     def test_settings_explicit_selection_survives_clamped_scroll(self):
         panel = self.window.settings_panel
+        self.window.resize(1000, 600)
         self.window.show()
         self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
@@ -1923,7 +1924,12 @@ class UILifecycleTests(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertIsInstance(row.layout(), QGridLayout)
                 row_margins = row.layout().contentsMargins()
-                self.assertEqual((row_margins.top(), row_margins.bottom()), (12, 12))
+                section_layout = row.parentWidget().layout()
+                last_widget = section_layout.itemAt(section_layout.count() - 1).widget()
+                expected_bottom = 0 if last_widget is row else 12
+                self.assertEqual(
+                    (row_margins.top(), row_margins.bottom()), (12, expected_bottom)
+                )
                 self.assertIs(
                     row.layout().itemAtPosition(0, 1).widget(),
                     row.layout().itemAtPosition(1, 1).widget(),
@@ -1938,6 +1944,61 @@ class UILifecycleTests(unittest.TestCase):
                     (section_margins.top(), section_margins.bottom()),
                     (12, 12),
                 )
+
+    def test_start_page_has_equal_horizontal_gutters(self):
+        self.window.show()
+        ui = self.window.ui
+        page = ui.mainTab
+        for width in (1000, 1400):
+            self.window.resize(width, 800)
+            self.app.processEvents()
+
+            def left(widget):
+                return widget.mapTo(page, QPoint(0, 0)).x()
+
+            def end(widget):
+                return left(widget) + widget.width()
+
+            gaps = (
+                left(ui.taskListContainer),
+                left(ui.line_2) - end(ui.taskListContainer),
+                left(ui.scrollSettingWidget) - end(ui.line_2),
+                left(ui.line_3) - end(ui.scrollSettingWidget),
+                left(ui.logPrintText) - end(ui.line_3),
+                page.width() - end(ui.logPrintText),
+            )
+            with self.subTest(width=width):
+                self.assertEqual(gaps, (16,) * 6)
+
+    def test_settings_controls_align_in_both_themes(self):
+        panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        for theme in ("light", "dark"):
+            panel.theme_combo.setCurrentIndex(panel.theme_combo.findData(theme))
+            for width in (1000, 1400):
+                self.window.resize(width, 650)
+                self.app.processEvents()
+                with self.subTest(theme=theme, width=width):
+                    controls = (panel.program_path_input, panel.program_browse_button,
+                                panel.program_apply_button)
+                    self.assertEqual(len({control.height() for control in controls}), 1)
+                    self.assertEqual(len({control.y() for control in controls}), 1)
+                    self.assertEqual(panel.detail_scroll.horizontalScrollBar().maximum(), 0)
+                    self.assertEqual(
+                        panel.width() - panel.detail_scroll.geometry().right() - 1, 6
+                    )
+                    self.assertEqual(panel.detail_layout.contentsMargins().right(), 6)
+
+    def test_settings_without_overflow_highlights_first_card(self):
+        self.window.resize(1400, 1600)
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
+        panel = self.window.settings_panel
+        self.assertEqual(panel.detail_scroll.verticalScrollBar().maximum(), 0)
+        panel._sync_navigation_to_scroll(0)
+        self.assertEqual(panel.navigation.currentRow(), 0)
 
     def test_dark_theme_applies_to_entire_window_and_is_saved(self):
         panel = self.window.settings_panel

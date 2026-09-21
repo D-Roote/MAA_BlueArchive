@@ -336,6 +336,7 @@ QLineEdit#optionInput {
     border: 1px solid #CBD5E0;
     border-radius: 6px;
     padding: 7px 9px;
+    min-height: 20px;
     selection-background-color: #00AEEF;
 }
 

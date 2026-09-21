@@ -190,7 +190,7 @@ class SettingsPanel(QWidget):
 
     def _build_ui(self):
         root_layout = QHBoxLayout(self)
-        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setContentsMargins(16, 16, 6, 16)
         root_layout.setSpacing(16)
 
         self.navigation = QListWidget()
@@ -211,7 +211,7 @@ class SettingsPanel(QWidget):
         self.detail_contents = QWidget()
         self.detail_contents.setObjectName("settingsDetailContents")
         self.detail_layout = QVBoxLayout(self.detail_contents)
-        self.detail_layout.setContentsMargins(0, 0, 8, 0)
+        self.detail_layout.setContentsMargins(0, 0, 6, 0)
         self.detail_layout.setSpacing(14)
 
         general, general_layout = self._create_section(
@@ -318,6 +318,13 @@ class SettingsPanel(QWidget):
             self.theme_combo,
         )
 
+        # The card owns its bottom inset; avoid doubling it on a final row.
+        for section in self._sections:
+            section_layout = section.layout()
+            last_widget = section_layout.itemAt(section_layout.count() - 1).widget()
+            if last_widget is not None and last_widget.objectName() == "settingsRow":
+                last_widget.layout().setContentsMargins(0, 12, 0, 0)
+
         self.detail_layout.addStretch(1)
         self.detail_scroll.setWidget(self.detail_contents)
 
@@ -327,6 +334,7 @@ class SettingsPanel(QWidget):
     def _create_section(self, title, description):
         section = QFrame()
         section.setObjectName("settingsSection")
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(18, 12, 18, 12)
         layout.setSpacing(0)
