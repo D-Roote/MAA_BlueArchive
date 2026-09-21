@@ -1063,6 +1063,8 @@ class MainWindow(QMainWindow):
     def on_task_start(self):
         if self.worker is not None or self.stop_worker is not None or self._close_pending:
             return
+        if self.settings_panel.clear_log_on_start_enabled():
+            self.ui.logPrintText.clear()
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 

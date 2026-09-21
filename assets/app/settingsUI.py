@@ -35,6 +35,7 @@ DEFAULT_MAA_CONFIG = {
     "general": {
         "minimize_enabled": False,
         "allow_option_edits_while_running": False,
+        "clear_log_on_start": True,
     },
     "controller": {},
     "program": DEFAULT_PROGRAM_CONFIG,
@@ -82,6 +83,7 @@ class SettingsStore:
                 for key in (
                     "minimize_enabled",
                     "allow_option_edits_while_running",
+                    "clear_log_on_start",
                 ):
                     if isinstance(raw_general.get(key), bool):
                         config["general"][key] = raw_general[key]
@@ -233,6 +235,13 @@ class SettingsPanel(QWidget):
                 "편집합니다. 변경 사항은 다음 실행부터 적용됩니다."
             ),
             self.runtime_edit_checkbox,
+        )
+        self.clear_log_checkbox = QCheckBox("사용")
+        self._add_setting_row(
+            general_layout,
+            "작업 시작 시 로그 초기화",
+            "새로운 작업을 시작할 때 이전 실행의 로그를 비웁니다.",
+            self.clear_log_checkbox,
         )
 
         program, program_layout = self._create_section(
@@ -390,6 +399,7 @@ class SettingsPanel(QWidget):
         self.runtime_edit_checkbox.setChecked(
             general["allow_option_edits_while_running"]
         )
+        self.clear_log_checkbox.setChecked(general["clear_log_on_start"])
 
         self._confirmed_manual_path = self.config["program"]["manual_path"]
         self.program_path_input.setText(self._confirmed_manual_path)
@@ -438,6 +448,7 @@ class SettingsPanel(QWidget):
         )
         self.minimize_checkbox.toggled.connect(self._on_minimize_changed)
         self.runtime_edit_checkbox.toggled.connect(self._on_runtime_edit_changed)
+        self.clear_log_checkbox.toggled.connect(self._on_clear_log_changed)
         self.program_browse_button.clicked.connect(self._browse_program_path)
         self.program_apply_button.clicked.connect(self._apply_program_path)
         self.controller_combo.currentIndexChanged.connect(
@@ -480,6 +491,7 @@ class SettingsPanel(QWidget):
                 "allow_option_edits_while_running": (
                     self.runtime_edit_checkbox.isChecked()
                 ),
+                "clear_log_on_start": self.clear_log_checkbox.isChecked(),
             },
             "controller": SettingsStore.serialize_controller(
                 self.controller_combo.currentData()
@@ -504,6 +516,9 @@ class SettingsPanel(QWidget):
     def _on_runtime_edit_changed(self, enabled):
         self._save()
         self.runtime_option_editing_changed.emit(enabled)
+
+    def _on_clear_log_changed(self, _enabled):
+        self._save()
 
     def _browse_program_path(self):
         initial_path = self.program_path_input.text().strip()
@@ -597,6 +612,9 @@ class SettingsPanel(QWidget):
 
     def runtime_option_editing_enabled(self):
         return self.runtime_edit_checkbox.isChecked()
+
+    def clear_log_on_start_enabled(self):
+        return self.clear_log_checkbox.isChecked()
 
     def theme(self):
         return self.theme_combo.currentData() or "light"

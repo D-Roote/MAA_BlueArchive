@@ -1102,6 +1102,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertFalse(
             config["general"]["allow_option_edits_while_running"]
         )
+        self.assertTrue(config["general"]["clear_log_on_start"])
         self.assertEqual(config["appearance"]["theme"], "light")
         self.assertEqual(config["program"], DEFAULT_PROGRAM_CONFIG)
         self.assertEqual(config["controller"]["name"], controller["name"])
@@ -1146,6 +1147,7 @@ class SettingsStoreTests(unittest.TestCase):
                     "general": {
                         "minimize_enabled": False,
                         "allow_option_edits_while_running": True,
+                        "clear_log_on_start": False,
                     },
                     "appearance": {"theme": "dark"},
                 }
@@ -1161,6 +1163,7 @@ class SettingsStoreTests(unittest.TestCase):
 
         self.assertFalse(config["general"]["minimize_enabled"])
         self.assertTrue(config["general"]["allow_option_edits_while_running"])
+        self.assertFalse(config["general"]["clear_log_on_start"])
         self.assertEqual(config["appearance"]["theme"], "dark")
         self.assertEqual(self.read_json(self.user_config_path), {"tasks": []})
 
@@ -1952,6 +1955,7 @@ class UILifecycleTests(unittest.TestCase):
             for label in panel.findChildren(QLabel, "settingsRowTitle")
         }
         self.assertIn("작업 중 옵션 편집", row_titles)
+        self.assertIn("작업 시작 시 로그 초기화", row_titles)
         self.assertIn("수동 경로", row_titles)
         self.assertNotIn("작업 중 세부 옵션 편집", row_titles)
 
@@ -2117,6 +2121,34 @@ class UILifecycleTests(unittest.TestCase):
             self.window.settings_panel.program_settings(),
         )
         worker.start.assert_called_once()
+
+    def test_new_run_clears_previous_log_by_default(self):
+        self.window.ui.logPrintText.setPlainText("이전 실행 로그")
+        worker = MagicMock()
+        with patch("app.winUI.RuntimeWorker", return_value=worker):
+            self.window.on_task_start()
+
+        log_text = self.window.ui.logPrintText.toPlainText()
+        self.assertNotIn("이전 실행 로그", log_text)
+        self.assertIn("작업을 시작합니다...", log_text)
+
+    def test_new_run_keeps_previous_log_when_clear_setting_is_disabled(self):
+        panel = self.window.settings_panel
+        panel.clear_log_checkbox.setChecked(False)
+        self.window.ui.logPrintText.setPlainText("이전 실행 로그")
+        worker = MagicMock()
+        with patch("app.winUI.RuntimeWorker", return_value=worker):
+            self.window.on_task_start()
+
+        log_text = self.window.ui.logPrintText.toPlainText()
+        self.assertIn("이전 실행 로그", log_text)
+        self.assertIn("작업을 시작합니다...", log_text)
+        config = json.loads(
+            (self.window.runtime.user_dir / "config" / "maa_config.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertFalse(config["general"]["clear_log_on_start"])
 
     def test_runtime_editing_policy_controls_all_execution_options(self):
         task_widget = self.find_task_widget(self.window)
