@@ -45,8 +45,45 @@ QListWidget {
     border-color: #30415E;
 }
 
+QFrame#taskListContainer {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QWidget#taskDeletePage {
+    background-color: #172238;
+}
+
+QFrame#taskListSeparator {
+    background-color: #30415E;
+}
+
+QWidget#taskListFooter {
+    background-color: #168FBE;
+}
+
+QWidget#taskListFooter[groupHovered="true"]:!disabled {
+    background-color: #1AA6D8;
+}
+
+QWidget#taskListFooter:disabled {
+    background-color: #34445E;
+}
+
 QListWidget::item:hover {
     background-color: #22314A;
+}
+
+QListWidget#taskPickerPopup::item:hover,
+QListWidget#taskPickerPopup::item:selected {
+    background-color: #168FBE;
+    color: #F5F9FD;
+}
+
+QToolTip {
+    background-color: #22314A;
+    color: #F5F9FD;
+    border-color: #405474;
 }
 
 QPushButton {
@@ -200,6 +237,33 @@ QLabel#controllerDetails {
     background-color: #1E2D46;
     color: #AEBFD2;
     border-color: #405474;
+}
+
+QLabel#programPathStatus {
+    background-color: #1E2D46;
+    color: #AEBFD2;
+    border-color: #405474;
+}
+
+QLabel#programPathStatus[pathValid="true"] {
+    border-color: #4FAF83;
+    color: #8ED9B6;
+}
+
+QLabel#programPathStatus[pathValid="false"] {
+    border-color: #D95F6A;
+    color: #F08A94;
+}
+
+QLineEdit#programPathInput {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+}
+
+QLineEdit#programPathInput:hover,
+QLineEdit#programPathInput:focus {
+    border-color: #2BB3E3;
 }
 
 QComboBox#settingsComboBox {

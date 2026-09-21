@@ -6,12 +6,15 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -19,14 +22,24 @@ from PySide6.QtWidgets import (
 )
 
 from app.runtime import WIN32_METHOD_DEFAULTS, WIN32_METHOD_PRIORITY
+from app.pg_init import (
+    DEFAULT_PROGRAM_CONFIG,
+    find_auto_program_executable,
+    find_program_executable,
+    normalize_program_config,
+    resolve_manual_program_path,
+)
 
 
 DEFAULT_MAA_CONFIG = {
     "general": {
         "minimize_enabled": False,
+        "program_launch_task_enabled": True,
         "allow_option_edits_while_running": False,
+        "clear_log_on_start": True,
     },
     "controller": {},
+    "program": DEFAULT_PROGRAM_CONFIG,
     "appearance": {
         "theme": "light",
     },
@@ -70,14 +83,26 @@ class SettingsStore:
             if isinstance(raw_general, dict):
                 for key in (
                     "minimize_enabled",
+                    "program_launch_task_enabled",
                     "allow_option_edits_while_running",
+                    "clear_log_on_start",
                 ):
                     if isinstance(raw_general.get(key), bool):
                         config["general"][key] = raw_general[key]
+                # 직전 개발 버전에서 저장한 부정형 설정을 긍정형으로 이관한다.
+                if (
+                    not isinstance(raw_general.get("program_launch_task_enabled"), bool)
+                    and isinstance(raw_general.get("remove_program_launch_task"), bool)
+                ):
+                    config["general"]["program_launch_task_enabled"] = not raw_general[
+                        "remove_program_launch_task"
+                    ]
 
             raw_controller = raw_config.get("controller")
             if isinstance(raw_controller, dict):
                 config["controller"] = deepcopy(raw_controller)
+
+            config["program"] = normalize_program_config(raw_config.get("program"))
 
             raw_appearance = raw_config.get("appearance")
             if isinstance(raw_appearance, dict):
@@ -123,9 +148,11 @@ class SettingsStore:
 
 class SettingsPanel(QWidget):
     minimize_changed = Signal(bool)
+    program_launch_task_enabled_changed = Signal(bool)
     runtime_option_editing_changed = Signal(bool)
     theme_changed = Signal(str)
     controller_changed = Signal(object)
+    program_changed = Signal(object)
 
     def __init__(
         self,
@@ -176,7 +203,7 @@ class SettingsPanel(QWidget):
 
     def _build_ui(self):
         root_layout = QHBoxLayout(self)
-        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setContentsMargins(16, 16, 6, 16)
         root_layout.setSpacing(16)
 
         self.navigation = QListWidget()
@@ -185,7 +212,7 @@ class SettingsPanel(QWidget):
         self.navigation.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        for label in ("일반", "컨트롤러", "외관"):
+        for label in ("일반", "프로그램", "컨트롤러", "외관"):
             item = QListWidgetItem(label)
             self.navigation.addItem(item)
 
@@ -197,7 +224,7 @@ class SettingsPanel(QWidget):
         self.detail_contents = QWidget()
         self.detail_contents.setObjectName("settingsDetailContents")
         self.detail_layout = QVBoxLayout(self.detail_contents)
-        self.detail_layout.setContentsMargins(0, 0, 8, 0)
+        self.detail_layout.setContentsMargins(0, 0, 6, 0)
         self.detail_layout.setSpacing(14)
 
         general, general_layout = self._create_section(
@@ -210,13 +237,69 @@ class SettingsPanel(QWidget):
             "작업을 시작할 때 대상 프로그램 창을 최소화합니다.",
             self.minimize_checkbox,
         )
+        self.program_launch_checkbox = QCheckBox("사용")
+        self._add_setting_row(
+            general_layout,
+            "자동 실행 작업",
+            "활성화하면 자동 실행 작업을 목록 최상단에 추가합니다.",
+            self.program_launch_checkbox,
+        )
         self.runtime_edit_checkbox = QCheckBox("허용")
         self._add_setting_row(
             general_layout,
-            "작업 중 세부 옵션 편집",
-            "실행 중 변경한 작업 옵션은 다음 실행부터 적용됩니다.",
+            "작업 중 옵션 편집",
+            (
+                "실행 중에도 작업 활성화, 순서, 세부 옵션 등 모든 실행 옵션을 "
+                "편집합니다. 변경 사항은 다음 실행부터 적용됩니다."
+            ),
             self.runtime_edit_checkbox,
         )
+        self.clear_log_checkbox = QCheckBox("사용")
+        self._add_setting_row(
+            general_layout,
+            "작업 시작 시 로그 초기화",
+            "새로운 작업을 시작할 때 이전 실행의 로그를 비웁니다.",
+            self.clear_log_checkbox,
+        )
+
+        program, program_layout = self._create_section(
+            "프로그램", "자동 실행에 사용할 대상 프로그램을 확인하거나 직접 지정합니다."
+        )
+        self.program_auto_status = QLabel()
+        self.program_auto_status.setObjectName("programPathStatus")
+        self.program_auto_status.setWordWrap(True)
+        program_layout.addWidget(self.program_auto_status)
+        program_layout.addSpacing(8)
+
+        self.program_path_input = QLineEdit()
+        self.program_path_input.setObjectName("programPathInput")
+        self.program_path_input.setPlaceholderText(
+            "실행 파일 또는 실행 파일이 있는 폴더 경로"
+        )
+        self.program_path_input.setMinimumWidth(260)
+        self.program_browse_button = QPushButton("찾아보기")
+        self.program_browse_button.setObjectName("programBrowseButton")
+        self.program_apply_button = QPushButton("확인")
+        self.program_apply_button.setObjectName("programApplyButton")
+
+        program_path_controls = QWidget()
+        program_path_controls.setObjectName("programPathControls")
+        program_path_layout = QHBoxLayout(program_path_controls)
+        program_path_layout.setContentsMargins(0, 0, 0, 0)
+        program_path_layout.setSpacing(6)
+        program_path_layout.addWidget(self.program_path_input, 1)
+        program_path_layout.addWidget(self.program_browse_button)
+        program_path_layout.addWidget(self.program_apply_button)
+        self._add_setting_row(
+            program_layout,
+            "수동 경로",
+            "비워 두면 자동 검색 결과를 사용합니다. 폴더 또는 실행 파일을 지정할 수 있습니다.",
+            program_path_controls,
+        )
+        self.program_active_status = QLabel()
+        self.program_active_status.setObjectName("programPathStatus")
+        self.program_active_status.setWordWrap(True)
+        program_layout.addWidget(self.program_active_status)
 
         controller, controller_layout = self._create_section(
             "컨트롤러", "실행에 사용할 컨트롤러를 선택합니다."
@@ -262,6 +345,13 @@ class SettingsPanel(QWidget):
             self.theme_combo,
         )
 
+        # The card owns its bottom inset; avoid doubling it on a final row.
+        for section in self._sections:
+            section_layout = section.layout()
+            last_widget = section_layout.itemAt(section_layout.count() - 1).widget()
+            if last_widget is not None and last_widget.objectName() == "settingsRow":
+                last_widget.layout().setContentsMargins(0, 12, 0, 0)
+
         self.detail_layout.addStretch(1)
         self.detail_scroll.setWidget(self.detail_contents)
 
@@ -271,6 +361,7 @@ class SettingsPanel(QWidget):
     def _create_section(self, title, description):
         section = QFrame()
         section.setObjectName("settingsSection")
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(18, 12, 18, 12)
         layout.setSpacing(0)
@@ -323,9 +414,17 @@ class SettingsPanel(QWidget):
     def _apply_config(self):
         general = self.config["general"]
         self.minimize_checkbox.setChecked(general["minimize_enabled"])
+        self.program_launch_checkbox.setChecked(
+            general["program_launch_task_enabled"]
+        )
         self.runtime_edit_checkbox.setChecked(
             general["allow_option_edits_while_running"]
         )
+        self.clear_log_checkbox.setChecked(general["clear_log_on_start"])
+
+        self._confirmed_manual_path = self.config["program"]["manual_path"]
+        self.program_path_input.setText(self._confirmed_manual_path)
+        self._refresh_program_status()
 
         theme = self.config["appearance"]["theme"]
         theme_index = self.theme_combo.findData(theme)
@@ -369,7 +468,13 @@ class SettingsPanel(QWidget):
             self._sync_navigation_to_scroll
         )
         self.minimize_checkbox.toggled.connect(self._on_minimize_changed)
+        self.program_launch_checkbox.toggled.connect(
+            self._on_program_launch_enabled_changed
+        )
         self.runtime_edit_checkbox.toggled.connect(self._on_runtime_edit_changed)
+        self.clear_log_checkbox.toggled.connect(self._on_clear_log_changed)
+        self.program_browse_button.clicked.connect(self._browse_program_path)
+        self.program_apply_button.clicked.connect(self._apply_program_path)
         self.controller_combo.currentIndexChanged.connect(
             self._on_controller_changed
         )
@@ -380,21 +485,22 @@ class SettingsPanel(QWidget):
         if self._syncing_navigation or not 0 <= row < len(self._sections):
             return
         section = self._sections[row]
-        self.detail_scroll.verticalScrollBar().setValue(section.y())
+        # Keep an explicit selection even when scrolling to it is clamped.
+        self._syncing_navigation = True
+        try:
+            self.detail_scroll.verticalScrollBar().setValue(section.y())
+        finally:
+            self._syncing_navigation = False
 
     def _sync_navigation_to_scroll(self, value):
-        if not self._sections:
+        if self._syncing_navigation or not self._sections:
             return
-        scrollbar = self.detail_scroll.verticalScrollBar()
-        if value >= scrollbar.maximum() - 2:
-            active_row = len(self._sections) - 1
-        else:
-            active_row = 0
-            for index, section in enumerate(self._sections):
-                if section.y() <= value + 24:
-                    active_row = index
-                else:
-                    break
+        # A partially visible card is still the topmost visible section.
+        active_row = len(self._sections) - 1
+        for index, section in enumerate(self._sections):
+            if section.y() + section.height() > value:
+                active_row = index
+                break
 
         if self.navigation.currentRow() == active_row:
             return
@@ -406,13 +512,21 @@ class SettingsPanel(QWidget):
         return {
             "general": {
                 "minimize_enabled": self.minimize_checkbox.isChecked(),
+                "program_launch_task_enabled": (
+                    self.program_launch_checkbox.isChecked()
+                ),
                 "allow_option_edits_while_running": (
                     self.runtime_edit_checkbox.isChecked()
                 ),
+                "clear_log_on_start": self.clear_log_checkbox.isChecked(),
             },
             "controller": SettingsStore.serialize_controller(
                 self.controller_combo.currentData()
             ),
+            "program": {
+                **normalize_program_config(self.config.get("program")),
+                "manual_path": self._confirmed_manual_path,
+            },
             "appearance": {
                 "theme": self.theme_combo.currentData() or "light",
             },
@@ -426,9 +540,76 @@ class SettingsPanel(QWidget):
         self._save()
         self.minimize_changed.emit(enabled)
 
+    def _on_program_launch_enabled_changed(self, enabled):
+        self._save()
+        self.program_launch_task_enabled_changed.emit(enabled)
+
     def _on_runtime_edit_changed(self, enabled):
         self._save()
         self.runtime_option_editing_changed.emit(enabled)
+
+    def _on_clear_log_changed(self, _enabled):
+        self._save()
+
+    def _browse_program_path(self):
+        initial_path = self.program_path_input.text().strip()
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "프로그램 설치 폴더 선택",
+            initial_path if Path(initial_path).is_dir() else "",
+        )
+        if selected:
+            self.program_path_input.setText(selected)
+
+    def _apply_program_path(self):
+        manual_path = self.program_path_input.text().strip()
+        config = normalize_program_config(self.config.get("program"))
+        if manual_path and resolve_manual_program_path(
+            manual_path, config["executable_name"]
+        ) is None:
+            self.program_active_status.setProperty("pathValid", False)
+            self.program_active_status.setText(
+                f"{config['executable_name']} 파일을 확인할 수 없습니다."
+            )
+            self._refresh_status_style(self.program_active_status)
+            return
+
+        self._confirmed_manual_path = manual_path
+        self._save()
+        self._refresh_program_status()
+        self.program_changed.emit(self.program_settings())
+
+    @staticmethod
+    def _refresh_status_style(label):
+        label.style().unpolish(label)
+        label.style().polish(label)
+        label.update()
+
+    def _refresh_program_status(self):
+        config = {
+            **normalize_program_config(self.config.get("program")),
+            "manual_path": self._confirmed_manual_path,
+        }
+        auto_path = find_auto_program_executable(config)
+        if auto_path is None:
+            self.program_auto_status.setText("자동 검색: 설치 위치를 찾지 못했습니다.")
+            self.program_auto_status.setProperty("pathValid", False)
+        else:
+            self.program_auto_status.setText(f"자동 검색: {auto_path}")
+            self.program_auto_status.setProperty("pathValid", True)
+
+        active_path = find_program_executable(config)
+        if active_path is None:
+            self.program_active_status.setText(
+                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다."
+            )
+            self.program_active_status.setProperty("pathValid", False)
+        else:
+            source = "수동 경로" if self._confirmed_manual_path else "자동 경로"
+            self.program_active_status.setText(f"사용 경로 ({source}): {active_path}")
+            self.program_active_status.setProperty("pathValid", True)
+        self._refresh_status_style(self.program_auto_status)
+        self._refresh_status_style(self.program_active_status)
 
     def _on_controller_changed(self, _index):
         self._update_controller_details()
@@ -460,8 +641,14 @@ class SettingsPanel(QWidget):
     def set_minimize_enabled(self, enabled):
         self.minimize_checkbox.setChecked(bool(enabled))
 
+    def program_launch_task_enabled(self):
+        return self.program_launch_checkbox.isChecked()
+
     def runtime_option_editing_enabled(self):
         return self.runtime_edit_checkbox.isChecked()
+
+    def clear_log_on_start_enabled(self):
+        return self.clear_log_checkbox.isChecked()
 
     def theme(self):
         return self.theme_combo.currentData() or "light"
@@ -470,3 +657,12 @@ class SettingsPanel(QWidget):
         return SettingsStore.serialize_controller(
             self.controller_combo.currentData()
         )
+
+    def program_settings(self):
+        config = {
+            **normalize_program_config(self.config.get("program")),
+            "manual_path": self._confirmed_manual_path,
+        }
+        resolved_path = find_program_executable(config)
+        config["resolved_path"] = str(resolved_path) if resolved_path else ""
+        return config

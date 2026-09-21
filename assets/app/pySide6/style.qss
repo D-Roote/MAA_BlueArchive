@@ -91,6 +91,64 @@ QListWidget#taskOptionList::item {
     border-radius: 6px;
 }
 
+QFrame#taskListContainer {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+}
+
+QListWidget#taskOptionList {
+    border: none;
+    border-radius: 0px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    margin: 0px;
+}
+
+QFrame#taskListSeparator {
+    border: none;
+    background-color: #E2E8F0;
+}
+
+QStackedWidget#taskListActionsStack {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#taskDeletePage {
+    background-color: #F8FAFC;
+    border: none;
+    border-bottom-left-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
+QWidget#taskListFooter {
+    background-color: #00AEEF;
+    border-bottom-left-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
+QWidget#taskListFooter[groupHovered="true"]:!disabled {
+    background-color: #009BD6;
+}
+
+QWidget#taskListFooter:disabled {
+    background-color: #CBD5E0;
+}
+
+QFrame#taskDeleteDropZone {
+    background-color: transparent;
+    border: 1px solid #EF4444;
+    border-radius: 4px;
+}
+
+QLabel#taskDeleteLabel {
+    background-color: transparent;
+    color: #EF4444;
+    font-size: 8pt;
+    font-weight: bold;
+}
+
 QListWidget::item:hover {
     background-color: #F8FAFC;
 }
@@ -123,6 +181,61 @@ QPushButton:pressed {
 QPushButton:disabled {
     background-color: #CBD5E0;
     color: #A0AEC0;
+}
+
+QPushButton#taskResetButton {
+    padding: 0px;
+    background-color: transparent;
+    border: none;
+    border-radius: 0px;
+    border-top-right-radius: 0px;
+    border-bottom-left-radius: 5px;
+}
+
+QPushButton#taskAddButton {
+    background-color: transparent;
+    border-radius: 0px;
+    border-top-left-radius: 0px;
+    border-bottom-right-radius: 5px;
+    padding-left: 0px;
+    padding-right: 34px;
+}
+
+QPushButton#taskResetButton:hover,
+QPushButton#taskResetButton:pressed,
+QPushButton#taskResetButton:disabled,
+QPushButton#taskAddButton:hover,
+QPushButton#taskAddButton:pressed,
+QPushButton#taskAddButton:disabled {
+    background-color: transparent;
+}
+
+QListWidget#taskPickerPopup {
+    margin: 0px;
+    padding: 4px;
+    border-radius: 6px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+}
+
+QListWidget#taskPickerPopup::item {
+    padding: 0px 8px;
+    border-radius: 4px;
+}
+
+QListWidget#taskPickerPopup::item:hover,
+QListWidget#taskPickerPopup::item:selected {
+    background-color: #00AEEF;
+    color: #FFFFFF;
+}
+
+QToolTip {
+    background-color: #F8FAFC;
+    color: #334155;
+    font-size: 7.5pt;
+    border: 1px solid #CBD5E1;
+    border-radius: 4px;
+    padding: 3px 5px;
 }
 
 QPushButton#taskSettingsButton,
@@ -223,6 +336,7 @@ QLineEdit#optionInput {
     border: 1px solid #CBD5E0;
     border-radius: 6px;
     padding: 7px 9px;
+    min-height: 20px;
     selection-background-color: #00AEEF;
 }
 
