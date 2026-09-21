@@ -28,6 +28,14 @@ WIN32_METHOD_DEFAULTS = {
 }
 PROGRAM_LAUNCH_ENTRY = "__LaunchProgram"
 PROGRAM_WINDOW_STABLE_SECONDS = 5.0
+PROGRAM_POST_LAUNCH_SETTLE_SECONDS = 5.0
+SW_RESTORE = 9
+WM_SYSCOMMAND = 0x0112
+SC_MINIMIZE = 0xF020
+SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT = 0x0001 | 0x0002 | 0x0020
+WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS = 1500
+WINDOW_MINIMIZE_CHECK_COUNT = 10
+WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS = 0.1
 
 
 class WindowPlacement(ctypes.Structure):
@@ -62,8 +70,13 @@ def create_user32():
         wintypes.BOOL,
     ]
     user32.MoveWindow.restype = wintypes.BOOL
-    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SendMessageTimeoutW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+        wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t),
+    ]
+    user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
     user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
     user32.GetWindowPlacement.restype = wintypes.BOOL
     user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
@@ -96,6 +109,8 @@ class AppRuntime:
 
         self._target_hwnd = None
         self._original_window_placement = None
+        self._preserve_minimized_window = False
+        self._program_started_for_session = False
 
     def _load_interface(self):
         with self.interface_path.open("r", encoding="utf-8") as file:
@@ -264,7 +279,7 @@ class AppRuntime:
 
         # 최소화 또는 최대화 상태에서는 먼저 일반 창으로 전환해야 client 크기를 맞출 수 있다.
         if self._user32.IsIconic(self._target_hwnd) or placement.show_cmd == 3:
-            self._user32.ShowWindow(self._target_hwnd, 9)
+            self._user32.ShowWindow(self._target_hwnd, SW_RESTORE)
             time.sleep(0.1)
 
         window_rect = wintypes.RECT()
@@ -295,6 +310,45 @@ class AppRuntime:
             )
         )
 
+    def _minimize_window_for_task(self):
+        target_hwnd = self._target_hwnd
+        if not target_hwnd or not self._user32.IsWindow(target_hwnd):
+            return False
+
+        # 외부 스레드에서 ShowWindow/SetForegroundWindow를 조합하지 않는다.
+        # 시스템 메뉴의 최소화 요청을 게임의 창 프로시저가 처리하게 한다.
+        # SendMessageTimeout의 반환값은 전달 성공, message_result는 WndProc 결과다.
+        message_result = ctypes.c_size_t()
+        delivered = self._user32.SendMessageTimeoutW(
+            target_hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0,
+            SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT, WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS,
+            ctypes.byref(message_result),
+        )
+        if not delivered:
+            return False
+
+        for attempt in range(WINDOW_MINIMIZE_CHECK_COUNT):
+            if not self._user32.IsWindow(target_hwnd):
+                return False
+            iconic = bool(self._user32.IsIconic(target_hwnd))
+            foreground = self._user32.GetForegroundWindow()
+            if iconic and foreground and foreground != target_hwnd:
+                return True
+            if attempt + 1 < WINDOW_MINIMIZE_CHECK_COUNT:
+                time.sleep(WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS)
+        return False
+
+    @staticmethod
+    def _wait_for_program_startup_settle(cancellation_requested=None):
+        deadline = time.monotonic() + PROGRAM_POST_LAUNCH_SETTLE_SECONDS
+        while True:
+            if cancellation_requested is not None and cancellation_requested():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(0.25, remaining))
+
     def _restore_window(self):
         placement = self._original_window_placement
         target_hwnd = self._target_hwnd
@@ -312,7 +366,7 @@ class AppRuntime:
         return True
 
 
-    def _create_controller(
+    def _find_target_window(
         self,
         controller_settings: dict | None = None,
         wait_timeout_seconds: float = 0,
@@ -324,22 +378,24 @@ class AppRuntime:
                 self._select_controller_config(controller_settings)
             )
         except ValueError as error:
-            return False, str(error)
+            return None, str(error)
 
         window_keyword = self._get_window_keyword()
         if not window_keyword:
-            return False, "Win32 window_regex 설정이 비어 있습니다."
+            return None, "Win32 window_regex 설정이 비어 있습니다."
 
         try:
             window_pattern = re.compile(window_keyword, re.IGNORECASE)
         except re.error as error:
-            return False, f"Win32 window_regex가 올바르지 않습니다: {error}"
+            return None, f"Win32 window_regex가 올바르지 않습니다: {error}"
 
         deadline = time.monotonic() + max(0, wait_timeout_seconds)
         stable_hwnd = None
         stable_since = None
         window = None
         while True:
+            if cancellation_requested is not None and cancellation_requested():
+                return None, "프로그램 창 확인이 취소되었습니다."
             now = time.monotonic()
             windows = Toolkit.find_desktop_windows() or []
             candidates = [
@@ -361,12 +417,27 @@ class AppRuntime:
             else:
                 stable_hwnd = None
                 stable_since = None
-            if cancellation_requested is not None and cancellation_requested():
-                return False, "프로그램 창 확인이 취소되었습니다."
             if now >= deadline:
-                return False, "대상 프로그램 창을 찾지 못했습니다."
+                return None, "대상 프로그램 창을 찾지 못했습니다."
             time.sleep(0.25)
 
+        return window, "프로그램 창을 확인했습니다."
+
+    def _create_controller(
+        self,
+        controller_settings: dict | None = None,
+        wait_timeout_seconds: float = 0,
+        stable_window_seconds: float = 0,
+        cancellation_requested: Callable[[], bool] | None = None,
+    ):
+        window, message = self._find_target_window(
+            controller_settings,
+            wait_timeout_seconds=wait_timeout_seconds,
+            stable_window_seconds=stable_window_seconds,
+            cancellation_requested=cancellation_requested,
+        )
+        if window is None:
+            return False, message
         self._target_hwnd = window.hwnd
 
         controller = Win32Controller(
@@ -408,6 +479,7 @@ class AppRuntime:
         )
 
     def _launch_program(self, program_settings):
+        self._program_started_for_session = False
         if not isinstance(program_settings, dict):
             return False, "프로그램 실행 설정이 없습니다."
         resolved_path = program_settings.get("resolved_path")
@@ -434,6 +506,7 @@ class AppRuntime:
             )
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             return False, f"프로그램 실행에 실패했습니다: {error}"
+        self._program_started_for_session = True
         return True, "대상 프로그램을 실행했습니다."
         
     def _execute_controller(self):
@@ -489,27 +562,31 @@ class AppRuntime:
             if not loaded:
                 return False, load_message
 
-            # 재바인딩 대신 실행마다 새 Tasker를 사용해 이전 컨트롤러 참조를 분리한다.
-            self.tasker = Tasker()
             program_launch_requested = any(
                 entry == PROGRAM_LAUNCH_ENTRY
                 for entry, _override in (execution_queue or [])
             )
-            wait_timeout = 0
             if program_launch_requested:
                 started, start_message = self._launch_program(program_settings)
                 if not started:
                     return False, start_message
-                wait_timeout = float(program_settings.get("startup_wait_seconds", 60))
+                window, window_message = self._find_target_window(
+                    controller_settings,
+                    wait_timeout_seconds=float(program_settings.get("startup_wait_seconds", 60)),
+                    cancellation_requested=cancellation_requested,
+                )
+                if window is None:
+                    return False, window_message
+                if self._program_started_for_session:
+                    if not self._wait_for_program_startup_settle(cancellation_requested):
+                        return False, "프로그램 시작 안정화 대기가 취소되었습니다."
 
+            if cancellation_requested is not None and cancellation_requested():
+                return False, "작업 시작이 취소되었습니다."
+
+            # 대기 중 창이 교체되거나 종료됐을 수 있으므로 다시 찾아 연결한다.
             created, create_message = self._create_controller(
                 controller_settings,
-                wait_timeout_seconds=wait_timeout,
-                stable_window_seconds=(
-                    PROGRAM_WINDOW_STABLE_SECONDS
-                    if program_launch_requested
-                    else 0
-                ),
                 cancellation_requested=cancellation_requested,
             )
             if not created:
@@ -519,6 +596,8 @@ class AppRuntime:
             if not executed:
                 return False, execute_message
 
+            # 프로그램 시작/대기가 끝난 뒤에만 새 Tasker를 생성한다.
+            self.tasker = Tasker()
             bound, bind_message = self._bind_tasker()
             if not bound:
                 return False, bind_message
@@ -564,15 +643,28 @@ class AppRuntime:
             self.release_session()
             return True, "프로그램 실행 작업을 완료했습니다."
         
+        minimize_error = None
+
+        def minimize_on_first_action():
+            nonlocal minimize_error
+            if cancellation_requested is not None and cancellation_requested():
+                return
+            try:
+                if self._minimize_window_for_task():
+                    self._preserve_minimized_window = True
+                    return
+                minimize_error = "대상 창의 최소화 또는 전경 전환을 완료하지 못했습니다."
+            except Exception as error:
+                minimize_error = f"대상 창 최소화 중 오류가 발생했습니다: {error}"
+            # 콜백에서 wait/실행 잠금을 사용하면 Tasker 스레드와 교착할 수 있다.
+            try:
+                self.tasker.post_stop()
+            except Exception as error:
+                minimize_error += f" 작업 중지 요청에 실패했습니다: {error}"
+
         try:
             if not self._resize_window_for_task(1280, 720):
                 return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
-
-            if minimize_window and self._target_hwnd:
-                self._user32.SetForegroundWindow(self._target_hwnd)
-                time.sleep(0.1)
-
-                self._user32.ShowWindow(self._target_hwnd, 6)
 
             prepared_tasks = []
             for entry, override_data in execution_queue:
@@ -592,9 +684,19 @@ class AppRuntime:
 
             jobs = []
             with self._task_post_lock:
+                if cancellation_requested is not None and cancellation_requested():
+                    return False, "작업 실행이 취소되었습니다."
+                # 첫 캡처/인식 이후, 작업 로그가 출력되는 Action.Starting에서 한 번만 적용한다.
+                # post_task 직후 콜백이 올 수 있으므로 제출 전에 등록한다.
+                self.log_sink.set_first_action_callback(
+                    minimize_on_first_action if minimize_window else None
+                )
+
                 # MaaFW는 큐가 비면 controller를 자동으로 inactive 처리한다. 모든 작업을
                 # 먼저 등록해야 최소화한 Win32 창이 중간 작업에서 복원되지 않는다.
                 for entry, override_param in prepared_tasks:
+                    if minimize_error:
+                        return False, minimize_error
                     if cancellation_requested is not None and cancellation_requested():
                         return False, "작업 실행이 취소되었습니다."
                     if override_param:
@@ -609,17 +711,21 @@ class AppRuntime:
                 if not job.succeeded:
                     failed_labels.append(self._get_task_label(entry))
 
+            if minimize_error:
+                return False, minimize_error
             if failed_labels:
                 return False, f"일부 작업에 실패했습니다: {', '.join(failed_labels)}"
 
             return True, "모든 작업을 완료했습니다."
         finally:
+            self.log_sink.set_first_action_callback(None)
             released, release_message = self.release_session()
             if not released:
                 raise RuntimeError(release_message)
 
     def release_session(self):
         """정지 완료 후 Tasker, 컨트롤러, 창 상태 순서로 실행 상태를 정리한다."""
+        self.log_sink.set_first_action_callback(None)
         with self._task_post_lock:
             try:
                 if self.tasker is not None:
@@ -642,11 +748,17 @@ class AppRuntime:
                         cleanup_errors.append(f"컨트롤러 비활성화에 실패했습니다: {error}")
                 self.controller = None
 
-                if self._original_window_placement is not None:
+                if self._preserve_minimized_window:
+                    # 사용자가 요청한 최소화 상태는 세션 정리 후에도 유지한다.
+                    self._original_window_placement = None
+                    self._target_hwnd = None
+                    self._preserve_minimized_window = False
+                elif self._original_window_placement is not None:
                     if not self._restore_window():
                         cleanup_errors.append("창을 원래 상태로 복원하지 못했습니다.")
                 else:
                     self._target_hwnd = None
+                self._program_started_for_session = False
                 if cleanup_errors:
                     return False, " ".join(cleanup_errors)
                 return True, "Runtime 실행 상태를 정리했습니다."
@@ -673,6 +785,12 @@ class LogSinkFocus(ContextEventSink):
     def __init__(self):
         super().__init__()
         self.log_callback: Callable[[str], None] | None = None
+        self._first_action_callback: Callable[[], None] | None = None
+        self._first_action_lock = threading.Lock()
+
+    def set_first_action_callback(self, callback: Callable[[], None] | None):
+        with self._first_action_lock:
+            self._first_action_callback = callback
 
     def set_log_callback(self, log_callback: Callable[[str], None] | None):
         self.log_callback = log_callback
@@ -682,6 +800,13 @@ class LogSinkFocus(ContextEventSink):
             self.log_callback(message)
 
     def on_raw_notification(self, context, msg: str, details: dict):
+        if msg == "Node.Action.Starting":
+            with self._first_action_lock:
+                callback = self._first_action_callback
+                self._first_action_callback = None
+            if callback is not None:
+                callback()
+
         focus = details.get("focus")
         if focus is None:
             return

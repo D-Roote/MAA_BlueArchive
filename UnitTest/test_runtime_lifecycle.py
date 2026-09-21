@@ -1,4 +1,4 @@
-"""Run with .venv/Scripts/python.exe -m unittest discover -s RegressionTest -v."""
+"""Run with .venv/Scripts/python.exe -m unittest discover -s UnitTest -v."""
 
 import json
 import os
@@ -10,7 +10,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
@@ -40,7 +40,13 @@ from app.pg_init import (
 from app.runtime import (
     AppRuntime,
     LogSinkFocus,
+    PROGRAM_POST_LAUNCH_SETTLE_SECONDS,
     PROGRAM_WINDOW_STABLE_SECONDS,
+    WM_SYSCOMMAND,
+    SC_MINIMIZE,
+    SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT,
+    WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS,
+    WINDOW_MINIMIZE_CHECK_COUNT,
     WindowPlacement,
 )
 from app.settingsUI import SettingsStore
@@ -78,6 +84,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.addCleanup(self.contexts.close)
         self.runtime = AppRuntime()
         self.runtime._user32 = MagicMock()
+        self.runtime._user32.GetForegroundWindow.return_value = 456
 
     def configure_initialization(self):
         resource = MagicMock(loaded=True)
@@ -170,6 +177,81 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
         self.assertEqual(controller["name"], "Win32PrintWindow")
         self.assertEqual(status, "default")
+
+    def test_standard_win32_interface_runs_without_builtin_launch_or_focus(self):
+        # PI v2 기본 필드만 사용한다. 게임명/Task 이름, program 설정, Agent,
+        # resource.controller, task.label, Pipeline focus는 필수 의존성이 아니다.
+        for capture in ("PrintWindow", "FramePool"):
+            for minimize in (False, True):
+                for focus in (None, "첫 작업", {"Node.Action.Starting": "첫 작업"}):
+                    with self.subTest(capture=capture, minimize=minimize, focus=focus), tempfile.TemporaryDirectory() as temp:
+                        interface = {
+                            "interface_version": 2,
+                            "name": "StandardExample",
+                            "controller": [{
+                                "name": "ExampleWin32", "type": "Win32",
+                                "win32": {"window_regex": "^Example App$", "screencap": capture},
+                            }],
+                            "resource": [{"name": "Default", "path": ["./resource", "./overrides"]}],
+                            "task": [{"name": "ExampleTask", "entry": "Example_Entry"}],
+                        }
+                        interface_path = Path(temp) / "interface.json"
+                        interface_path.write_text(json.dumps(interface), encoding="utf-8")
+                        self.runtime.interface_path = interface_path
+                        self.runtime.interface = self.runtime._load_interface()
+                        self.runtime.resource_config = self.runtime._get_resource_config()
+                        self.runtime._resource_loaded = False
+                        self.runtime.resource = None
+                        user32 = self.runtime._user32
+                        user32.reset_mock()
+                        user32.GetForegroundWindow.return_value = 456
+                        resource = MagicMock(loaded=True)
+                        resource.post_bundle.return_value = make_job()
+                        controller = MagicMock(connected=True)
+                        controller.post_connection.return_value = make_job()
+                        controller.post_inactive.return_value = make_job()
+                        tasker = MagicMock(inited=True, running=False, stopping=False)
+                        job = tasker.post_task.return_value = make_job()
+
+                        def wait():
+                            user32.SendMessageTimeoutW.assert_not_called()
+                            details = {"name": "Example_Entry", "task_id": 1}
+                            if focus is not None:
+                                details["focus"] = focus
+                            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", details)
+                            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", details)
+
+                        job.wait.side_effect = wait
+                        with patch("app.runtime.Toolkit.init_option", return_value=True), patch(
+                            "app.runtime.Toolkit.find_desktop_windows",
+                            return_value=[SimpleNamespace(hwnd=123, window_name="Example App")],
+                        ), patch("app.runtime.Resource", return_value=resource), patch(
+                            "app.runtime.Win32Controller", return_value=controller
+                        ) as create_controller, patch("app.runtime.Tasker", return_value=tasker), patch.object(
+                            self.runtime, "_launch_program"
+                        ) as launch, patch.object(self.runtime, "_resize_window_for_task", return_value=True):
+                            self.assertTrue(self.runtime.initialize()[0])
+                            self.assertTrue(self.runtime.run_task(minimize_window=minimize)[0])
+                        launch.assert_not_called()
+                        tasker.post_task.assert_called_once_with("Example_Entry")
+                        self.assertEqual(user32.SendMessageTimeoutW.call_count, int(minimize))
+                        user32.ShowWindow.assert_not_called()
+                        user32.SetForegroundWindow.assert_not_called()
+                        self.assertEqual(create_controller.call_args.kwargs["hWnd"], 123)
+                        self.assertEqual(create_controller.call_args.kwargs["screencap_method"].name, capture)
+                        self.assertEqual(resource.post_bundle.call_args_list, [
+                            call(str((Path(temp) / "resource").resolve())),
+                            call(str((Path(temp) / "overrides").resolve())),
+                        ])
+
+    def test_standard_class_regex_only_is_not_supported_by_current_runtime(self):
+        self.runtime.interface["controller"] = [{
+            "name": "ClassOnly", "type": "Win32", "win32": {"class_regex": "ExampleWindowClass"},
+        }]
+        self.runtime.resource_config.pop("controller", None)
+        window, message = self.runtime._find_target_window()
+        self.assertIsNone(window)
+        self.assertIn("window_regex", message)
 
     def test_omitted_controller_methods_match_runtime_defaults(self):
         self.runtime.interface["controller"] = [
@@ -326,6 +408,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command, [str(executable.resolve())])
         self.assertEqual(popen.call_args.kwargs["cwd"], str(executable.parent.resolve()))
+        self.assertTrue(self.runtime._program_started_for_session)
 
     def test_program_launch_uses_steam_url_for_steam_install(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -379,6 +462,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(succeeded)
         self.assertIn("이미 실행", message)
         popen.assert_not_called()
+        self.assertFalse(self.runtime._program_started_for_session)
 
     def test_launch_task_prepares_program_before_waiting_for_controller(self):
         self.configure_initialization()
@@ -388,7 +472,10 @@ class RuntimeLifecycleTests(unittest.TestCase):
         }
         with patch.object(
             self.runtime, "_launch_program", return_value=(True, "started")
-        ) as launch_program:
+        ) as launch_program, patch.object(
+            self.runtime, "_find_target_window",
+            return_value=(SimpleNamespace(hwnd=123), "found"),
+        ) as find_window:
             succeeded, _message = self.runtime.initialize(
                 program_settings=settings,
                 execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
@@ -396,12 +483,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
         self.assertTrue(succeeded)
         launch_program.assert_called_once_with(settings)
-        create_call = self.runtime._create_controller.call_args
-        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
-        self.assertEqual(
-            create_call.kwargs["stable_window_seconds"],
-            PROGRAM_WINDOW_STABLE_SECONDS,
-        )
+        self.assertEqual(find_window.call_args.kwargs["wait_timeout_seconds"], 25)
 
     def test_launch_task_rejects_missing_program_path_before_controller_creation(self):
         self.configure_initialization()
@@ -440,17 +522,28 @@ class RuntimeLifecycleTests(unittest.TestCase):
         posted_entries = []
 
         def post_task(entry, *args):
+            self.runtime._user32.SendMessageTimeoutW.assert_not_called()
             posted_entries.append(entry)
             return first_job if entry == "First" else second_job
 
         def wait_first():
             self.assertEqual(posted_entries, ["First", "Second"])
+            self.runtime.log_sink.on_raw_notification(None, "Node.PipelineNode.Starting", {})
+            self.runtime.log_sink.on_raw_notification(None, "Node.Recognition.Starting", {})
+            self.runtime._user32.SendMessageTimeoutW.assert_not_called()
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+            # 이후 사용자가 창을 복구해도 다음 노드에서 다시 최소화하지 않는다.
+            self.runtime._user32.IsIconic.return_value = False
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+            self.runtime._user32.SendMessageTimeoutW.assert_called_once()
             return first_job
 
         tasker.post_task.side_effect = post_task
         first_job.wait.side_effect = wait_first
         self.runtime.tasker = tasker
         self.runtime._target_hwnd = 123
+        self.runtime._user32.IsWindow.return_value = True
+        self.runtime._user32.IsIconic.return_value = True
 
         with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
             self.runtime, "release_session", return_value=(True, "released")
@@ -464,7 +557,329 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(tasker.post_task.call_count, 2)
         first_job.wait.assert_called_once()
         second_job.wait.assert_called_once()
-        self.runtime._user32.ShowWindow.assert_called_once_with(123, 6)
+        self.runtime._user32.SendMessageTimeoutW.assert_called_once_with(
+            123, WM_SYSCOMMAND, SC_MINIMIZE, 0,
+            SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT, WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS, ANY,
+        )
+        self.runtime._user32.ShowWindow.assert_not_called()
+
+    def test_minimize_sends_once_and_waits_for_window_state(self):
+        self.runtime._target_hwnd = 123
+        self.runtime._user32.IsWindow.return_value = True
+        self.runtime._user32.IsIconic.side_effect = [False, True]
+
+        with patch("app.runtime.time.sleep") as sleep:
+            succeeded = self.runtime._minimize_window_for_task()
+
+        self.assertTrue(succeeded)
+        self.runtime._user32.SendMessageTimeoutW.assert_called_once()
+        self.runtime._user32.ShowWindow.assert_not_called()
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_minimize_waits_for_game_thread_to_release_foreground(self):
+        self.runtime._target_hwnd = 123
+        user32 = self.runtime._user32
+        user32.IsIconic.return_value = True
+        user32.GetForegroundWindow.side_effect = [123, None, 456]
+        with patch("app.runtime.time.sleep"):
+            self.assertTrue(self.runtime._minimize_window_for_task())
+        user32.SendMessageTimeoutW.assert_called_once()
+        user32.ShowWindow.assert_not_called()
+        user32.SetForegroundWindow.assert_not_called()
+
+    def test_minimize_keeps_other_foreground_window(self):
+        self.runtime._target_hwnd = 123
+        self.runtime._user32.GetForegroundWindow.return_value = 789
+        with patch("app.runtime.time.sleep"):
+            self.assertTrue(self.runtime._minimize_window_for_task())
+        self.runtime._user32.SetForegroundWindow.assert_not_called()
+
+    def test_manual_restore_after_system_minimize_is_not_overridden(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        self.runtime._target_hwnd = 123
+        user32 = self.runtime._user32
+        user32.GetForegroundWindow.return_value = 123
+        user32.IsIconic.side_effect = lambda hwnd: hwnd == 123
+
+        def minimize(*_args):
+            user32.GetForegroundWindow.return_value = 456
+            return True
+
+        def wait():
+            sink = self.runtime.log_sink
+            sink.on_raw_notification(None, "Node.Action.Starting", {})
+            user32.GetForegroundWindow.return_value = 123
+            user32.IsIconic.side_effect = None
+            user32.IsIconic.return_value = False
+            sink.on_raw_notification(None, "Node.Action.Starting", {})
+
+        user32.SendMessageTimeoutW.side_effect = minimize
+        job = tasker.post_task.return_value = make_job()
+        job.wait.side_effect = wait
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch("app.runtime.time.sleep"):
+            self.assertTrue(self.runtime.run_task([("Login_Main", {})], minimize_window=True)[0])
+        user32.SendMessageTimeoutW.assert_called_once()
+        user32.ShowWindow.assert_not_called()
+        user32.SetForegroundWindow.assert_not_called()
+        self.assertEqual(user32.GetForegroundWindow(), 123)
+
+    def test_minimize_delivery_is_not_proof_of_minimized_background_state(self):
+        for iconic, foreground in ((False, 456), (True, 123), (True, None)):
+            with self.subTest(iconic=iconic, foreground=foreground):
+                self.runtime._target_hwnd = 123
+                user32 = self.runtime._user32
+                user32.IsIconic.return_value = iconic
+                user32.GetForegroundWindow.return_value = foreground
+                user32.SendMessageTimeoutW.reset_mock()
+                user32.SendMessageTimeoutW.return_value = 1
+                with patch("app.runtime.time.sleep") as sleep:
+                    self.assertFalse(self.runtime._minimize_window_for_task())
+                user32.SendMessageTimeoutW.assert_called_once()
+                self.assertEqual(sleep.call_count, WINDOW_MINIMIZE_CHECK_COUNT - 1)
+                user32.ShowWindow.assert_not_called()
+                user32.SetForegroundWindow.assert_not_called()
+
+    def test_minimize_message_failure_is_not_retried_or_forced(self):
+        self.runtime._target_hwnd = 123
+        user32 = self.runtime._user32
+        user32.SendMessageTimeoutW.return_value = 0
+        with patch("app.runtime.time.sleep") as sleep:
+            self.assertFalse(self.runtime._minimize_window_for_task())
+        sleep.assert_not_called()
+        user32.SendMessageTimeoutW.assert_called_once()
+        user32.ShowWindow.assert_not_called()
+        user32.SetForegroundWindow.assert_not_called()
+
+    def test_minimize_window_closed_during_request_fails(self):
+        self.runtime._target_hwnd = 123
+        self.runtime._user32.IsWindow.side_effect = [True, False]
+        with patch("app.runtime.time.sleep") as sleep:
+            self.assertFalse(self.runtime._minimize_window_for_task())
+        sleep.assert_not_called()
+
+    def test_minimize_no_window_does_not_send_message(self):
+        self.runtime._target_hwnd = None
+        self.assertFalse(self.runtime._minimize_window_for_task())
+        self.runtime._user32.SendMessageTimeoutW.assert_not_called()
+
+    def test_minimize_accepts_zero_window_procedure_result(self):
+        self.runtime._target_hwnd = 123
+        user32 = self.runtime._user32
+
+        def delivered(*args):
+            args[-1]._obj.value = 0  # WM_SYSCOMMAND's normal WndProc result.
+            return 1
+
+        user32.SendMessageTimeoutW.side_effect = delivered
+        self.assertTrue(self.runtime._minimize_window_for_task())
+
+    def test_minimized_run_does_not_restore_window_during_session_release(self):
+        tasker = MagicMock(running=False, stopping=False)
+        job = tasker.post_task.return_value = make_job()
+        def user_restores_window():
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+            self.runtime._user32.IsIconic.return_value = False
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+            return job
+        job.wait.side_effect = user_restores_window
+        self.runtime.tasker = tasker
+        self.runtime._target_hwnd = 123
+        self.runtime._original_window_placement = WindowPlacement()
+        self.runtime._user32.IsWindow.return_value = True
+        self.runtime._user32.IsIconic.return_value = True
+
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True):
+            succeeded, _message = self.runtime.run_task(
+                [("Login_Main", {})], minimize_window=True
+            )
+
+        self.assertTrue(succeeded)
+        self.runtime._user32.SendMessageTimeoutW.assert_called_once()
+        self.runtime._user32.ShowWindow.assert_not_called()
+        self.runtime._user32.SetWindowPlacement.assert_not_called()
+        self.assertIsNone(self.runtime._target_hwnd)
+        self.assertIsNone(self.runtime._original_window_placement)
+        self.assertFalse(self.runtime._preserve_minimized_window)
+
+    def test_launch_settle_finishes_before_tasker_and_minimize_at_first_action(self):
+        for newly_started in (True, False):
+            with self.subTest(newly_started=newly_started):
+                self.configure_initialization()
+                events = []
+
+                def launch(_settings):
+                    self.assertIsNone(self.runtime.tasker)
+                    self.runtime._program_started_for_session = newly_started
+                    events.append("launch")
+                    return True, "started"
+
+                def settle(_cancel):
+                    self.assertIsNone(self.runtime.tasker)
+                    self.assertIsNone(self.runtime.controller)
+                    events.append("settle")
+                    return True
+
+                tasker = MagicMock(running=False, stopping=False, inited=True)
+                def post_task(*_):
+                    events.append("post")
+                    self.runtime.log_sink.on_raw_notification(None, "Node.PipelineNode.Starting", {})
+                    events.append("first_capture")
+                    self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+                    events.append("action")
+                    return make_job()
+
+                tasker.post_task.side_effect = post_task
+                with patch.object(self.runtime, "_launch_program", side_effect=launch), patch.object(
+                    self.runtime, "_find_target_window",
+                    side_effect=lambda *a, **k: events.append("window") or (SimpleNamespace(hwnd=123), "found"),
+                ), patch.object(self.runtime, "_wait_for_program_startup_settle", side_effect=settle), patch(
+                    "app.runtime.Tasker", side_effect=lambda: events.append("tasker") or tasker
+                ), patch.object(
+                    self.runtime, "_resize_window_for_task", return_value=True
+                ), patch.object(
+                    self.runtime, "_minimize_window_for_task",
+                    side_effect=lambda: events.append("minimize") or True,
+                ):
+                    queue = [(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})]
+                    self.assertTrue(self.runtime.initialize(program_settings={}, execution_queue=queue)[0])
+                    self.assertTrue(self.runtime.run_task(queue, minimize_window=True)[0])
+
+                expected = ["launch", "window"]
+                if newly_started:
+                    expected.append("settle")
+                self.assertEqual(events, expected + ["tasker", "post", "first_capture", "minimize", "action"])
+
+    def test_minimize_failure_requests_stop_without_waiting_in_callback(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        job = tasker.post_task.return_value = make_job()
+        job.wait.side_effect = lambda: self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "_minimize_window_for_task", return_value=False
+        ):
+            succeeded, message = self.runtime.run_task([("Login_Main", {})], minimize_window=True)
+        self.assertFalse(succeeded)
+        self.assertIn("최소화", message)
+        tasker.post_task.assert_called_once_with("Login_Main")
+        tasker.post_stop.assert_called_once_with()
+        tasker.post_stop.return_value.wait.assert_not_called()
+
+    def test_launch_only_does_not_minimize_without_pipeline_action(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "_minimize_window_for_task", return_value=True
+        ) as minimize:
+            succeeded, _ = self.runtime.run_task([(PROGRAM_LAUNCH_ENTRY, {})], minimize_window=True)
+        self.assertTrue(succeeded)
+        minimize.assert_not_called()
+        tasker.post_task.assert_not_called()
+
+    def test_first_action_callback_runs_once_before_focus_log(self):
+        sink = LogSinkFocus()
+        events = []
+        sink.set_first_action_callback(lambda: events.append("minimize"))
+        sink.set_log_callback(events.append)
+        for message in ("Node.PipelineNode.Starting", "Node.Recognition.Starting"):
+            sink.on_raw_notification(None, message, {"focus": "작업"})
+        self.assertEqual(events, [])
+        sink.on_raw_notification(None, "Node.Action.Starting", {"focus": "첫 작업"})
+        sink.on_raw_notification(None, "Node.Action.Starting", {"focus": "다음 작업"})
+        self.assertEqual(events, ["minimize", "첫 작업", "다음 작업"])
+
+    def test_minimize_exception_is_reported_without_escaping_native_callback(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        job = tasker.post_task.return_value = make_job()
+        job.wait.side_effect = lambda: self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "_minimize_window_for_task", side_effect=OSError("window unavailable")
+        ):
+            succeeded, message = self.runtime.run_task([("Login_Main", {})], minimize_window=True)
+        self.assertFalse(succeeded)
+        self.assertIn("window unavailable", message)
+        tasker.post_stop.assert_called_once_with()
+        tasker.post_stop.return_value.wait.assert_not_called()
+
+    def test_run_without_action_clears_pending_minimize(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        tasker.post_task.return_value = make_job(succeeded=False)
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "_minimize_window_for_task"
+        ) as minimize:
+            succeeded, _ = self.runtime.run_task([("Login_Main", {})], minimize_window=True)
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+        self.assertFalse(succeeded)
+        minimize.assert_not_called()
+
+    def test_cancellation_before_first_action_does_not_minimize(self):
+        self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+        cancelled = False
+
+        def wait():
+            nonlocal cancelled
+            cancelled = True
+            self.runtime.log_sink.on_raw_notification(None, "Node.Action.Starting", {})
+
+        tasker.post_task.return_value = make_job(succeeded=False)
+        tasker.post_task.return_value.wait.side_effect = wait
+        with patch.object(self.runtime, "_resize_window_for_task", return_value=True), patch.object(
+            self.runtime, "_minimize_window_for_task"
+        ) as minimize:
+            self.runtime.run_task(
+                [("Login_Main", {})], minimize_window=True, cancellation_requested=lambda: cancelled
+            )
+        minimize.assert_not_called()
+
+    def test_disabled_minimize_never_minimizes_for_any_launch_selection(self):
+        queues = [
+            [(PROGRAM_LAUNCH_ENTRY, {})],
+            [("Login_Main", {})],
+            [(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})],
+        ]
+        for queue in queues:
+            with self.subTest(queue=queue):
+                self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
+                tasker.post_task.return_value = make_job()
+                tasker.post_task.return_value.wait.side_effect = lambda: self.runtime.log_sink.on_raw_notification(
+                    None, "Node.Action.Starting", {}
+                )
+                with patch.object(
+                    self.runtime, "_resize_window_for_task", return_value=True
+                ), patch.object(self.runtime, "_minimize_window_for_task") as minimize:
+                    succeeded, _ = self.runtime.run_task(queue, minimize_window=False)
+                self.assertTrue(succeeded)
+                minimize.assert_not_called()
+                self.assertEqual(
+                    tasker.post_task.call_count,
+                    sum(entry != PROGRAM_LAUNCH_ENTRY for entry, _ in queue),
+                )
+
+    def test_cancelled_startup_does_not_create_tasker(self):
+        self.configure_initialization()
+        def launch(_settings):
+            self.runtime._program_started_for_session = True
+            return True, "started"
+        with patch.object(self.runtime, "_launch_program", side_effect=launch), patch.object(
+            self.runtime, "_find_target_window", return_value=(SimpleNamespace(hwnd=123), "found")
+        ), patch.object(self.runtime, "_wait_for_program_startup_settle", return_value=False), patch(
+            "app.runtime.Tasker"
+        ) as factory:
+            succeeded, _ = self.runtime.initialize(program_settings={}, execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})])
+        self.assertFalse(succeeded)
+        factory.assert_not_called()
+        self.runtime._create_controller.assert_not_called()
+
+    def test_program_startup_settle_waits_full_grace_period(self):
+        with patch(
+            "app.runtime.time.monotonic",
+            side_effect=[10.0, 10.0, 14.75, 15.0],
+        ), patch("app.runtime.time.sleep") as sleep:
+            succeeded = self.runtime._wait_for_program_startup_settle()
+
+        self.assertTrue(succeeded)
+        self.assertEqual(
+            sleep.call_args_list,
+            [call(0.25), call(0.25)],
+        )
+        self.assertEqual(PROGRAM_POST_LAUNCH_SETTLE_SECONDS, 5.0)
 
     def test_failed_task_message_uses_interface_label_without_queue_summary(self):
         tasker = MagicMock()
