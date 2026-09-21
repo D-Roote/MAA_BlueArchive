@@ -1,6 +1,7 @@
 from copy import deepcopy
 import ctypes
 from pathlib import Path
+import re
 import string
 
 
@@ -100,3 +101,65 @@ def find_program_executable(program_config, drive_roots=None):
     if manual is not None:
         return manual
     return find_auto_program_executable(config, drive_roots)
+
+
+def _read_steam_manifest_value(manifest_text, key):
+    match = re.search(
+        rf'^\s*"{re.escape(key)}"\s+"([^"]*)"',
+        manifest_text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if match is None:
+        return None
+    return match.group(1).replace("\\\\", "\\")
+
+
+def find_steam_launch(executable_path):
+    """Return the Steam launcher and app URL for an executable in a Steam library."""
+    executable = Path(executable_path).resolve()
+    parents = list(executable.parents)
+    steamapps_dir = next(
+        (parent for parent in parents if parent.name.casefold() == "steamapps"),
+        None,
+    )
+    if steamapps_dir is None:
+        return None
+
+    common_dir = steamapps_dir / "common"
+    try:
+        executable.relative_to(common_dir)
+    except ValueError:
+        return None
+
+    for manifest_path in sorted(steamapps_dir.glob("appmanifest_*.acf")):
+        try:
+            manifest_text = manifest_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        app_id = _read_steam_manifest_value(manifest_text, "appid")
+        install_dir = _read_steam_manifest_value(manifest_text, "installdir")
+        launcher_path = _read_steam_manifest_value(manifest_text, "LauncherPath")
+        if not app_id or not app_id.isdecimal() or not install_dir or not launcher_path:
+            continue
+
+        installed_root = (common_dir / install_dir).resolve()
+        try:
+            executable.relative_to(installed_root)
+        except ValueError:
+            continue
+
+        launcher = Path(launcher_path).resolve()
+        if not launcher.is_file():
+            continue
+        return launcher, f"steam://run/{app_id}"
+    return None
+
+
+def build_program_launch_command(executable_path):
+    executable = Path(executable_path).resolve()
+    steam_launch = find_steam_launch(executable)
+    if steam_launch is not None:
+        launcher, app_url = steam_launch
+        return [str(launcher), app_url], launcher.parent
+    return [str(executable)], executable.parent

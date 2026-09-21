@@ -17,6 +17,8 @@ from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
+from app.pg_init import build_program_launch_command
+
 
 WIN32_METHOD_PRIORITY = ("screencap", "mouse", "keyboard")
 WIN32_METHOD_DEFAULTS = {
@@ -25,6 +27,7 @@ WIN32_METHOD_DEFAULTS = {
     "keyboard": MaaWin32InputMethodEnum.PostMessage.name,
 }
 PROGRAM_LAUNCH_ENTRY = "__LaunchProgram"
+PROGRAM_WINDOW_STABLE_SECONDS = 5.0
 
 
 class WindowPlacement(ctypes.Structure):
@@ -93,7 +96,6 @@ class AppRuntime:
 
         self._target_hwnd = None
         self._original_window_placement = None
-        self._program_process = None
 
     def _load_interface(self):
         with self.interface_path.open("r", encoding="utf-8") as file:
@@ -102,6 +104,16 @@ class AppRuntime:
     def _get_controller_config(self, controller_settings: dict | None = None):
         controller, _ = self._select_controller_config(controller_settings)
         return controller
+
+    def _get_task_label(self, entry):
+        for task in self.interface.get("task", []):
+            if not isinstance(task, dict) or task.get("entry") != entry:
+                continue
+            label = task.get("label")
+            if isinstance(label, str) and label.strip():
+                return label.strip()
+            break
+        return entry
 
     def _select_controller_config(self, controller_settings: dict | None = None):
         controllers = self.interface.get("controller", [])
@@ -304,6 +316,7 @@ class AppRuntime:
         self,
         controller_settings: dict | None = None,
         wait_timeout_seconds: float = 0,
+        stable_window_seconds: float = 0,
         cancellation_requested: Callable[[], bool] | None = None,
     ):
         try:
@@ -323,8 +336,11 @@ class AppRuntime:
             return False, f"Win32 window_regex가 올바르지 않습니다: {error}"
 
         deadline = time.monotonic() + max(0, wait_timeout_seconds)
-        candidates = []
+        stable_hwnd = None
+        stable_since = None
+        window = None
         while True:
+            now = time.monotonic()
             windows = Toolkit.find_desktop_windows() or []
             candidates = [
                 window
@@ -332,20 +348,25 @@ class AppRuntime:
                 if window_pattern.search(window.window_name or "")
             ]
             if candidates:
-                break
+                candidate = candidates[0]
+                if stable_window_seconds <= 0:
+                    window = candidate
+                    break
+                if candidate.hwnd != stable_hwnd:
+                    stable_hwnd = candidate.hwnd
+                    stable_since = now
+                elif now - stable_since >= stable_window_seconds:
+                    window = candidate
+                    break
+            else:
+                stable_hwnd = None
+                stable_since = None
             if cancellation_requested is not None and cancellation_requested():
                 return False, "프로그램 창 확인이 취소되었습니다."
-            if (
-                self._program_process is not None
-                and self._program_process.poll() is not None
-            ):
-                return False, "대상 프로그램이 창 생성 전에 종료되었습니다."
-            if time.monotonic() >= deadline:
+            if now >= deadline:
                 return False, "대상 프로그램 창을 찾지 못했습니다."
             time.sleep(0.25)
-        
-        window = candidates[0]
-        self._program_process = None
+
         self._target_hwnd = window.hwnd
 
         controller = Win32Controller(
@@ -397,13 +418,15 @@ class AppRuntime:
             return False, f"실행 파일을 찾을 수 없습니다: {executable_path}"
 
         if self._program_is_running(executable_path.name):
-            self._program_process = None
             return True, "대상 프로그램이 이미 실행 중입니다."
 
         try:
-            self._program_process = subprocess.Popen(
-                [str(executable_path)],
-                cwd=str(executable_path.parent),
+            launch_command, working_directory = build_program_launch_command(
+                executable_path
+            )
+            subprocess.Popen(
+                launch_command,
+                cwd=str(working_directory),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -482,6 +505,11 @@ class AppRuntime:
             created, create_message = self._create_controller(
                 controller_settings,
                 wait_timeout_seconds=wait_timeout,
+                stable_window_seconds=(
+                    PROGRAM_WINDOW_STABLE_SECONDS
+                    if program_launch_requested
+                    else 0
+                ),
                 cancellation_requested=cancellation_requested,
             )
             if not created:
@@ -563,7 +591,6 @@ class AppRuntime:
                 prepared_tasks.append((entry, override_param))
 
             jobs = []
-            executed_entries = []
             with self._task_post_lock:
                 # MaaFW는 큐가 비면 controller를 자동으로 inactive 처리한다. 모든 작업을
                 # 먼저 등록해야 최소화한 Win32 창이 중간 작업에서 복원되지 않는다.
@@ -575,20 +602,15 @@ class AppRuntime:
                     else:
                         job = self.tasker.post_task(entry)
                     jobs.append((entry, job))
-                    executed_entries.append(entry)
 
-            failed_entries = []
+            failed_labels = []
             for entry, job in jobs:
                 job.wait()
                 if not job.succeeded:
-                    failed_entries.append(entry)
+                    failed_labels.append(self._get_task_label(entry))
 
-            if failed_entries:
-                return (
-                    False,
-                    f"일부 작업에 실패했습니다: {', '.join(failed_entries)} "
-                    f"(전체 실행 작업: {', '.join(executed_entries)})"
-                )
+            if failed_labels:
+                return False, f"일부 작업에 실패했습니다: {', '.join(failed_labels)}"
 
             return True, "모든 작업을 완료했습니다."
         finally:
@@ -609,7 +631,6 @@ class AppRuntime:
                         self._context_sink_id = None
 
                 cleanup_errors = []
-                self._program_process = None
 
                 # Tasker가 보유하는 controller 참조부터 해제한다.
                 self.tasker = None

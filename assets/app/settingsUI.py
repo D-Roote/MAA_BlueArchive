@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.runtime import WIN32_METHOD_DEFAULTS, WIN32_METHOD_PRIORITY
-from app.program import (
+from app.pg_init import (
     DEFAULT_PROGRAM_CONFIG,
     find_auto_program_executable,
     find_program_executable,

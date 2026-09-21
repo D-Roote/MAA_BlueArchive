@@ -30,14 +30,19 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
 
-from app.program import (
+from app.pg_init import (
     DEFAULT_PROGRAM_CONFIG,
     find_auto_program_executable,
     find_program_executable,
     normalize_program_config,
     resolve_manual_program_path,
 )
-from app.runtime import AppRuntime, LogSinkFocus, WindowPlacement
+from app.runtime import (
+    AppRuntime,
+    LogSinkFocus,
+    PROGRAM_WINDOW_STABLE_SECONDS,
+    WindowPlacement,
+)
 from app.settingsUI import SettingsStore
 from app.winUI import (
     DARK_CAPTION_COLOR,
@@ -280,6 +285,26 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(succeeded)
         self.assertEqual(find_windows.call_count, 2)
 
+    def test_controller_ignores_transient_window_until_target_is_stable(self):
+        transient_window = SimpleNamespace(hwnd=222, window_name="Blue Archive")
+        game_window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
+        with patch(
+            "app.runtime.Toolkit.find_desktop_windows",
+            side_effect=[[transient_window], [], [game_window], [game_window]],
+        ) as find_windows, patch(
+            "app.runtime.time.monotonic", side_effect=[0, 0, 1, 2, 7]
+        ), patch("app.runtime.Win32Controller") as controller, patch(
+            "app.runtime.time.sleep"
+        ):
+            succeeded, _message = self.runtime._create_controller(
+                wait_timeout_seconds=30,
+                stable_window_seconds=PROGRAM_WINDOW_STABLE_SECONDS,
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(find_windows.call_count, 4)
+        self.assertEqual(controller.call_args.kwargs["hWnd"], game_window.hwnd)
+
     def test_program_launch_starts_configured_executable(self):
         with tempfile.TemporaryDirectory() as temp:
             executable = Path(temp) / "BlueArchive.exe"
@@ -301,7 +326,44 @@ class RuntimeLifecycleTests(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command, [str(executable.resolve())])
         self.assertEqual(popen.call_args.kwargs["cwd"], str(executable.parent.resolve()))
-        self.assertIs(self.runtime._program_process, process)
+
+    def test_program_launch_uses_steam_url_for_steam_install(self):
+        with tempfile.TemporaryDirectory() as temp:
+            steam_root = Path(temp) / "Steam"
+            launcher = steam_root / "steam.exe"
+            executable = (
+                steam_root
+                / "steamapps"
+                / "common"
+                / "BlueArchive"
+                / "BlueArchive.exe"
+            )
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            executable.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_bytes(b"")
+            executable.write_bytes(b"")
+            manifest = steam_root / "steamapps" / "appmanifest_3557620.acf"
+            manifest.write_text(
+                '"AppState"\n{\n'
+                '\t"appid"\t\t"3557620"\n'
+                f'\t"LauncherPath"\t\t"{launcher}"\n'
+                '\t"installdir"\t\t"BlueArchive"\n'
+                '}\n',
+                encoding="utf-8",
+            )
+            settings = {"resolved_path": str(executable)}
+
+            with patch.object(
+                self.runtime, "_program_is_running", return_value=False
+            ), patch("app.runtime.subprocess.Popen") as popen:
+                succeeded, _message = self.runtime._launch_program(settings)
+
+        self.assertTrue(succeeded)
+        self.assertEqual(
+            popen.call_args.args[0],
+            [str(launcher.resolve()), "steam://run/3557620"],
+        )
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(steam_root.resolve()))
 
     def test_program_launch_skips_executable_when_process_is_running(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -336,6 +398,10 @@ class RuntimeLifecycleTests(unittest.TestCase):
         launch_program.assert_called_once_with(settings)
         create_call = self.runtime._create_controller.call_args
         self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+        self.assertEqual(
+            create_call.kwargs["stable_window_seconds"],
+            PROGRAM_WINDOW_STABLE_SECONDS,
+        )
 
     def test_launch_task_rejects_missing_program_path_before_controller_creation(self):
         self.configure_initialization()
@@ -399,6 +465,23 @@ class RuntimeLifecycleTests(unittest.TestCase):
         first_job.wait.assert_called_once()
         second_job.wait.assert_called_once()
         self.runtime._user32.ShowWindow.assert_called_once_with(123, 6)
+
+    def test_failed_task_message_uses_interface_label_without_queue_summary(self):
+        tasker = MagicMock()
+        tasker.post_task.return_value = make_job(False)
+        self.runtime.tasker = tasker
+        self.runtime._target_hwnd = 123
+
+        with patch.object(
+            self.runtime, "_resize_window_for_task", return_value=True
+        ), patch.object(
+            self.runtime, "release_session", return_value=(True, "released")
+        ):
+            succeeded, message = self.runtime.run_task([("Login_Main", {})])
+
+        self.assertFalse(succeeded)
+        self.assertEqual(message, "일부 작업에 실패했습니다: 게임 로그인")
+        self.assertNotIn("전체 실행 작업", message)
 
     def test_reinitialize_releases_old_binding_and_sink(self):
         self.configure_initialization()
