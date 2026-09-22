@@ -2236,6 +2236,16 @@ class UILifecycleTests(unittest.TestCase):
         self.window.show()
         self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
+        automatic_path = self.window.runtime.user_dir / "AutoGame" / "BlueArchive.exe"
+        with patch(
+            "app.settingsUI.find_auto_program_executable",
+            return_value=automatic_path,
+        ), patch(
+            "app.settingsUI.find_program_executable",
+            return_value=automatic_path,
+        ):
+            panel._refresh_program_status()
+        self.app.processEvents()
         initial_section_height = panel._sections[1].height()
         invalid_path = self.window.runtime.user_dir / "MissingGame"
         panel.program_path_input.setText(str(invalid_path))
@@ -2249,7 +2259,6 @@ class UILifecycleTests(unittest.TestCase):
         self.assertIn("파일을 확인할 수 없습니다", panel.program_active_status.text())
         self.assertEqual(panel.program_settings()["manual_path"], "")
 
-        automatic_path = self.window.runtime.user_dir / "AutoGame" / "BlueArchive.exe"
         with patch(
             "app.settingsUI.find_auto_program_executable",
             return_value=automatic_path,
@@ -2259,9 +2268,15 @@ class UILifecycleTests(unittest.TestCase):
         ):
             panel.program_apply_button.click()
         self.assertIsNotNone(panel._program_status_animation)
+        self.assertEqual(
+            bytes(panel._program_status_animation.propertyName()), b"opacity"
+        )
         self.assertFalse(panel.program_active_status.property("pathValid"))
         self.assertIn("파일을 확인할 수 없습니다", panel.program_active_status.text())
-        QTest.qWait(180)
+        height_while_fading = panel._sections[1].height()
+        QTest.qWait(70)
+        self.assertEqual(panel._sections[1].height(), height_while_fading)
+        QTest.qWait(110)
         self.assertTrue(panel.program_active_status_container.isHidden())
         self.assertLess(panel._sections[1].height(), expanded_height)
         self.assertEqual(panel.program_apply_button.text(), "확인")

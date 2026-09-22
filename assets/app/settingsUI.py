@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -315,6 +316,13 @@ class SettingsPanel(QWidget):
         active_status_layout.setContentsMargins(0, 8, 0, 0)
         active_status_layout.setSpacing(0)
         active_status_layout.addWidget(self.program_active_status)
+        self.program_active_status_effect = QGraphicsOpacityEffect(
+            self.program_active_status_container
+        )
+        self.program_active_status_effect.setOpacity(1.0)
+        self.program_active_status_container.setGraphicsEffect(
+            self.program_active_status_effect
+        )
         program_layout.addWidget(self.program_active_status_container)
         self.program_path_row.layout().setContentsMargins(0, 12, 0, 0)
         self._program_status_animation = None
@@ -607,11 +615,11 @@ class SettingsPanel(QWidget):
         ) is None:
             self._manual_path_error_active = True
             self.program_apply_button.setText("초기화")
-            self.program_active_status.setProperty("pathValid", False)
-            self.program_active_status.setText(
-                f"{config['executable_name']} 파일을 확인할 수 없습니다."
+            self._set_status_label(
+                self.program_active_status,
+                f"{config['executable_name']} 파일을 확인할 수 없습니다.",
+                False,
             )
-            self._refresh_status_style(self.program_active_status)
             self._set_program_active_status_visible(True, animate=True)
             return
 
@@ -627,8 +635,16 @@ class SettingsPanel(QWidget):
         label.style().polish(label)
         label.update()
 
+    def _set_status_label(self, label, text, is_valid):
+        if label.text() == text and label.property("pathValid") == is_valid:
+            return
+        label.setText(text)
+        label.setProperty("pathValid", is_valid)
+        self._refresh_status_style(label)
+
     def _set_program_active_status_visible(self, visible, animate=False):
         container = self.program_active_status_container
+        opacity_effect = self.program_active_status_effect
         if self._program_status_animation is not None:
             self._program_status_animation.stop()
             self._program_status_animation.deleteLater()
@@ -636,30 +652,35 @@ class SettingsPanel(QWidget):
 
         if not animate or not self.isVisible():
             container.setVisible(visible)
-            container.setMaximumHeight(16777215)
+            opacity_effect.setOpacity(1.0)
             container.updateGeometry()
             return
 
         if visible:
-            container.setMaximumHeight(16777215)
-            container.show()
-            target_height = container.sizeHint().height()
-            container.setMaximumHeight(0)
-            start_height = 0
+            if not container.isVisible():
+                opacity_effect.setOpacity(0.0)
+                container.show()
+            start_opacity = opacity_effect.opacity()
+            target_opacity = 1.0
         else:
-            start_height = container.height()
-            target_height = 0
+            if not container.isVisible():
+                opacity_effect.setOpacity(1.0)
+                return
+            start_opacity = opacity_effect.opacity()
+            target_opacity = 0.0
 
-        animation = QPropertyAnimation(container, b"maximumHeight", self)
+        # 레이아웃 높이는 매 프레임 바꾸지 않고 새 영역만 페이드하여
+        # 기존 설정 카드들이 반복해서 다시 그려지는 현상을 방지한다.
+        animation = QPropertyAnimation(opacity_effect, b"opacity", self)
         animation.setDuration(140)
         animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        animation.setStartValue(start_height)
-        animation.setEndValue(target_height)
+        animation.setStartValue(start_opacity)
+        animation.setEndValue(target_opacity)
 
         def finish_transition():
             if not visible:
                 container.hide()
-            container.setMaximumHeight(16777215)
+            opacity_effect.setOpacity(1.0)
             container.updateGeometry()
             if self._program_status_animation is animation:
                 self._program_status_animation = None
@@ -681,16 +702,20 @@ class SettingsPanel(QWidget):
         )
         auto_path = find_auto_program_executable(config)
         if auto_path is None:
-            self.program_auto_status.setText("자동 검색: 설치 위치를 찾지 못했습니다.")
-            self.program_auto_status.setProperty("pathValid", False)
+            self._set_status_label(
+                self.program_auto_status,
+                "자동 검색: 설치 위치를 찾지 못했습니다.",
+                False,
+            )
         else:
-            self.program_auto_status.setText(f"자동 검색: {auto_path}")
-            self.program_auto_status.setProperty("pathValid", True)
+            self._set_status_label(
+                self.program_auto_status,
+                f"자동 검색: {auto_path}",
+                True,
+            )
 
-        self._refresh_status_style(self.program_auto_status)
         if self._manual_path_error_active:
             self._set_program_active_status_visible(True, animate)
-            self._refresh_status_style(self.program_active_status)
             return
         if not has_manual_path:
             # 접히는 동안 마지막 수동 경로 상태를 유지해 색상과 문구가 튀지 않게 한다.
@@ -699,14 +724,17 @@ class SettingsPanel(QWidget):
 
         active_path = find_program_executable(config)
         if active_path is None:
-            self.program_active_status.setText(
-                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다."
+            self._set_status_label(
+                self.program_active_status,
+                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다.",
+                False,
             )
-            self.program_active_status.setProperty("pathValid", False)
         else:
-            self.program_active_status.setText(f"사용 경로: {active_path}")
-            self.program_active_status.setProperty("pathValid", True)
-        self._refresh_status_style(self.program_active_status)
+            self._set_status_label(
+                self.program_active_status,
+                f"사용 경로: {active_path}",
+                True,
+            )
         self._set_program_active_status_visible(True, animate)
 
     def _on_controller_changed(self, _index):
