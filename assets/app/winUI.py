@@ -10,7 +10,7 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QCursor, QDrag, QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtUiTools import QUiLoader
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QListWidget, QListWidgetItem, QWidget, 
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
-                               QPushButton, QRadioButton)
+                               QPushButton, QRadioButton, QStyle, QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import SettingsPanel
@@ -38,6 +38,10 @@ SETTINGS_ICON_SIZE = QSize(20, 20)
 SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 RESET_ICON_SIZE = QSize(18, 18)
 RESET_ICON_HOVER_SIZE = QSize(22, 22)
+COMPACT_SCROLLBAR_WIDTH = 2
+EXPANDED_SCROLLBAR_WIDTH = 5
+SCROLLBAR_ACTIVITY_TIMEOUT_MS = 700
+TASK_SETTINGS_TRAILING_GAP = 4
 PROGRAM_LAUNCH_TASK_NAME = "__ProgramLaunch"
 PROGRAM_LAUNCH_TASK = {
     "name": PROGRAM_LAUNCH_TASK_NAME,
@@ -297,6 +301,193 @@ class TaskFooterHoverFilter(QObject):
         self.footer.update()
 
 
+class RoundedScrollBarPaintFilter(QObject):
+    """Paint a pill-shaped handle because narrow Qt handles ignore QSS radius."""
+
+    def __init__(self, scroll_bar, contextual=False):
+        super().__init__(scroll_bar)
+        self.scroll_bar = scroll_bar
+        self.contextual = bool(contextual)
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll_bar and event.type() == QEvent.Type.Paint:
+            self._paint()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _is_dark_theme(self):
+        return (
+            getattr(self.scroll_bar.window(), "_effective_theme", TitleBarTheme.LIGHT)
+            == TitleBarTheme.DARK
+        )
+
+    def _surface_color(self):
+        if self.contextual:
+            return QColor("#172238" if self._is_dark_theme() else "#F8FAFC")
+        return QColor("#111A2B" if self._is_dark_theme() else "#F4F7FB")
+
+    def _handle_color(self):
+        return QColor("#168FBE" if self._is_dark_theme() else "#00AEEF")
+
+    def _slider_rect(self):
+        option = QStyleOptionSlider()
+        self.scroll_bar.initStyleOption(option)
+        slider_rect = self.scroll_bar.style().subControlRect(
+            QStyle.ComplexControl.CC_ScrollBar,
+            option,
+            QStyle.SubControl.SC_ScrollBarSlider,
+            self.scroll_bar,
+        )
+        if self.contextual:
+            left_inset = (
+                0
+                if self.scroll_bar.property("contextualExpanded")
+                else EXPANDED_SCROLLBAR_WIDTH - COMPACT_SCROLLBAR_WIDTH - 1
+            )
+            slider_rect.adjust(left_inset, 0, -1, 0)
+        return slider_rect
+
+    def _paint(self):
+        painter = QPainter(self.scroll_bar)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.scroll_bar.rect(), self._surface_color())
+
+        should_draw = self.scroll_bar.maximum() > self.scroll_bar.minimum()
+        if self.contextual:
+            should_draw = should_draw and bool(
+                self.scroll_bar.property("contextualVisible")
+            )
+        if should_draw:
+            slider_rect = QRectF(self._slider_rect())
+            if slider_rect.width() > 0 and slider_rect.height() > 0:
+                radius = min(slider_rect.width(), slider_rect.height()) / 2
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(self._handle_color())
+                painter.drawRoundedRect(slider_rect, radius, radius)
+        painter.end()
+
+
+def setup_rounded_vertical_scrollbar(scroll_area, contextual=False):
+    scroll_bar = scroll_area.verticalScrollBar()
+    scroll_bar._rounded_paint_filter = RoundedScrollBarPaintFilter(
+        scroll_bar, contextual=contextual
+    )
+    scroll_bar.installEventFilter(scroll_bar._rounded_paint_filter)
+
+
+class ContextualScrollBarController(QObject):
+    """Show a compact scrollbar only while its start-page area is in use."""
+
+    def __init__(self, scroll_area):
+        super().__init__(scroll_area)
+        self.scroll_area = scroll_area
+        self.viewport = scroll_area.viewport()
+        self.scroll_bar = scroll_area.verticalScrollBar()
+        self._activity_active = False
+        self._pointer_pressed = False
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.setInterval(SCROLLBAR_ACTIVITY_TIMEOUT_MS)
+        self._activity_timer.timeout.connect(self._finish_activity)
+
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_bar.setFixedWidth(EXPANDED_SCROLLBAR_WIDTH)
+        self.scroll_bar.setProperty("contextual", True)
+        self.scroll_bar.setProperty("contextualVisible", False)
+        self.scroll_bar.setProperty("contextualExpanded", False)
+        for widget in (scroll_area, self.viewport, self.scroll_bar):
+            widget.installEventFilter(self)
+        self.scroll_bar.rangeChanged.connect(self._schedule_sync)
+        self._refresh_style()
+
+    def eventFilter(self, watched, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Wheel:
+            self._begin_activity()
+        elif watched is self.scroll_bar and event_type == QEvent.Type.MouseButtonPress:
+            self._pointer_pressed = True
+            self._begin_activity(force_expanded=True)
+        elif watched is self.scroll_bar and event_type == QEvent.Type.MouseButtonRelease:
+            self._pointer_pressed = False
+            self._begin_activity()
+        elif event_type == QEvent.Type.Enter:
+            if watched is self.scroll_bar:
+                self._set_state(self._has_scroll_range(), True)
+            else:
+                self._set_state(self._has_scroll_range(), False)
+        elif event_type == QEvent.Type.Leave:
+            self._schedule_sync()
+        return super().eventFilter(watched, event)
+
+    @staticmethod
+    def _contains_global_position(widget, global_position):
+        return widget.rect().contains(widget.mapFromGlobal(global_position))
+
+    def _has_scroll_range(self):
+        return self.scroll_bar.maximum() > self.scroll_bar.minimum()
+
+    def _begin_activity(self, force_expanded=False):
+        self._activity_active = True
+        self._activity_timer.start()
+        expanded = force_expanded or self._pointer_pressed or self.scroll_bar.underMouse()
+        self._set_state(self._has_scroll_range(), expanded)
+
+    def _finish_activity(self):
+        self._activity_active = False
+        self._sync_state()
+
+    def _schedule_sync(self, *_args):
+        QTimer.singleShot(0, self._sync_state)
+
+    def _sync_state(self):
+        if not self._has_scroll_range():
+            self._set_state(False, False)
+            return
+
+        global_position = QCursor.pos()
+        pointer_in_area = self._contains_global_position(
+            self.scroll_area, global_position
+        )
+        pointer_on_scrollbar = self._contains_global_position(
+            self.scroll_bar, global_position
+        )
+        visible = (
+            pointer_in_area
+            or self._activity_active
+            or self._pointer_pressed
+            or self.scroll_bar.isSliderDown()
+        )
+        expanded = visible and (
+            pointer_on_scrollbar
+            or self._pointer_pressed
+            or self.scroll_bar.isSliderDown()
+        )
+        self._set_state(visible, expanded)
+
+    def _set_state(self, visible, expanded):
+        visible = bool(visible)
+        expanded = bool(visible and expanded)
+        if (
+            self.scroll_bar.property("contextualVisible") == visible
+            and self.scroll_bar.property("contextualExpanded") == expanded
+        ):
+            return
+        self.scroll_bar.setProperty("contextualVisible", visible)
+        self.scroll_bar.setProperty("contextualExpanded", expanded)
+        self._refresh_style()
+
+    def _refresh_style(self):
+        self.scroll_bar.style().unpolish(self.scroll_bar)
+        self.scroll_bar.style().polish(self.scroll_bar)
+        self.scroll_bar.update()
+
+
+def setup_contextual_vertical_scrollbar(scroll_area):
+    scroll_bar = scroll_area.verticalScrollBar()
+    scroll_bar._contextual_controller = ContextualScrollBarController(scroll_area)
+    setup_rounded_vertical_scrollbar(scroll_area, contextual=True)
+
+
 class DeleteDropEventFilter(QObject):
     """삭제 영역 위에서 드래그 가능 커서를 유지하되 삭제는 목록이 처리한다."""
 
@@ -532,6 +723,7 @@ class OptionItemWidget(QWidget):
         
         if self.task_options:
             layout.addWidget(self.setting_btn)
+            layout.addSpacing(TASK_SETTINGS_TRAILING_GAP)
             self.setting_btn.clicked.connect(lambda: on_setting_clicked_callback(self))
         else:
             self.setting_btn.hide()
@@ -597,6 +789,7 @@ class OptionItemWidget(QWidget):
 class DragDropListWidget(QListWidget):
     TASK_DRAG_MIME = "application/x-maaba-task-item"
     DRAG_LINE_MARGIN = 5
+    DRAG_LINE_RIGHT_MARGIN = DRAG_LINE_MARGIN + TASK_SETTINGS_TRAILING_GAP
     drag_started = Signal()
     drag_finished = Signal(object, object)
 
@@ -871,7 +1064,10 @@ class DragDropListWidget(QListWidget):
     def _drag_line_span(self):
         return (
             self.DRAG_LINE_MARGIN,
-            max(self.DRAG_LINE_MARGIN, self.viewport().width() - self.DRAG_LINE_MARGIN),
+            max(
+                self.DRAG_LINE_MARGIN,
+                self.viewport().width() - self.DRAG_LINE_RIGHT_MARGIN,
+            ),
         )
 
 # 메인 윈도우
@@ -907,6 +1103,9 @@ class MainWindow(QMainWindow):
             with open(dark_qss_path, "r", encoding="utf-8") as file:
                 self._dark_style_sheet = file.read()
         self.setStyleSheet(self._base_style_sheet)
+        setup_contextual_vertical_scrollbar(self.ui.taskOptionList)
+        setup_contextual_vertical_scrollbar(self.ui.logPrintText)
+        setup_rounded_vertical_scrollbar(self.ui.scrollSettingWidget)
 
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)
@@ -928,6 +1127,7 @@ class MainWindow(QMainWindow):
         self._allow_option_edits_while_running = False
 
         self.setup_settings_ui()
+        setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
         self.setup_connections()
 
         self.setup_dynamic_options()

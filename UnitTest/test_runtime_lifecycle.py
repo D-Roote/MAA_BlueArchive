@@ -53,6 +53,7 @@ from app.runtime import (
 )
 from app.settingsUI import SettingsStore
 from app.winUI import (
+    COMPACT_SCROLLBAR_WIDTH,
     DARK_CAPTION_COLOR,
     DARK_CAPTION_TEXT_COLOR,
     DARK_QSS_FILENAME,
@@ -60,6 +61,7 @@ from app.winUI import (
     DWMWA_CAPTION_COLOR,
     DWMWA_TEXT_COLOR,
     DWMWA_USE_IMMERSIVE_DARK_MODE,
+    EXPANDED_SCROLLBAR_WIDTH,
     MainWindow,
     PROGRAM_LAUNCH_ENTRY,
     PROGRAM_LAUNCH_TASK_NAME,
@@ -1677,7 +1679,10 @@ class UILifecycleTests(unittest.TestCase):
         line_start, line_end = task_list._drag_line_span()
         self.assertEqual(task_list.DRAG_LINE_MARGIN, 5)
         self.assertEqual(line_start, task_list.DRAG_LINE_MARGIN)
-        self.assertEqual(line_end, task_list.viewport().width() - task_list.DRAG_LINE_MARGIN)
+        self.assertEqual(
+            line_end,
+            task_list.viewport().width() - task_list.DRAG_LINE_RIGHT_MARGIN,
+        )
         first_widget = task_list.itemWidget(first)
         checkbox_left = first_widget.checkbox.mapTo(task_list.viewport(), QPoint(0, 0)).x()
         settings_icon_right = (
@@ -2177,6 +2182,173 @@ class UILifecycleTests(unittest.TestCase):
             )
             with self.subTest(width=width):
                 self.assertEqual(gaps, (16,) * 6)
+
+    def test_start_page_scrollbars_follow_pointer_and_activity(self):
+        self.window.show()
+        self.window.resize(1000, 500)
+        self.window.ui.logPrintText.setPlainText(
+            "\n".join(f"scroll line {index}" for index in range(100))
+        )
+        self.app.processEvents()
+        areas = (self.window.option_list_widget, self.window.ui.logPrintText)
+
+        def handle_columns(scroll_bar):
+            image = scroll_bar.grab().toImage()
+            surface_color = scroll_bar._rounded_paint_filter._surface_color()
+            return [
+                x
+                for x in range(image.width())
+                if any(
+                    image.pixelColor(x, y) != surface_color
+                    for y in range(image.height())
+                )
+            ]
+
+        for theme in ("light", "dark"):
+            self.window.settings_panel.theme_combo.setCurrentIndex(
+                self.window.settings_panel.theme_combo.findData(theme)
+            )
+            self.app.processEvents()
+            for area in areas:
+                with self.subTest(theme=theme, area=area.objectName()):
+                    scroll_bar = area.verticalScrollBar()
+                    controller = scroll_bar._contextual_controller
+                    scroll_bar.setRange(0, 100)
+                    scroll_bar.setPageStep(25)
+                    self.app.processEvents()
+                    controller._activity_timer.stop()
+                    controller._activity_active = False
+
+                    with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+                        controller._sync_state()
+                    self.assertEqual(scroll_bar.width(), EXPANDED_SCROLLBAR_WIDTH)
+                    self.assertFalse(scroll_bar.property("contextualVisible"))
+                    self.assertFalse(scroll_bar.property("contextualExpanded"))
+                    self.assertEqual(handle_columns(scroll_bar), [])
+
+                    area_position = area.viewport().mapToGlobal(
+                        area.viewport().rect().center()
+                    )
+                    with patch("app.winUI.QCursor.pos", return_value=area_position):
+                        controller._sync_state()
+                    self.assertTrue(scroll_bar.property("contextualVisible"))
+                    self.assertFalse(scroll_bar.property("contextualExpanded"))
+                    self.assertEqual(
+                        handle_columns(scroll_bar),
+                        list(
+                            range(
+                                EXPANDED_SCROLLBAR_WIDTH
+                                - COMPACT_SCROLLBAR_WIDTH
+                                - 1,
+                                EXPANDED_SCROLLBAR_WIDTH - 1,
+                            )
+                        ),
+                    )
+
+                    scroll_position = scroll_bar.mapToGlobal(
+                        scroll_bar.rect().center()
+                    )
+                    with patch("app.winUI.QCursor.pos", return_value=scroll_position):
+                        controller._sync_state()
+                    self.assertTrue(scroll_bar.property("contextualExpanded"))
+                    self.assertEqual(
+                        handle_columns(scroll_bar),
+                        list(range(EXPANDED_SCROLLBAR_WIDTH - 1)),
+                    )
+                    expanded_image = scroll_bar.grab().toImage()
+                    handle_color = scroll_bar._rounded_paint_filter._handle_color()
+                    self.assertNotEqual(
+                        expanded_image.pixelColor(0, 0), handle_color
+                    )
+                    self.assertEqual(
+                        expanded_image.pixelColor(1, 2), handle_color
+                    )
+
+                    with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+                        controller.eventFilter(
+                            area.viewport(), QEvent(QEvent.Type.Wheel)
+                        )
+                    self.assertTrue(scroll_bar.property("contextualVisible"))
+                    self.assertFalse(scroll_bar.property("contextualExpanded"))
+                    self.assertTrue(controller._activity_timer.isActive())
+                    with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+                        controller._finish_activity()
+                    self.assertFalse(scroll_bar.property("contextualVisible"))
+
+                    controller.eventFilter(
+                        scroll_bar, QEvent(QEvent.Type.MouseButtonPress)
+                    )
+                    self.assertTrue(scroll_bar.property("contextualVisible"))
+                    self.assertTrue(scroll_bar.property("contextualExpanded"))
+                    controller.eventFilter(
+                        scroll_bar, QEvent(QEvent.Type.MouseButtonRelease)
+                    )
+                    self.assertFalse(controller._pointer_pressed)
+
+        normal_scrollbars = (
+            self.window.ui.scrollSettingWidget.verticalScrollBar(),
+            self.window.settings_panel.detail_scroll.verticalScrollBar(),
+        )
+        for scroll_bar in normal_scrollbars:
+            self.assertIsNone(scroll_bar.property("contextual"))
+            self.assertEqual(scroll_bar.width(), EXPANDED_SCROLLBAR_WIDTH)
+            scroll_bar.setRange(0, 100)
+            scroll_bar.setPageStep(25)
+            image = scroll_bar.grab().toImage()
+            handle_color = scroll_bar._rounded_paint_filter._handle_color()
+            self.assertNotEqual(image.pixelColor(0, 0), handle_color)
+            self.assertEqual(image.pixelColor(2, 2), handle_color)
+
+        task_scrollbar = self.window.option_list_widget.verticalScrollBar()
+        log_scrollbar = self.window.ui.logPrintText.verticalScrollBar()
+        task_right_gap = (
+            self.window.option_list_widget.width()
+            - task_scrollbar.mapTo(
+                self.window.option_list_widget,
+                QPoint(task_scrollbar.width(), 0),
+            ).x()
+        )
+        log_right_gap = (
+            self.window.ui.logPrintText.width()
+            - log_scrollbar.mapTo(
+                self.window.ui.logPrintText,
+                QPoint(log_scrollbar.width(), 0),
+            ).x()
+        )
+        self.assertEqual(task_right_gap, 2)
+        self.assertEqual(log_right_gap, task_right_gap)
+
+    def test_task_settings_button_stays_fixed_left_of_scrollbar_slot(self):
+        self.window.show()
+        self.app.processEvents()
+        task_list = self.window.option_list_widget
+        task_widget = self.find_task_widget(self.window)
+        scroll_bar = task_list.verticalScrollBar()
+        controller = scroll_bar._contextual_controller
+        scroll_bar.setRange(0, 100)
+        self.app.processEvents()
+
+        positions = []
+        for visible, expanded in ((False, False), (True, False), (True, True)):
+            controller._set_state(visible, expanded)
+            self.app.processEvents()
+            positions.append(
+                task_widget.setting_btn.mapTo(task_list.viewport(), QPoint(0, 0)).x()
+            )
+        self.assertEqual(len(set(positions)), 1)
+
+        settings_icon_right = (
+            positions[0]
+            + (
+                task_widget.setting_btn.width()
+                + task_widget.setting_btn.iconSize().width()
+            )
+            // 2
+        )
+        self.assertEqual(
+            settings_icon_right,
+            task_list.viewport().width() - task_list.DRAG_LINE_RIGHT_MARGIN,
+        )
 
     def test_settings_controls_align_in_both_themes(self):
         panel = self.window.settings_panel

@@ -173,7 +173,7 @@ QScrollBar::add-page:vertical,
 QScrollBar::sub-page:vertical,
 QScrollBar::add-page:horizontal,
 QScrollBar::sub-page:horizontal {
-    background-color: #263650;
+    background-color: transparent;
 }
 
 QScrollBar::handle:vertical,
@@ -181,6 +181,23 @@ QScrollBar::handle:horizontal,
 QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover {
     background-color: #168FBE;
+    border-color: #168FBE;
+}
+
+QScrollBar[contextual="true"]:vertical,
+QScrollBar[contextual="true"]::add-page:vertical,
+QScrollBar[contextual="true"]::sub-page:vertical {
+    background-color: #172238;
+}
+
+QScrollBar[contextual="true"]::handle:vertical {
+    background-color: transparent;
+    border-color: transparent;
+}
+
+QScrollBar[contextual="true"][contextualVisible="true"]::handle:vertical {
+    background-color: #168FBE;
+    border-color: #168FBE;
 }
 
 QWidget#settingsPanel,
