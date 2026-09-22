@@ -1473,6 +1473,8 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(popup.currentRow(), -1)
         self.assertEqual(popup.selectedItems(), [])
         self.assertEqual(popup._dismiss_timer.interval(), 80)
+        self.assertFalse(popup._dismiss_timer.isSingleShot())
+        self.assertTrue(popup._dismiss_timer.isActive())
         popup_position = popup.mapToGlobal(popup.rect().center())
         with patch("app.winUI.QCursor.pos", return_value=popup_position):
             popup._hide_if_pointer_outside()
@@ -1480,6 +1482,43 @@ class UILifecycleTests(unittest.TestCase):
         with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
             popup._hide_if_pointer_outside()
         self.assertFalse(popup.isVisible())
+        self.assertFalse(popup._dismiss_timer.isActive())
+
+        add.click()
+        self.assertTrue(popup.isVisible())
+        add.click()
+        self.assertFalse(popup.isVisible())
+
+        add.click()
+        self.assertTrue(popup.isVisible())
+        below_add = add.mapToGlobal(QPoint(add.width() // 2, add.height() + 2))
+        with patch("app.winUI.QCursor.pos", return_value=below_add):
+            popup._hide_if_pointer_outside()
+        self.assertFalse(popup.isVisible())
+
+        add.click()
+        self.assertTrue(popup.isVisible())
+        actions._footer_hover_filter._set_hovered(True)
+        add.setDown(True)
+        anchor_position = add.mapToGlobal(add.rect().center())
+        popup_press = MagicMock()
+        popup_press.type.return_value = QEvent.Type.MouseButtonPress
+        popup_press.globalPosition.return_value = SimpleNamespace(
+            toPoint=lambda: anchor_position
+        )
+        with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+            self.assertTrue(popup.eventFilter(popup, popup_press))
+        popup_press.accept.assert_called_once_with()
+        self.assertFalse(popup.isVisible())
+        self.assertFalse(add.isDown())
+        self.assertFalse(actions.property("groupHovered"))
+
+        add.click()
+        self.assertTrue(popup.isVisible())
+        QTest.mouseClick(add, Qt.MouseButton.LeftButton, pos=add.rect().center())
+        self.app.processEvents()
+        self.assertFalse(popup.isVisible())
+
         add.click()
         self.app.processEvents()
         QTest.mouseClick(

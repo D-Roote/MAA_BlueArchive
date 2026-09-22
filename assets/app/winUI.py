@@ -329,6 +329,7 @@ class TaskSettingsButton(QPushButton):
 
 class TaskPickerPopup(QListWidget):
     task_selected = Signal(object)
+    popup_hidden = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -342,33 +343,54 @@ class TaskPickerPopup(QListWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._dismiss_timer = QTimer(self)
-        self._dismiss_timer.setSingleShot(True)
+        self._dismiss_timer.setSingleShot(False)
         self._dismiss_timer.setInterval(80)
         self._dismiss_timer.timeout.connect(self._hide_if_pointer_outside)
         self.itemClicked.connect(self._select_task)
         self.itemActivated.connect(self._select_task)
 
     def set_anchor_button(self, button):
-        if self._anchor_button is not None:
-            self._anchor_button.removeEventFilter(self)
         self._anchor_button = button
-        button.installEventFilter(self)
 
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "_anchor_button", None):
-            if event.type() == QEvent.Type.Enter:
-                self._dismiss_timer.stop()
-            elif event.type() == QEvent.Type.Leave:
-                self._dismiss_timer.start()
+        if (
+            self.isVisible()
+            and self._anchor_button is not None
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
+            global_position = (
+                event.globalPosition().toPoint()
+                if hasattr(event, "globalPosition")
+                else QCursor.pos()
+            )
+            if self._contains_global_position(
+                self._anchor_button, global_position
+            ):
+                # Qt.Popup grabs outside clicks, so the receiver may be the popup
+                # even when the pointer is over the anchor button. Consume that
+                # press after closing to avoid both reopening and a stuck :pressed.
+                self.hide()
+                event.accept()
+                return True
         return super().eventFilter(watched, event)
 
-    def enterEvent(self, event):
-        self._dismiss_timer.stop()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
+    def showEvent(self, event):
+        super().showEvent(event)
+        application = QApplication.instance()
+        if application is not None:
+            application.installEventFilter(self)
         self._dismiss_timer.start()
-        super().leaveEvent(event)
+
+    def hideEvent(self, event):
+        self._dismiss_timer.stop()
+        application = QApplication.instance()
+        if application is not None:
+            application.removeEventFilter(self)
+        if self._anchor_button is not None:
+            self._anchor_button.setDown(False)
+            self._anchor_button.update()
+        super().hideEvent(event)
+        self.popup_hidden.emit()
 
     @staticmethod
     def _contains_global_position(widget, global_position):
@@ -1223,6 +1245,9 @@ class MainWindow(QMainWindow):
         self.task_picker = TaskPickerPopup(self)
         self.task_picker.set_anchor_button(self.task_add_button)
         self.task_picker.task_selected.connect(self.add_task)
+        self.task_picker.popup_hidden.connect(
+            self.task_list_actions._footer_hover_filter._sync_hovered
+        )
         self.task_add_button.clicked.connect(self.show_task_picker)
         self.task_reset_button.clicked.connect(self.reset_task_list)
 
@@ -1355,6 +1380,9 @@ class MainWindow(QMainWindow):
 
     def show_task_picker(self):
         if not self.task_add_button.isEnabled():
+            return
+        if self.task_picker.isVisible():
+            self.task_picker.hide()
             return
         self.task_picker.show_above(
             self.task_list_actions,
