@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QRadioButton,
+    QStyle,
+    QStyleOptionButton,
 )
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
@@ -2006,6 +2008,9 @@ class UILifecycleTests(unittest.TestCase):
 
     def test_settings_tab_uses_navigation_and_single_scroll_area(self):
         panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
 
         self.assertEqual(panel.navigation.count(), 4)
         self.assertEqual(
@@ -2041,18 +2046,56 @@ class UILifecycleTests(unittest.TestCase):
                 "작업 시작 시 로그 초기화",
             ],
         )
+        general_checkboxes = (
+            panel.minimize_checkbox,
+            panel.program_launch_checkbox,
+            panel.runtime_edit_checkbox,
+            panel.clear_log_checkbox,
+        )
+        general_section = panel._sections[0]
+        for index, checkbox in enumerate(general_checkboxes):
+            with self.subTest(checkbox_index=index):
+                self.assertEqual(checkbox.text(), "")
+                row = checkbox.parentWidget()
+                row_position = row.mapTo(general_section, QPoint(0, 0))
+                self.assertEqual(
+                    row_position.x(),
+                    general_section.width() - row_position.x() - row.width(),
+                )
+                option = QStyleOptionButton()
+                checkbox.initStyleOption(option)
+                indicator = checkbox.style().subElementRect(
+                    QStyle.SubElement.SE_CheckBoxIndicator,
+                    option,
+                    checkbox,
+                )
+                indicator_right = (
+                    checkbox.mapTo(row, indicator.topLeft()).x()
+                    + indicator.width()
+                )
+                self.assertEqual(row.width() - indicator_right, 12)
 
         rows = panel.findChildren(QFrame, "settingsRow")
         self.assertTrue(rows)
-        for row in rows:
-            with self.subTest(row=row):
+        for row_index, row in enumerate(rows):
+            with self.subTest(row_index=row_index):
                 self.assertIsInstance(row.layout(), QGridLayout)
                 row_margins = row.layout().contentsMargins()
                 section_layout = row.parentWidget().layout()
                 last_widget = section_layout.itemAt(section_layout.count() - 1).widget()
-                expected_bottom = 0 if last_widget is row else 12
+                expected_bottom = (
+                    0 if last_widget is row or row is panel.program_path_row else 12
+                )
+                expected_right = (
+                    12 if row.parentWidget() is general_section else 0
+                )
                 self.assertEqual(
-                    (row_margins.top(), row_margins.bottom()), (12, expected_bottom)
+                    (
+                        row_margins.top(),
+                        row_margins.right(),
+                        row_margins.bottom(),
+                    ),
+                    (12, expected_right, expected_bottom),
                 )
                 self.assertIs(
                     row.layout().itemAtPosition(0, 1).widget(),
@@ -2061,8 +2104,8 @@ class UILifecycleTests(unittest.TestCase):
 
         sections = panel.findChildren(QFrame, "settingsSection")
         self.assertTrue(sections)
-        for section in sections:
-            with self.subTest(section=section):
+        for section_index, section in enumerate(sections):
+            with self.subTest(section_index=section_index):
                 section_margins = section.layout().contentsMargins()
                 self.assertEqual(
                     (section_margins.top(), section_margins.bottom()),
@@ -2144,6 +2187,9 @@ class UILifecycleTests(unittest.TestCase):
 
     def test_program_path_can_be_confirmed_from_custom_directory(self):
         panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
         task_list = self.window.option_list_widget
         self.assertEqual(task_list.item(0).data(Qt.UserRole), PROGRAM_LAUNCH_TASK_NAME)
         builtin = self.find_task_widget(self.window, PROGRAM_LAUNCH_TASK_NAME)
@@ -2161,7 +2207,11 @@ class UILifecycleTests(unittest.TestCase):
         settings = panel.program_settings()
         self.assertEqual(settings["manual_path"], str(install_directory))
         self.assertEqual(settings["resolved_path"], str(executable.resolve()))
+        self.assertTrue(panel.program_active_status.isVisible())
         self.assertTrue(panel.program_active_status.property("pathValid"))
+        self.assertEqual(panel.program_apply_button.text(), "초기화")
+        self.assertNotIn("(수동 경로)", panel.program_active_status.text())
+        self.assertTrue(panel.program_active_status.text().startswith("사용 경로: "))
         self.assertTrue(builtin.checkbox.isEnabled())
         builtin.checkbox.setChecked(True)
         self.assertEqual(self.window.build_execution_queue()[0][0], PROGRAM_LAUNCH_ENTRY)
@@ -2169,6 +2219,71 @@ class UILifecycleTests(unittest.TestCase):
         config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         self.assertEqual(config["program"]["manual_path"], str(install_directory))
+
+        panel.program_apply_button.click()
+        QTest.qWait(180)
+        settings = panel.program_settings()
+        self.assertEqual(settings["manual_path"], "")
+        self.assertEqual(panel.program_path_input.text(), "")
+        self.assertTrue(panel.program_active_status_container.isHidden())
+        self.assertEqual(panel.program_apply_button.text(), "확인")
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["program"]["manual_path"], "")
+        self.assertEqual(changed.call_count, 2)
+
+    def test_invalid_manual_path_switches_to_reset_and_collapses_smoothly(self):
+        panel = self.window.settings_panel
+        self.window.show()
+        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.app.processEvents()
+        initial_section_height = panel._sections[1].height()
+        invalid_path = self.window.runtime.user_dir / "MissingGame"
+        panel.program_path_input.setText(str(invalid_path))
+
+        panel.program_apply_button.click()
+        QTest.qWait(180)
+        expanded_height = panel._sections[1].height()
+        self.assertGreater(expanded_height, initial_section_height)
+        self.assertEqual(panel.program_apply_button.text(), "초기화")
+        self.assertTrue(panel.program_active_status.isVisible())
+        self.assertIn("파일을 확인할 수 없습니다", panel.program_active_status.text())
+        self.assertEqual(panel.program_settings()["manual_path"], "")
+
+        automatic_path = self.window.runtime.user_dir / "AutoGame" / "BlueArchive.exe"
+        with patch(
+            "app.settingsUI.find_auto_program_executable",
+            return_value=automatic_path,
+        ), patch(
+            "app.settingsUI.find_program_executable",
+            return_value=automatic_path,
+        ):
+            panel.program_apply_button.click()
+        self.assertIsNotNone(panel._program_status_animation)
+        self.assertFalse(panel.program_active_status.property("pathValid"))
+        self.assertIn("파일을 확인할 수 없습니다", panel.program_active_status.text())
+        QTest.qWait(180)
+        self.assertTrue(panel.program_active_status_container.isHidden())
+        self.assertLess(panel._sections[1].height(), expanded_height)
+        self.assertEqual(panel.program_apply_button.text(), "확인")
+        self.assertEqual(panel.program_path_input.text(), "")
+
+    def test_automatic_program_path_hides_manual_path_status(self):
+        panel = self.window.settings_panel
+        automatic_path = self.window.runtime.user_dir / "AutoGame" / "BlueArchive.exe"
+        with patch(
+            "app.settingsUI.find_auto_program_executable",
+            return_value=automatic_path,
+        ), patch(
+            "app.settingsUI.find_program_executable",
+            return_value=automatic_path,
+        ):
+            panel._refresh_program_status()
+
+        self.assertIn(str(automatic_path), panel.program_auto_status.text())
+        self.assertTrue(panel.program_active_status_container.isHidden())
+        self.assertEqual(panel.program_apply_button.text(), "확인")
+        row_margins = panel.program_path_row.layout().contentsMargins()
+        self.assertEqual((row_margins.top(), row_margins.bottom()), (12, 0))
 
     def test_minimize_setting_is_saved_only_to_maa_config(self):
         self.window.ui.minimizeEnableBtn.setChecked(True)
