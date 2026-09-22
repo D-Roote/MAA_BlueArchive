@@ -412,9 +412,11 @@ class TaskPickerPopup(QListWidget):
         horizontal_position = width_reference.mapToGlobal(QPoint(0, 0))
         self.setFixedSize(width_reference.width(), height)
         self.move(horizontal_position.x(), position.y() - height)
-        self.setCurrentRow(0)
         self.show()
         self.setFocus()
+        # show/focus 과정에서 Qt가 첫 행을 current item으로 지정하므로 마지막에 해제한다.
+        self.setCurrentRow(-1)
+        self.clearSelection()
 
     def _select_task(self, item):
         task = item.data(Qt.UserRole)
@@ -426,6 +428,15 @@ class TaskPickerPopup(QListWidget):
             self.hide()
             event.accept()
             return
+        if self.currentRow() < 0 and self.count():
+            if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Home):
+                self.setCurrentRow(0)
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_End):
+                self.setCurrentRow(self.count() - 1)
+                event.accept()
+                return
         super().keyPressEvent(event)
 
 

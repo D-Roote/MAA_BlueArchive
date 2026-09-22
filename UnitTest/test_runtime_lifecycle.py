@@ -1470,6 +1470,8 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(popup.count(), len(self.window.runtime.interface["task"]))
         self.assertEqual(popup.item(0).data(Qt.UserRole)["name"], "Test")
         self.assertEqual(popup.item(0).toolTip(), "")
+        self.assertEqual(popup.currentRow(), -1)
+        self.assertEqual(popup.selectedItems(), [])
         self.assertEqual(popup._dismiss_timer.interval(), 80)
         popup_position = popup.mapToGlobal(popup.rect().center())
         with patch("app.winUI.QCursor.pos", return_value=popup_position):
