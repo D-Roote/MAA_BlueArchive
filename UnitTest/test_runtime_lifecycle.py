@@ -2616,6 +2616,50 @@ class UILifecycleTests(unittest.TestCase):
         )
         self.assertFalse(config["general"]["clear_log_on_start"])
 
+    def test_new_log_preserves_history_position_until_latest_is_requested(self):
+        log_view = self.window.ui.logPrintText
+        self.window.show()
+        log_view.setPlainText("\n".join(f"기존 로그 {index}" for index in range(200)))
+        self.app.processEvents()
+        scroll_bar = log_view.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+
+        history_position = scroll_bar.maximum() // 3
+        scroll_bar.setValue(history_position)
+        self.window.append_log("새 로그")
+        self.app.processEvents()
+
+        self.assertEqual(scroll_bar.value(), history_position)
+        self.assertFalse(self.window.ui.logLatestButton.isHidden())
+
+        self.window.ui.logLatestButton.click()
+        self.app.processEvents()
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertTrue(self.window.ui.logLatestButton.isHidden())
+
+    def test_log_toolbar_copies_clears_and_saves_plain_text(self):
+        log_view = self.window.ui.logPrintText
+        log_view.setPlainText("첫 줄\n둘째 줄")
+        self.assertEqual(self.window.ui.logClearButton.text(), "초기화")
+
+        self.window.ui.logCopyButton.click()
+        self.assertEqual(QApplication.clipboard().text(), "첫 줄\n둘째 줄")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "run-log.txt"
+            with patch(
+                "app.winUI.QFileDialog.getSaveFileName",
+                return_value=(str(output_path), "텍스트 파일 (*.txt)"),
+            ):
+                self.assertTrue(self.window.save_log())
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"), "첫 줄\n둘째 줄"
+            )
+
+        self.window.ui.logClearButton.click()
+        self.assertEqual(log_view.toPlainText(), "")
+        self.assertTrue(self.window.ui.logLatestButton.isHidden())
+
     def test_runtime_editing_policy_controls_all_execution_options(self):
         task_widget = self.find_task_widget(self.window)
         queued_before_start = self.window.build_execution_queue()

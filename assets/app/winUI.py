@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QListWidget, QListWidgetItem, QWidget, 
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
-                               QPushButton, QRadioButton, QStyle, QStyleOptionSlider)
+                               QFileDialog, QPushButton, QRadioButton, QStyle,
+                               QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import AssociatedControlLabel, SettingsPanel
@@ -1136,6 +1137,13 @@ class MainWindow(QMainWindow):
 
     def setup_connections(self):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
+        self.ui.logLatestButton.clicked.connect(self.scroll_log_to_latest)
+        self.ui.logCopyButton.clicked.connect(self.copy_log)
+        self.ui.logClearButton.clicked.connect(self.clear_log)
+        self.ui.logSaveButton.clicked.connect(self.save_log)
+        self.ui.logPrintText.verticalScrollBar().valueChanged.connect(
+            self._update_log_follow_button
+        )
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.toggled.connect(
@@ -1272,35 +1280,82 @@ class MainWindow(QMainWindow):
     def append_log(self, message):
         current_time = datetime.now().strftime("%H:%M:%S")
         time_text = f"[{current_time}] "
-        
-        cursor = self.ui.logPrintText.textCursor()
+
+        log_view = self.ui.logPrintText
+        scroll_bar = log_view.verticalScrollBar()
+        previous_scroll_value = scroll_bar.value()
+        was_at_bottom = previous_scroll_value >= scroll_bar.maximum() - 1
+
+        cursor = QTextCursor(log_view.document())
         cursor.movePosition(QTextCursor.End)
-        self.ui.logPrintText.setTextCursor(cursor)
-        
+
         block_format = cursor.blockFormat()
         block_format.setAlignment(Qt.AlignLeft)
-        
+
         block_format.setTopMargin(0)
         block_format.setBottomMargin(0)
-        
+
         block_format.setLeftMargin(0)
         block_format.setTextIndent(0)
         cursor.setBlockFormat(block_format)
         cursor.insertText(time_text)
-        
-        block_format.setLeftMargin(58)    
-        block_format.setTextIndent(-58)  
+
+        block_format.setLeftMargin(58)
+        block_format.setTextIndent(-58)
         cursor.setBlockFormat(block_format)
-        
+
         cursor.insertText(message + "\n")
-        
-        self.ui.logPrintText.ensureCursorVisible()
+
+        if was_at_bottom:
+            self.scroll_log_to_latest()
+        else:
+            scroll_bar.setValue(previous_scroll_value)
+            self._update_log_follow_button()
+
+    def _update_log_follow_button(self, _value=None):
+        scroll_bar = self.ui.logPrintText.verticalScrollBar()
+        is_at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 1
+        self.ui.logLatestButton.setVisible(not is_at_bottom)
+
+    def scroll_log_to_latest(self):
+        scroll_bar = self.ui.logPrintText.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+        self.ui.logLatestButton.hide()
+
+    def copy_log(self):
+        log_view = self.ui.logPrintText
+        cursor = log_view.textCursor()
+        text = cursor.selectedText().replace("\u2029", "\n")
+        QApplication.clipboard().setText(text if cursor.hasSelection() else log_view.toPlainText())
+
+    def clear_log(self):
+        self.ui.logPrintText.clear()
+        self.ui.logLatestButton.hide()
+
+    def save_log(self):
+        default_name = f"MAABA-log-{datetime.now():%Y%m%d-%H%M%S}.txt"
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "실행 로그 저장",
+            default_name,
+            "텍스트 파일 (*.txt);;모든 파일 (*)",
+        )
+        if not file_path:
+            return False
+        try:
+            Path(file_path).write_text(
+                self.ui.logPrintText.toPlainText(), encoding="utf-8"
+            )
+        except OSError as error:
+            self.append_log(f"로그를 저장하지 못했습니다: {error}")
+            return False
+        return True
 
     def on_task_start(self):
         if self.worker is not None or self.stop_worker is not None or self._close_pending:
             return
         if self.settings_panel.clear_log_on_start_enabled():
-            self.ui.logPrintText.clear()
+            self.clear_log()
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 

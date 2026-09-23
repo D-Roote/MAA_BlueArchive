@@ -167,6 +167,31 @@ QTextEdit {
     color: #BBC9D9;
 }
 
+QLabel#logTitleLabel {
+    color: #E5EDF6;
+}
+
+QPushButton#logLatestButton,
+QPushButton#logCopyButton,
+QPushButton#logClearButton,
+QPushButton#logSaveButton {
+    background-color: #1E2D46;
+    border-color: #405474;
+    color: #CCD7E5;
+}
+
+QPushButton#logLatestButton:hover,
+QPushButton#logCopyButton:hover,
+QPushButton#logClearButton:hover,
+QPushButton#logSaveButton:hover {
+    background-color: #283A55;
+    border-color: #2BB3E3;
+}
+
+QPushButton#logLatestButton {
+    color: #63D2F5;
+}
+
 QScrollBar:vertical,
 QScrollBar:horizontal,
 QScrollBar::add-page:vertical,
