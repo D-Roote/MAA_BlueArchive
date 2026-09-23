@@ -147,6 +147,26 @@ class SettingsStore:
         }
 
 
+class AssociatedControlLabel(QLabel):
+    """A label that extends a checkable control's mouse hit area."""
+
+    activated = Signal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.activated.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class SettingsPanel(QWidget):
     minimize_changed = Signal(bool)
     program_launch_task_enabled_changed = Signal(bool)
@@ -428,11 +448,16 @@ class SettingsPanel(QWidget):
         row_layout.setVerticalSpacing(2)
         row_layout.setColumnStretch(0, 1)
 
-        title_label = QLabel(title)
+        label_type = AssociatedControlLabel if isinstance(control, QCheckBox) else QLabel
+        title_label = label_type(title)
         title_label.setObjectName("settingsRowTitle")
-        description_label = QLabel(description)
+        description_label = label_type(description)
         description_label.setObjectName("settingsRowDescription")
         description_label.setWordWrap(True)
+
+        if isinstance(control, QCheckBox):
+            title_label.activated.connect(control.click)
+            description_label.activated.connect(control.click)
 
         control.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         row_layout.addWidget(title_label, 0, 0)
@@ -446,6 +471,8 @@ class SettingsPanel(QWidget):
             Qt.AlignmentFlag.AlignVCenter,
         )
         parent_layout.addWidget(row)
+        row.title_label = title_label
+        row.description_label = description_label
         return row
 
     def _apply_config(self):

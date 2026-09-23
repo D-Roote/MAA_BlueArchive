@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QPushButton, QRadioButton, QStyle, QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
-from app.settingsUI import SettingsPanel
+from app.settingsUI import AssociatedControlLabel, SettingsPanel
 
 
 WINDOW_SIZE = [1200, 800]
@@ -1741,9 +1741,10 @@ class MainWindow(QMainWindow):
                     if case_name in item_widget.selected_options.get(opt_name, []):
                         radio_btn.setChecked(True)
 
-                    case_label = QLabel(case.get('label', case_name))
+                    case_label = AssociatedControlLabel(case.get('label', case_name))
                     case_label.setStyleSheet("background: transparent;")
-                    case_label.setWordWrap(True) 
+                    case_label.setWordWrap(True)
+                    case_label.activated.connect(radio_btn.click)
                     
                     def make_radio_slot(w, o_name, c_name):
                         return lambda checked: self.update_widget_option_radio(w, o_name, c_name, checked)
@@ -1805,9 +1806,10 @@ class MainWindow(QMainWindow):
                     if case_name in item_widget.selected_options.get(opt_name, []):
                         case_cb.setChecked(True)
                     
-                    case_label = QLabel(case.get('label', case_name))
+                    case_label = AssociatedControlLabel(case.get('label', case_name))
                     case_label.setStyleSheet("background: transparent;")
-                    case_label.setWordWrap(True) 
+                    case_label.setWordWrap(True)
+                    case_label.activated.connect(case_cb.click)
                     
                     def make_checkbox_slot(w, o_name, c_name):
                         return lambda checked: self.update_widget_option_checkbox(w, o_name, c_name, checked)
@@ -1835,9 +1837,10 @@ class MainWindow(QMainWindow):
                     if yes_case_name in item_widget.selected_options.get(opt_name, []):
                         switch_cb.setChecked(True)
 
-                    case_label = QLabel(case_label_text)
+                    case_label = AssociatedControlLabel(case_label_text)
                     case_label.setStyleSheet("background: transparent;")
                     case_label.setWordWrap(True)
+                    case_label.activated.connect(switch_cb.click)
 
                     def make_switch_slot(w, o_name, y_name, n_name):
                         return lambda checked: self.update_widget_option_switch(w, o_name, y_name, n_name, checked)

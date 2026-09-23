@@ -51,7 +51,7 @@ from app.runtime import (
     WINDOW_MINIMIZE_CHECK_COUNT,
     WindowPlacement,
 )
-from app.settingsUI import SettingsStore
+from app.settingsUI import AssociatedControlLabel, SettingsStore
 from app.winUI import (
     COMPACT_SCROLLBAR_WIDTH,
     DARK_CAPTION_COLOR,
@@ -1417,6 +1417,46 @@ class UILifecycleTests(unittest.TestCase):
     def find_task_widget(cls, window, task_name="Test"):
         item = cls.find_task_item(window, task_name)
         return window.option_list_widget.itemWidget(item)
+
+    def test_settings_checkbox_labels_share_the_checkbox_hit_area(self):
+        panel = self.window.settings_panel
+        rows_and_controls = (
+            (panel.minimize_checkbox.parentWidget(), panel.minimize_checkbox),
+            (panel.program_launch_checkbox.parentWidget(), panel.program_launch_checkbox),
+            (panel.runtime_edit_checkbox.parentWidget(), panel.runtime_edit_checkbox),
+            (panel.clear_log_checkbox.parentWidget(), panel.clear_log_checkbox),
+        )
+
+        self.window.show()
+        self.app.processEvents()
+        for row, checkbox in rows_and_controls:
+            with self.subTest(label=row.title_label.text()):
+                was_checked = checkbox.isChecked()
+                QTest.mouseClick(row.title_label, Qt.MouseButton.LeftButton)
+                self.assertEqual(checkbox.isChecked(), not was_checked)
+                QTest.mouseClick(row.description_label, Qt.MouseButton.LeftButton)
+                self.assertEqual(checkbox.isChecked(), was_checked)
+
+    def test_dynamic_checkable_labels_share_the_control_hit_area(self):
+        task_widget = self.find_task_widget(self.window)
+        self.window.show_sub_cases(task_widget)
+        option_panel = self.window.ui.scrollSettingContents
+
+        radio_buttons = option_panel.findChildren(QRadioButton)
+        checkable_labels = option_panel.findChildren(AssociatedControlLabel)
+
+        self.assertEqual(len(radio_buttons), 2)
+        self.assertEqual(len(checkable_labels), 2)
+        QTest.mouseClick(checkable_labels[1], Qt.MouseButton.LeftButton)
+        self.assertTrue(radio_buttons[1].isChecked())
+
+    def test_keyboard_focus_decorations_are_not_added(self):
+        log_view = self.window.ui.logPrintText
+
+        self.assertEqual(log_view.focusPolicy(), Qt.FocusPolicy.NoFocus)
+        self.assertNotIn("QCheckBox:focus", self.window._base_style_sheet)
+        self.assertNotIn("QPushButton:focus", self.window._base_style_sheet)
+        self.assertNotIn("QPushButton:focus", self.window._dark_style_sheet)
 
     def test_task_picker_opens_above_full_width_and_appends_on_click(self):
         self.window.show()
