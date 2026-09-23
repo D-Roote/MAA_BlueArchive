@@ -20,6 +20,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -1467,6 +1468,49 @@ class UILifecycleTests(unittest.TestCase):
         )
         self.assertIsNotNone(option_title)
         self.assertEqual(option_title.styleSheet(), "")
+
+    def test_dynamic_checkable_labels_are_vertically_centered(self):
+        task_widget = self.find_task_widget(self.window)
+        task_widget.task_options = [
+            (
+                "Check",
+                {
+                    "type": "checkbox",
+                    "cases": [{"name": "A", "label": "체크 항목"}],
+                },
+            ),
+            (
+                "Switch",
+                {
+                    "type": "switch",
+                    "cases": [
+                        {"name": "Yes", "label": "스위치 항목"},
+                        {"name": "No"},
+                    ],
+                },
+            ),
+        ]
+        task_widget.selected_options = {"Check": [], "Switch": ["No"]}
+        self.window.show_sub_cases(task_widget)
+
+        labels = self.window.ui.scrollSettingContents.findChildren(
+            AssociatedControlLabel, "optionChoiceLabel"
+        )
+        self.assertEqual(len(labels), 2)
+        for label in labels:
+            with self.subTest(label=label.text()):
+                row_layout = label.parentWidget().layout()
+                control = label.parentWidget().findChild(QCheckBox)
+                self.assertIsNotNone(control)
+                self.assertTrue(label.alignment() & Qt.AlignmentFlag.AlignVCenter)
+                self.assertTrue(
+                    row_layout.itemAt(row_layout.indexOf(label)).alignment()
+                    & Qt.AlignmentFlag.AlignVCenter
+                )
+                self.assertTrue(
+                    row_layout.itemAt(row_layout.indexOf(control)).alignment()
+                    & Qt.AlignmentFlag.AlignVCenter
+                )
 
     def test_task_picker_opens_above_full_width_and_appends_on_click(self):
         self.window.show()

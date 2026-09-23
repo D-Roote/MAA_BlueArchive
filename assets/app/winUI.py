@@ -1799,6 +1799,9 @@ class MainWindow(QMainWindow):
                     case_label = AssociatedControlLabel(case.get('label', case_name))
                     case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
                     case_label.activated.connect(radio_btn.click)
                     
                     def make_radio_slot(w, o_name, c_name):
@@ -1806,8 +1809,12 @@ class MainWindow(QMainWindow):
                         
                     radio_btn.toggled.connect(make_radio_slot(item_widget, opt_name, case_name))
                     
-                    row_layout.addWidget(radio_btn)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        radio_btn, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     select_layout.addWidget(row_widget)
 
                 layout.addWidget(select_container)
@@ -1864,6 +1871,9 @@ class MainWindow(QMainWindow):
                     case_label = AssociatedControlLabel(case.get('label', case_name))
                     case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
                     case_label.activated.connect(case_cb.click)
                     
                     def make_checkbox_slot(w, o_name, c_name):
@@ -1871,8 +1881,12 @@ class MainWindow(QMainWindow):
                     
                     case_cb.toggled.connect(make_checkbox_slot(item_widget, opt_name, case_name))
                     
-                    row_layout.addWidget(case_cb)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        case_cb, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     layout.addWidget(row_widget)
 
             elif opt_type == "switch":
@@ -1895,6 +1909,9 @@ class MainWindow(QMainWindow):
                     case_label = AssociatedControlLabel(case_label_text)
                     case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
                     case_label.activated.connect(switch_cb.click)
 
                     def make_switch_slot(w, o_name, y_name, n_name):
@@ -1902,8 +1919,12 @@ class MainWindow(QMainWindow):
 
                     switch_cb.toggled.connect(make_switch_slot(item_widget, opt_name, yes_case_name, no_case_name))
 
-                    row_layout.addWidget(switch_cb)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        switch_cb, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     layout.addWidget(row_widget)
 
             elif opt_type == "input":
