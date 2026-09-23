@@ -619,27 +619,70 @@
                <property name="accessibleDescription">
                 <string>로그의 가장 아래로 이동합니다.</string>
                </property>
-              </widget>
+             </widget>
              </item>
              <item>
-              <widget class="QPushButton" name="logCopyButton">
-               <property name="text">
-                <string>복사</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="logClearButton">
-               <property name="text">
-                <string>초기화</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="logSaveButton">
-               <property name="text">
-                <string>저장</string>
-               </property>
+              <widget class="QWidget" name="logActionMenu" native="true">
+               <layout class="QHBoxLayout" name="logActionMenuLayout">
+                <property name="spacing">
+                 <number>4</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QPushButton" name="logCopyButton">
+                  <property name="text">
+                   <string>복사</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="logClearButton">
+                  <property name="text">
+                   <string>초기화</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="logSaveButton">
+                  <property name="text">
+                   <string>저장</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="logMenuToggleButton">
+                  <property name="minimumSize">
+                   <size>
+                    <width>24</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                  <property name="maximumSize">
+                   <size>
+                    <width>24</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                  <property name="accessibleName">
+                   <string>로그 작업 메뉴 펼치기</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
               </widget>
              </item>
             </layout>

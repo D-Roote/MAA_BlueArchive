@@ -63,6 +63,9 @@ from app.winUI import (
     DWMWA_TEXT_COLOR,
     DWMWA_USE_IMMERSIVE_DARK_MODE,
     EXPANDED_SCROLLBAR_WIDTH,
+    LOG_ACTION_MENU_CLOSE_DELAY_MS,
+    LOG_MENU_COLLAPSE_ICON_PATH,
+    LOG_MENU_EXPAND_ICON_PATH,
     MainWindow,
     PROGRAM_LAUNCH_ENTRY,
     PROGRAM_LAUNCH_TASK_NAME,
@@ -2713,6 +2716,45 @@ class UILifecycleTests(unittest.TestCase):
         self.window.ui.logClearButton.click()
         self.assertEqual(log_view.toPlainText(), "")
         self.assertTrue(self.window.ui.logLatestButton.isHidden())
+
+    def test_log_action_menu_expands_left_and_closes_after_pointer_leave(self):
+        ui = self.window.ui
+        controller = self.window.log_action_menu_controller
+        action_buttons = (ui.logCopyButton, ui.logClearButton, ui.logSaveButton)
+
+        self.assertTrue(QSvgRenderer(str(LOG_MENU_EXPAND_ICON_PATH)).isValid())
+        self.assertTrue(QSvgRenderer(str(LOG_MENU_COLLAPSE_ICON_PATH)).isValid())
+        self.assertFalse(controller.is_expanded())
+        self.assertEqual(ui.logMenuToggleButton.text(), "")
+        self.assertFalse(ui.logMenuToggleButton.icon().isNull())
+        collapsed_icon_key = ui.logMenuToggleButton.icon().cacheKey()
+        self.assertTrue(all(button.isHidden() for button in action_buttons))
+
+        self.window.show()
+        ui.logMenuToggleButton.click()
+        self.app.processEvents()
+        self.assertTrue(controller.is_expanded())
+        self.assertEqual(ui.logMenuToggleButton.text(), "")
+        self.assertNotEqual(
+            ui.logMenuToggleButton.icon().cacheKey(), collapsed_icon_key
+        )
+        self.assertTrue(ui.logMenuToggleButton.property("menuExpanded"))
+        self.assertTrue(all(not button.isHidden() for button in action_buttons))
+        self.assertLess(ui.logCopyButton.x(), ui.logClearButton.x())
+        self.assertLess(ui.logClearButton.x(), ui.logSaveButton.x())
+        self.assertLess(ui.logSaveButton.x(), ui.logMenuToggleButton.x())
+
+        with patch("app.winUI.QCursor.pos", return_value=QPoint(-100, -100)):
+            QApplication.sendEvent(ui.logActionMenu, QEvent(QEvent.Type.Leave))
+            self.app.processEvents()
+            self.assertTrue(controller._close_timer.isActive())
+            QTest.qWait(LOG_ACTION_MENU_CLOSE_DELAY_MS + 50)
+
+        self.assertFalse(controller.is_expanded())
+        self.assertEqual(ui.logMenuToggleButton.text(), "")
+        self.assertEqual(ui.logMenuToggleButton.icon().cacheKey(), collapsed_icon_key)
+        self.assertFalse(ui.logMenuToggleButton.property("menuExpanded"))
+        self.assertTrue(all(button.isHidden() for button in action_buttons))
 
     def test_runtime_editing_policy_controls_all_execution_options(self):
         task_widget = self.find_task_widget(self.window)

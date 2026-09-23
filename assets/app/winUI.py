@@ -35,6 +35,8 @@ APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR / "pySide6"
 UI_RESOURCE_DIR = APP_DIR / "resources"
 SETTINGS_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/settings.svg"
+LOG_MENU_EXPAND_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/chevron-left.svg"
+LOG_MENU_COLLAPSE_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/chevron-right.svg"
 SETTINGS_ICON_SIZE = QSize(20, 20)
 SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 RESET_ICON_SIZE = QSize(18, 18)
@@ -42,6 +44,8 @@ RESET_ICON_HOVER_SIZE = QSize(22, 22)
 COMPACT_SCROLLBAR_WIDTH = 2
 EXPANDED_SCROLLBAR_WIDTH = 5
 SCROLLBAR_ACTIVITY_TIMEOUT_MS = 700
+LOG_ACTION_MENU_CLOSE_DELAY_MS = 700
+LOG_ACTION_MENU_ICON_SIZE = QSize(16, 16)
 TASK_SETTINGS_TRAILING_GAP = 4
 PROGRAM_LAUNCH_TASK_NAME = "__ProgramLaunch"
 PROGRAM_LAUNCH_TASK = {
@@ -487,6 +491,75 @@ def setup_contextual_vertical_scrollbar(scroll_area):
     scroll_bar = scroll_area.verticalScrollBar()
     scroll_bar._contextual_controller = ContextualScrollBarController(scroll_area)
     setup_rounded_vertical_scrollbar(scroll_area, contextual=True)
+
+
+class LogActionMenuController(QObject):
+    """Expand log actions to the left and collapse after pointer leave."""
+
+    def __init__(self, container, toggle_button, action_buttons):
+        super().__init__(container)
+        self.container = container
+        self.toggle_button = toggle_button
+        self.action_buttons = tuple(action_buttons)
+        self._expand_icon = QIcon(str(LOG_MENU_EXPAND_ICON_PATH))
+        self._collapse_icon = QIcon(str(LOG_MENU_COLLAPSE_ICON_PATH))
+        self.toggle_button.setIconSize(LOG_ACTION_MENU_ICON_SIZE)
+        self._expanded = False
+        self._close_timer = QTimer(self)
+        self._close_timer.setSingleShot(True)
+        self._close_timer.setInterval(LOG_ACTION_MENU_CLOSE_DELAY_MS)
+        self._close_timer.timeout.connect(self._close_if_pointer_outside)
+
+        for widget in (container, toggle_button, *self.action_buttons):
+            widget.installEventFilter(self)
+        toggle_button.clicked.connect(self.toggle)
+        self.set_expanded(False)
+
+    def eventFilter(self, watched, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Enter:
+            self._close_timer.stop()
+        elif event_type == QEvent.Type.Leave and self._expanded:
+            QTimer.singleShot(0, self._start_close_if_pointer_outside)
+        return super().eventFilter(watched, event)
+
+    def _pointer_inside(self):
+        local_position = self.container.mapFromGlobal(QCursor.pos())
+        return self.container.rect().contains(local_position)
+
+    def _start_close_if_pointer_outside(self):
+        if self._expanded and not self._pointer_inside():
+            self._close_timer.start()
+
+    def _close_if_pointer_outside(self):
+        if not self._pointer_inside():
+            self.set_expanded(False)
+
+    def toggle(self):
+        self.set_expanded(not self._expanded)
+
+    def is_expanded(self):
+        return self._expanded
+
+    def set_expanded(self, expanded):
+        self._expanded = bool(expanded)
+        if not self._expanded:
+            self._close_timer.stop()
+        for button in self.action_buttons:
+            button.setVisible(self._expanded)
+        self.toggle_button.setText("")
+        self.toggle_button.setIcon(
+            self._collapse_icon if self._expanded else self._expand_icon
+        )
+        self.toggle_button.setProperty("menuExpanded", self._expanded)
+        self.toggle_button.setAccessibleName(
+            "로그 작업 메뉴 접기" if self._expanded else "로그 작업 메뉴 펼치기"
+        )
+        self.toggle_button.style().unpolish(self.toggle_button)
+        self.toggle_button.style().polish(self.toggle_button)
+        self.toggle_button.update()
+        self.container.layout().activate()
+        self.container.updateGeometry()
 
 
 class DeleteDropEventFilter(QObject):
@@ -1107,6 +1180,15 @@ class MainWindow(QMainWindow):
         setup_contextual_vertical_scrollbar(self.ui.taskOptionList)
         setup_contextual_vertical_scrollbar(self.ui.logPrintText)
         setup_rounded_vertical_scrollbar(self.ui.scrollSettingWidget)
+        self.log_action_menu_controller = LogActionMenuController(
+            self.ui.logActionMenu,
+            self.ui.logMenuToggleButton,
+            (
+                self.ui.logCopyButton,
+                self.ui.logClearButton,
+                self.ui.logSaveButton,
+            ),
+        )
 
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)

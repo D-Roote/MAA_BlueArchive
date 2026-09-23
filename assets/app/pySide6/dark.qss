@@ -178,22 +178,36 @@ QLabel#logTitleLabel {
 QPushButton#logLatestButton,
 QPushButton#logCopyButton,
 QPushButton#logClearButton,
-QPushButton#logSaveButton {
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
     background-color: #1E2D46;
     border-color: #405474;
     color: #CCD7E5;
 }
 
+QPushButton#logCopyButton,
+QPushButton#logClearButton,
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
+    background-color: #22314A;
+}
+
 QPushButton#logLatestButton:hover,
 QPushButton#logCopyButton:hover,
 QPushButton#logClearButton:hover,
-QPushButton#logSaveButton:hover {
+QPushButton#logSaveButton:hover,
+QPushButton#logMenuToggleButton:hover {
     background-color: #283A55;
     border-color: #2BB3E3;
 }
 
 QPushButton#logLatestButton {
     color: #63D2F5;
+}
+
+QPushButton#logMenuToggleButton[menuExpanded="true"] {
+    background-color: #283A55;
+    border-color: #2BB3E3;
 }
 
 QScrollBar:vertical,

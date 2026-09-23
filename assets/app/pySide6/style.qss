@@ -428,10 +428,15 @@ QLabel#logTitleLabel {
     font-weight: bold;
 }
 
+QWidget#logActionMenu {
+    background-color: transparent;
+}
+
 QPushButton#logLatestButton,
 QPushButton#logCopyButton,
 QPushButton#logClearButton,
-QPushButton#logSaveButton {
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
     min-height: 20px;
     padding: 2px 6px;
     border: 1px solid #CBD5E0;
@@ -442,17 +447,40 @@ QPushButton#logSaveButton {
     font-weight: normal;
 }
 
-QPushButton#logLatestButton:hover,
 QPushButton#logCopyButton:hover,
 QPushButton#logClearButton:hover,
-QPushButton#logSaveButton:hover {
-    background-color: #EAF7FC;
+QPushButton#logSaveButton:hover,
+QPushButton#logMenuToggleButton:hover {
+    background-color: #DDF2FA;
     border-color: #00AEEF;
 }
 
 QPushButton#logLatestButton {
     color: #006E94;
     font-weight: bold;
+}
+
+QPushButton#logLatestButton:hover {
+    background-color: #EAF7FC;
+    border-color: #00AEEF;
+}
+
+QPushButton#logCopyButton,
+QPushButton#logClearButton,
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
+    background-color: #EFF9FC;
+    border-color: #B7E2F0;
+}
+
+QPushButton#logMenuToggleButton {
+    padding-left: 0px;
+    padding-right: 0px;
+}
+
+QPushButton#logMenuToggleButton[menuExpanded="true"] {
+    background-color: #DDF2FA;
+    border-color: #00AEEF;
 }
 
 /* =========================================
