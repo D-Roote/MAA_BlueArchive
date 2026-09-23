@@ -1458,6 +1458,16 @@ class UILifecycleTests(unittest.TestCase):
         self.assertNotIn("QPushButton:focus", self.window._base_style_sheet)
         self.assertNotIn("QPushButton:focus", self.window._dark_style_sheet)
 
+    def test_dynamic_typography_uses_shared_qss_selectors(self):
+        task_widget = self.find_task_widget(self.window)
+        self.assertEqual(task_widget.label.styleSheet(), "")
+        self.window.show_sub_cases(task_widget)
+        option_title = self.window.ui.scrollSettingContents.findChild(
+            QLabel, "optionGroupTitle"
+        )
+        self.assertIsNotNone(option_title)
+        self.assertEqual(option_title.styleSheet(), "")
+
     def test_task_picker_opens_above_full_width_and_appends_on_click(self):
         self.window.show()
         self.app.processEvents()

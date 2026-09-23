@@ -260,6 +260,21 @@ QWidget#OptionItemWidget, QWidget > QLabel {
     background-color: transparent;
 }
 
+QLabel#taskItemLabel[muted="true"] {
+    color: #94A3B8;
+}
+
+QLabel#optionGroupTitle {
+    margin-top: 10px;
+    font-size: 10.5pt;
+    font-weight: bold;
+}
+
+QLabel#optionChoiceLabel,
+QLabel#optionInputLabel {
+    background-color: transparent;
+}
+
 QCheckBox {
     spacing: 6px;
     background-color: transparent;

@@ -124,6 +124,10 @@ QRadioButton {
     background-color: transparent;
 }
 
+QLabel#taskItemLabel[muted="true"] {
+    color: #94A3B8;
+}
+
 QLineEdit#optionInput,
 QComboBox#optionSelect {
     background-color: #1E2D46;

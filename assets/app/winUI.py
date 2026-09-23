@@ -713,7 +713,8 @@ class OptionItemWidget(QWidget):
 
         display_name = task_data.get("label", task_data.get("name", "Unknown Task"))
         self.label = QLabel(display_name)
-        self.label.setStyleSheet("background: transparent;")
+        self.label.setObjectName("taskItemLabel")
+        self.label.setProperty("muted", False)
 
         layout.addWidget(self.label, 1) 
 
@@ -740,11 +741,13 @@ class OptionItemWidget(QWidget):
             self.checkbox.blockSignals(False)
         self.setToolTip("" if self._available else reason)
         self.checkbox.setEnabled(self._available and not self._locked)
-        self.label.setStyleSheet(
-            "background: transparent;"
-            if self._available and not self._locked
-            else "background: transparent; color: #94A3B8;"
-        )
+        self._set_label_muted(not self._available or self._locked)
+
+    def _set_label_muted(self, muted):
+        self.label.setProperty("muted", bool(muted))
+        self.label.style().unpolish(self.label)
+        self.label.style().polish(self.label)
+        self.label.update()
 
     def has_valid_input(self):
         for opt_name, opt in self.task_options:
@@ -781,10 +784,7 @@ class OptionItemWidget(QWidget):
         self.checkbox.setEnabled(self._available and not self._locked)
         # 실행 중에도 세부 설정 화면은 열 수 있도록 한다.
         self.setting_btn.setEnabled(True)
-        if self._locked or not self._available:
-            self.label.setStyleSheet("background: transparent; color: #94A3B8;")
-        else:
-            self.label.setStyleSheet("background: transparent;")
+        self._set_label_muted(self._locked or not self._available)
 
 # 커스텀 리스트 위젯
 class DragDropListWidget(QListWidget):
@@ -1769,7 +1769,7 @@ class MainWindow(QMainWindow):
             opt_type = opt.get("type", "select")
             
             title_label = QLabel(f"[{opt.get('label', opt_name)}]")
-            title_label.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 10px;")
+            title_label.setObjectName("optionGroupTitle")
             title_label.setWordWrap(True)
             layout.addWidget(title_label)
 
@@ -1797,7 +1797,7 @@ class MainWindow(QMainWindow):
                         radio_btn.setChecked(True)
 
                     case_label = AssociatedControlLabel(case.get('label', case_name))
-                    case_label.setStyleSheet("background: transparent;")
+                    case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
                     case_label.activated.connect(radio_btn.click)
                     
@@ -1862,7 +1862,7 @@ class MainWindow(QMainWindow):
                         case_cb.setChecked(True)
                     
                     case_label = AssociatedControlLabel(case.get('label', case_name))
-                    case_label.setStyleSheet("background: transparent;")
+                    case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
                     case_label.activated.connect(case_cb.click)
                     
@@ -1893,7 +1893,7 @@ class MainWindow(QMainWindow):
                         switch_cb.setChecked(True)
 
                     case_label = AssociatedControlLabel(case_label_text)
-                    case_label.setStyleSheet("background: transparent;")
+                    case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
                     case_label.activated.connect(switch_cb.click)
 
@@ -1919,7 +1919,7 @@ class MainWindow(QMainWindow):
                     input_layout.setSpacing(4)
 
                     input_label = QLabel(input_config.get("label", input_name))
-                    input_label.setStyleSheet("background: transparent;")
+                    input_label.setObjectName("optionInputLabel")
                     input_layout.addWidget(input_label)
 
                     line_edit = QLineEdit(input_container)
