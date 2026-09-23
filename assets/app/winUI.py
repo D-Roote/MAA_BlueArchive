@@ -2286,6 +2286,7 @@ class RuntimeWorker(QThread):
                 self.controller_settings,
                 program_settings=self.program_settings,
                 execution_queue=self.execution_queue,
+                minimize_window=self.minimize_window,
                 cancellation_requested=self.isInterruptionRequested,
             )
             if not initialized:

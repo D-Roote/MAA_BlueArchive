@@ -42,14 +42,18 @@ from app.pg_init import (
 )
 from app.runtime import (
     AppRuntime,
+    GWL_EXSTYLE,
+    LWA_ALPHA,
     LogSinkFocus,
-    PROGRAM_POST_LAUNCH_SETTLE_SECONDS,
+    PROGRAM_WINDOW_POLL_INTERVAL_SECONDS,
     PROGRAM_WINDOW_STABLE_SECONDS,
     WM_SYSCOMMAND,
     SC_MINIMIZE,
     SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT,
     WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS,
     WINDOW_MINIMIZE_CHECK_COUNT,
+    WS_EX_LAYERED,
+    WS_EX_TRANSPARENT,
     WindowPlacement,
 )
 from app.settingsUI import AssociatedControlLabel, SettingsStore
@@ -395,6 +399,126 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(find_windows.call_count, 4)
         self.assertEqual(controller.call_args.kwargs["hWnd"], game_window.hwnd)
 
+    def test_controller_stability_resets_when_window_presentation_changes(self):
+        game_window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
+        with patch(
+            "app.runtime.Toolkit.find_desktop_windows",
+            return_value=[game_window],
+        ) as find_windows, patch.object(
+            self.runtime,
+            "_get_window_stability_signature",
+            side_effect=[("startup",), ("ready",), ("ready",), ("ready",)],
+        ), patch(
+            "app.runtime.time.monotonic", side_effect=[0, 0, 4, 8, 9]
+        ), patch("app.runtime.Win32Controller") as controller, patch(
+            "app.runtime.time.sleep"
+        ):
+            succeeded, _message = self.runtime._create_controller(
+                wait_timeout_seconds=30,
+                stable_window_seconds=PROGRAM_WINDOW_STABLE_SECONDS,
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(find_windows.call_count, 4)
+        self.assertEqual(controller.call_args.kwargs["hWnd"], game_window.hwnd)
+
+    def test_startup_window_guard_is_transparent_click_through_and_restored(self):
+        user32 = self.runtime._user32
+        user32.IsWindow.return_value = True
+        user32.GetWindowLongPtrW.return_value = 0x100
+        user32.SetWindowLongPtrW.return_value = 0x100
+        user32.SetLayeredWindowAttributes.return_value = True
+
+        self.assertTrue(self.runtime._apply_startup_window_guard(333))
+        user32.SetWindowLongPtrW.assert_called_once_with(
+            333,
+            GWL_EXSTYLE,
+            0x100 | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+        )
+        user32.SetLayeredWindowAttributes.assert_called_once_with(
+            333, 0, 0, LWA_ALPHA
+        )
+
+        self.assertTrue(self.runtime._restore_startup_window_guard())
+        self.assertEqual(
+            user32.SetWindowLongPtrW.call_args_list[-1],
+            call(333, GWL_EXSTYLE, 0x100),
+        )
+        self.assertIsNone(self.runtime._startup_window_guard)
+
+    def test_startup_window_guard_preserves_existing_layered_attributes(self):
+        user32 = self.runtime._user32
+        original_style = 0x100 | WS_EX_LAYERED
+        user32.IsWindow.return_value = True
+        user32.GetWindowLongPtrW.return_value = original_style
+        user32.SetWindowLongPtrW.return_value = original_style
+        user32.SetLayeredWindowAttributes.return_value = True
+
+        def get_layered(_hwnd, color_key, alpha, flags):
+            color_key._obj.value = 0x112233
+            alpha._obj.value = 192
+            flags._obj.value = 3
+            return True
+
+        user32.GetLayeredWindowAttributes.side_effect = get_layered
+        self.assertTrue(self.runtime._apply_startup_window_guard(333))
+        self.assertTrue(self.runtime._restore_startup_window_guard())
+        self.assertEqual(
+            user32.SetLayeredWindowAttributes.call_args_list[-1],
+            call(333, 0x112233, 192, 3),
+        )
+
+    def test_session_release_restores_active_startup_window_guard(self):
+        user32 = self.runtime._user32
+        user32.IsWindow.return_value = True
+        user32.GetWindowLongPtrW.return_value = 0x100
+        user32.SetWindowLongPtrW.return_value = 0x100
+        user32.SetLayeredWindowAttributes.return_value = True
+        self.runtime._target_hwnd = 333
+        self.assertTrue(self.runtime._apply_startup_window_guard(333))
+
+        succeeded, _message = self.runtime.release_session()
+
+        self.assertTrue(succeeded)
+        self.assertIsNone(self.runtime._startup_window_guard)
+        self.assertEqual(
+            user32.SetWindowLongPtrW.call_args_list[-1],
+            call(333, GWL_EXSTYLE, 0x100),
+        )
+
+    def test_started_window_guard_retries_until_real_minimize_succeeds(self):
+        window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
+        self.runtime._user32.IsWindow.return_value = True
+        events = []
+        with patch.object(
+            self.runtime,
+            "_apply_startup_window_guard",
+            side_effect=lambda _hwnd: events.append("guard") or True,
+        ), patch.object(
+            self.runtime,
+            "_restore_startup_window_guard",
+            side_effect=lambda: events.append("restore") or True,
+        ), patch.object(
+            self.runtime,
+            "_minimize_window_for_task",
+            side_effect=lambda: events.append("minimize") or events.count("minimize") >= 2,
+        ), patch(
+            "app.runtime.time.monotonic", side_effect=[0, 1]
+        ), patch("app.runtime.time.sleep") as sleep:
+            succeeded, _message = (
+                self.runtime._prepare_started_window_for_minimized_connection(
+                    window,
+                    wait_timeout_seconds=30,
+                )
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(
+            events,
+            ["guard", "minimize", "guard", "minimize", "restore"],
+        )
+        sleep.assert_called_once_with(PROGRAM_WINDOW_POLL_INTERVAL_SECONDS)
+
     def test_program_launch_starts_configured_executable(self):
         with tempfile.TemporaryDirectory() as temp:
             executable = Path(temp) / "BlueArchive.exe"
@@ -472,18 +596,19 @@ class RuntimeLifecycleTests(unittest.TestCase):
         popen.assert_not_called()
         self.assertFalse(self.runtime._program_started_for_session)
 
-    def test_launch_task_prepares_program_before_waiting_for_controller(self):
+    def test_launch_only_waits_for_controller_without_startup_minimize_guard(self):
         self.configure_initialization()
         settings = {
             "resolved_path": "C:/Games/BlueArchive.exe",
             "startup_wait_seconds": 25,
         }
+        def launch(_settings):
+            self.runtime._program_started_for_session = True
+            return True, "started"
+
         with patch.object(
-            self.runtime, "_launch_program", return_value=(True, "started")
-        ) as launch_program, patch.object(
-            self.runtime, "_find_target_window",
-            return_value=(SimpleNamespace(hwnd=123), "found"),
-        ) as find_window:
+            self.runtime, "_launch_program", side_effect=launch
+        ) as launch_program:
             succeeded, _message = self.runtime.initialize(
                 program_settings=settings,
                 execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
@@ -491,7 +616,105 @@ class RuntimeLifecycleTests(unittest.TestCase):
 
         self.assertTrue(succeeded)
         launch_program.assert_called_once_with(settings)
-        self.assertEqual(find_window.call_args.kwargs["wait_timeout_seconds"], 25)
+        create_call = self.runtime._create_controller.call_args
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+        self.assertEqual(
+            create_call.kwargs["stable_window_seconds"],
+            PROGRAM_WINDOW_STABLE_SECONDS,
+        )
+        self.assertIsNone(create_call.kwargs["window"])
+
+    def test_auto_started_minimized_pipeline_guards_window_before_controller(self):
+        self.configure_initialization()
+        settings = {
+            "resolved_path": "C:/Games/BlueArchive.exe",
+            "startup_wait_seconds": 25,
+        }
+        game_window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
+
+        def launch(_settings):
+            self.runtime._program_started_for_session = True
+            return True, "started"
+
+        with patch.object(
+            self.runtime, "_launch_program", side_effect=launch
+        ), patch.object(
+            self.runtime,
+            "_find_target_window",
+            return_value=(game_window, "found"),
+        ) as find_window, patch.object(
+            self.runtime,
+            "_prepare_started_window_for_minimized_connection",
+            return_value=(True, "prepared"),
+        ) as prepare:
+            succeeded, _message = self.runtime.initialize(
+                program_settings=settings,
+                execution_queue=[(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})],
+                minimize_window=True,
+            )
+
+        self.assertTrue(succeeded)
+        self.assertEqual(
+            find_window.call_args.kwargs["poll_interval_seconds"],
+            PROGRAM_WINDOW_POLL_INTERVAL_SECONDS,
+        )
+        prepare.assert_called_once_with(game_window, 25, None)
+        create_call = self.runtime._create_controller.call_args
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 0)
+        self.assertEqual(create_call.kwargs["stable_window_seconds"], 0)
+        self.assertIs(create_call.kwargs["window"], game_window)
+
+    def test_auto_started_pipeline_without_minimize_skips_startup_guard(self):
+        self.configure_initialization()
+        settings = {
+            "resolved_path": "C:/Games/BlueArchive.exe",
+            "startup_wait_seconds": 25,
+        }
+
+        def launch(_settings):
+            self.runtime._program_started_for_session = True
+            return True, "started"
+
+        with patch.object(
+            self.runtime, "_launch_program", side_effect=launch
+        ), patch.object(
+            self.runtime, "_prepare_started_window_for_minimized_connection"
+        ) as prepare:
+            succeeded, _message = self.runtime.initialize(
+                program_settings=settings,
+                execution_queue=[(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})],
+                minimize_window=False,
+            )
+
+        self.assertTrue(succeeded)
+        prepare.assert_not_called()
+        create_call = self.runtime._create_controller.call_args
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+        self.assertEqual(
+            create_call.kwargs["stable_window_seconds"],
+            PROGRAM_WINDOW_STABLE_SECONDS,
+        )
+        self.assertIsNone(create_call.kwargs["window"])
+
+    def test_launch_task_binds_immediately_when_program_is_already_running(self):
+        self.configure_initialization()
+        settings = {
+            "resolved_path": "C:/Games/BlueArchive.exe",
+            "startup_wait_seconds": 25,
+        }
+        with patch.object(
+            self.runtime, "_launch_program", return_value=(True, "running")
+        ):
+            succeeded, _message = self.runtime.initialize(
+                program_settings=settings,
+                execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
+            )
+
+        self.assertTrue(succeeded)
+        create_call = self.runtime._create_controller.call_args
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+        self.assertEqual(create_call.kwargs["stable_window_seconds"], 0)
+        self.assertIsNone(create_call.kwargs["window"])
 
     def test_launch_task_rejects_missing_program_path_before_controller_creation(self):
         self.configure_initialization()
@@ -709,7 +932,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.runtime._original_window_placement)
         self.assertFalse(self.runtime._preserve_minimized_window)
 
-    def test_launch_settle_finishes_before_tasker_and_minimize_at_first_action(self):
+    def test_launch_guard_finishes_before_tasker_and_minimize_at_first_action(self):
         for newly_started in (True, False):
             with self.subTest(newly_started=newly_started):
                 self.configure_initialization()
@@ -721,11 +944,20 @@ class RuntimeLifecycleTests(unittest.TestCase):
                     events.append("launch")
                     return True, "started"
 
-                def settle(_cancel):
+                def create_controller(_settings, **kwargs):
                     self.assertIsNone(self.runtime.tasker)
                     self.assertIsNone(self.runtime.controller)
-                    events.append("settle")
-                    return True
+                    self.assertEqual(
+                        kwargs["wait_timeout_seconds"], 0 if newly_started else 60
+                    )
+                    self.assertEqual(kwargs["stable_window_seconds"], 0)
+                    self.assertEqual(kwargs["window"], game_window if newly_started else None)
+                    self.runtime.controller = MagicMock(connected=True)
+                    self.runtime.controller.post_connection.return_value = make_job()
+                    self.runtime.controller.post_inactive.return_value = make_job()
+                    self.runtime._target_hwnd = 123
+                    events.append("controller")
+                    return True, "created"
 
                 tasker = MagicMock(running=False, stopping=False, inited=True)
                 def post_task(*_):
@@ -737,11 +969,18 @@ class RuntimeLifecycleTests(unittest.TestCase):
                     return make_job()
 
                 tasker.post_task.side_effect = post_task
-                with patch.object(self.runtime, "_launch_program", side_effect=launch), patch.object(
-                    self.runtime, "_find_target_window",
-                    side_effect=lambda *a, **k: events.append("window") or (SimpleNamespace(hwnd=123), "found"),
-                ), patch.object(self.runtime, "_wait_for_program_startup_settle", side_effect=settle), patch(
+                self.runtime._create_controller.side_effect = create_controller
+                game_window = SimpleNamespace(hwnd=123, window_name="Blue Archive")
+                with patch.object(self.runtime, "_launch_program", side_effect=launch), patch(
                     "app.runtime.Tasker", side_effect=lambda: events.append("tasker") or tasker
+                ), patch.object(
+                    self.runtime,
+                    "_find_target_window",
+                    side_effect=lambda *a, **k: events.append("window") or (game_window, "found"),
+                ), patch.object(
+                    self.runtime,
+                    "_prepare_started_window_for_minimized_connection",
+                    side_effect=lambda *a, **k: events.append("guard") or (True, "prepared"),
                 ), patch.object(
                     self.runtime, "_resize_window_for_task", return_value=True
                 ), patch.object(
@@ -749,13 +988,22 @@ class RuntimeLifecycleTests(unittest.TestCase):
                     side_effect=lambda: events.append("minimize") or True,
                 ):
                     queue = [(PROGRAM_LAUNCH_ENTRY, {}), ("Login_Main", {})]
-                    self.assertTrue(self.runtime.initialize(program_settings={}, execution_queue=queue)[0])
+                    self.assertTrue(
+                        self.runtime.initialize(
+                            program_settings={},
+                            execution_queue=queue,
+                            minimize_window=True,
+                        )[0]
+                    )
                     self.assertTrue(self.runtime.run_task(queue, minimize_window=True)[0])
 
-                expected = ["launch", "window"]
+                expected = ["launch"]
                 if newly_started:
-                    expected.append("settle")
-                self.assertEqual(events, expected + ["tasker", "post", "first_capture", "minimize", "action"])
+                    expected.extend(["window", "guard"])
+                self.assertEqual(
+                    events,
+                    expected + ["controller", "tasker", "post", "first_capture", "minimize", "action"],
+                )
 
     def test_minimize_failure_requests_stop_without_waiting_in_callback(self):
         self.runtime.tasker = tasker = MagicMock(running=False, stopping=False)
@@ -865,29 +1113,15 @@ class RuntimeLifecycleTests(unittest.TestCase):
         def launch(_settings):
             self.runtime._program_started_for_session = True
             return True, "started"
-        with patch.object(self.runtime, "_launch_program", side_effect=launch), patch.object(
-            self.runtime, "_find_target_window", return_value=(SimpleNamespace(hwnd=123), "found")
-        ), patch.object(self.runtime, "_wait_for_program_startup_settle", return_value=False), patch(
-            "app.runtime.Tasker"
-        ) as factory:
-            succeeded, _ = self.runtime.initialize(program_settings={}, execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})])
+        self.runtime._create_controller.reset_mock()
+        with patch.object(self.runtime, "_launch_program", side_effect=launch):
+            succeeded, _ = self.runtime.initialize(
+                program_settings={},
+                execution_queue=[(PROGRAM_LAUNCH_ENTRY, {})],
+                cancellation_requested=lambda: True,
+            )
         self.assertFalse(succeeded)
-        factory.assert_not_called()
         self.runtime._create_controller.assert_not_called()
-
-    def test_program_startup_settle_waits_full_grace_period(self):
-        with patch(
-            "app.runtime.time.monotonic",
-            side_effect=[10.0, 10.0, 14.75, 15.0],
-        ), patch("app.runtime.time.sleep") as sleep:
-            succeeded = self.runtime._wait_for_program_startup_settle()
-
-        self.assertTrue(succeeded)
-        self.assertEqual(
-            sleep.call_args_list,
-            [call(0.25), call(0.25)],
-        )
-        self.assertEqual(PROGRAM_POST_LAUNCH_SETTLE_SECONDS, 5.0)
 
     def test_failed_task_message_uses_interface_label_without_queue_summary(self):
         tasker = MagicMock()
@@ -2926,6 +3160,7 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(init_args, (controller_settings,))
         self.assertIsNone(init_kwargs["program_settings"])
         self.assertEqual(init_kwargs["execution_queue"], [])
+        self.assertTrue(init_kwargs["minimize_window"])
         self.assertTrue(callable(init_kwargs["cancellation_requested"]))
         runtime.run_task.assert_not_called()
         runtime.release_session.assert_called_once()

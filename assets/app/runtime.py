@@ -28,7 +28,12 @@ WIN32_METHOD_DEFAULTS = {
 }
 PROGRAM_LAUNCH_ENTRY = "__LaunchProgram"
 PROGRAM_WINDOW_STABLE_SECONDS = 5.0
-PROGRAM_POST_LAUNCH_SETTLE_SECONDS = 5.0
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_LAYERED = 0x00080000
+LWA_ALPHA = 0x00000002
+PROGRAM_WINDOW_POLL_INTERVAL_SECONDS = 0.05
 SW_RESTORE = 9
 WM_SYSCOMMAND = 0x0112
 SC_MINIMIZE = 0xF020
@@ -77,6 +82,24 @@ def create_user32():
     user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.GetLayeredWindowAttributes.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetLayeredWindowAttributes.restype = wintypes.BOOL
+    user32.SetLayeredWindowAttributes.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        ctypes.c_ubyte,
+        wintypes.DWORD,
+    ]
+    user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
     user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
     user32.GetWindowPlacement.restype = wintypes.BOOL
     user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WindowPlacement)]
@@ -111,6 +134,7 @@ class AppRuntime:
         self._original_window_placement = None
         self._preserve_minimized_window = False
         self._program_started_for_session = False
+        self._startup_window_guard = None
 
     def _load_interface(self):
         with self.interface_path.open("r", encoding="utf-8") as file:
@@ -338,17 +362,6 @@ class AppRuntime:
                 time.sleep(WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS)
         return False
 
-    @staticmethod
-    def _wait_for_program_startup_settle(cancellation_requested=None):
-        deadline = time.monotonic() + PROGRAM_POST_LAUNCH_SETTLE_SECONDS
-        while True:
-            if cancellation_requested is not None and cancellation_requested():
-                return False
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return True
-            time.sleep(min(0.25, remaining))
-
     def _restore_window(self):
         placement = self._original_window_placement
         target_hwnd = self._target_hwnd
@@ -365,12 +378,148 @@ class AppRuntime:
         self._target_hwnd = None
         return True
 
+    def _apply_startup_window_guard(self, hwnd):
+        """Make a newly launched window invisible and click-through while it starts."""
+        if not hwnd or not self._user32.IsWindow(hwnd):
+            return False
+
+        guard = self._startup_window_guard
+        if guard is not None:
+            if guard["hwnd"] != hwnd:
+                if not self._restore_startup_window_guard():
+                    return False
+                guard = None
+
+        if guard is None:
+            ctypes.set_last_error(0)
+            original_ex_style = int(
+                self._user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+            )
+            if original_ex_style == 0 and ctypes.get_last_error() != 0:
+                return False
+
+            had_layered_style = bool(original_ex_style & WS_EX_LAYERED)
+            color_key = wintypes.DWORD()
+            alpha = ctypes.c_ubyte(255)
+            flags = wintypes.DWORD(LWA_ALPHA)
+            if had_layered_style and not self._user32.GetLayeredWindowAttributes(
+                hwnd,
+                ctypes.byref(color_key),
+                ctypes.byref(alpha),
+                ctypes.byref(flags),
+            ):
+                return False
+
+            guard = {
+                "hwnd": hwnd,
+                "original_ex_style": original_ex_style,
+                "had_layered_style": had_layered_style,
+                "color_key": color_key.value,
+                "alpha": alpha.value,
+                "flags": flags.value,
+            }
+            self._startup_window_guard = guard
+
+        ctypes.set_last_error(0)
+        result = self._user32.SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            guard["original_ex_style"] | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+        )
+        if result == 0 and ctypes.get_last_error() != 0:
+            return False
+
+        if not self._user32.SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA):
+            self._user32.SetWindowLongPtrW(
+                hwnd, GWL_EXSTYLE, guard["original_ex_style"]
+            )
+            return False
+        return True
+
+    def _restore_startup_window_guard(self):
+        guard = self._startup_window_guard
+        if guard is None:
+            return True
+
+        hwnd = guard["hwnd"]
+        if not self._user32.IsWindow(hwnd):
+            self._startup_window_guard = None
+            return True
+
+        ctypes.set_last_error(0)
+        result = self._user32.SetWindowLongPtrW(
+            hwnd, GWL_EXSTYLE, guard["original_ex_style"]
+        )
+        if result == 0 and ctypes.get_last_error() != 0:
+            return False
+
+        if guard["had_layered_style"] and not self._user32.SetLayeredWindowAttributes(
+            hwnd,
+            guard["color_key"],
+            guard["alpha"],
+            guard["flags"],
+        ):
+            return False
+
+        self._startup_window_guard = None
+        return True
+
+    def _prepare_started_window_for_minimized_connection(
+        self,
+        window,
+        wait_timeout_seconds,
+        cancellation_requested=None,
+    ):
+        self._target_hwnd = window.hwnd
+        deadline = time.monotonic() + max(0, wait_timeout_seconds)
+        while True:
+            if cancellation_requested is not None and cancellation_requested():
+                self._restore_startup_window_guard()
+                return False, "프로그램 창 최소화 준비가 취소되었습니다."
+            if not self._user32.IsWindow(window.hwnd):
+                self._restore_startup_window_guard()
+                return False, "최소화 준비 중 대상 프로그램 창이 종료되었습니다."
+            if not self._apply_startup_window_guard(window.hwnd):
+                self._restore_startup_window_guard()
+                return False, "자동 실행 창의 입력 방지 상태를 유지하지 못했습니다."
+            if self._minimize_window_for_task():
+                if not self._restore_startup_window_guard():
+                    return False, "최소화된 창의 원래 표시 상태를 복원하지 못했습니다."
+                return True, "자동 실행 창을 최소화 준비했습니다."
+            if time.monotonic() >= deadline:
+                self._restore_startup_window_guard()
+                return False, "대상 프로그램 창이 제한 시간 안에 최소화 가능한 상태가 되지 않았습니다."
+            time.sleep(PROGRAM_WINDOW_POLL_INTERVAL_SECONDS)
+
+    def _get_window_stability_signature(self, window):
+        hwnd = window.hwnd
+        if not hwnd or not self._user32.IsWindow(hwnd):
+            return None
+
+        window_rect = wintypes.RECT()
+        client_rect = wintypes.RECT()
+        if not self._user32.GetWindowRect(hwnd, ctypes.byref(window_rect)):
+            return None
+        if not self._user32.GetClientRect(hwnd, ctypes.byref(client_rect)):
+            return None
+
+        return (
+            hwnd,
+            getattr(window, "class_name", "") or "",
+            getattr(window, "window_name", "") or "",
+            int(self._user32.GetWindowLongPtrW(hwnd, GWL_STYLE)),
+            int(self._user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)),
+            (window_rect.left, window_rect.top, window_rect.right, window_rect.bottom),
+            (client_rect.left, client_rect.top, client_rect.right, client_rect.bottom),
+        )
+
 
     def _find_target_window(
         self,
         controller_settings: dict | None = None,
         wait_timeout_seconds: float = 0,
         stable_window_seconds: float = 0,
+        poll_interval_seconds: float = 0.25,
         cancellation_requested: Callable[[], bool] | None = None,
     ):
         try:
@@ -390,7 +539,7 @@ class AppRuntime:
             return None, f"Win32 window_regex가 올바르지 않습니다: {error}"
 
         deadline = time.monotonic() + max(0, wait_timeout_seconds)
-        stable_hwnd = None
+        stable_signature = None
         stable_since = None
         window = None
         while True:
@@ -408,18 +557,22 @@ class AppRuntime:
                 if stable_window_seconds <= 0:
                     window = candidate
                     break
-                if candidate.hwnd != stable_hwnd:
-                    stable_hwnd = candidate.hwnd
+                signature = self._get_window_stability_signature(candidate)
+                if signature is None:
+                    stable_signature = None
+                    stable_since = None
+                elif signature != stable_signature:
+                    stable_signature = signature
                     stable_since = now
                 elif now - stable_since >= stable_window_seconds:
                     window = candidate
                     break
             else:
-                stable_hwnd = None
+                stable_signature = None
                 stable_since = None
             if now >= deadline:
                 return None, "대상 프로그램 창을 찾지 못했습니다."
-            time.sleep(0.25)
+            time.sleep(max(0.01, poll_interval_seconds))
 
         return window, "프로그램 창을 확인했습니다."
 
@@ -428,16 +581,25 @@ class AppRuntime:
         controller_settings: dict | None = None,
         wait_timeout_seconds: float = 0,
         stable_window_seconds: float = 0,
+        window=None,
         cancellation_requested: Callable[[], bool] | None = None,
     ):
-        window, message = self._find_target_window(
-            controller_settings,
-            wait_timeout_seconds=wait_timeout_seconds,
-            stable_window_seconds=stable_window_seconds,
-            cancellation_requested=cancellation_requested,
-        )
         if window is None:
-            return False, message
+            window, message = self._find_target_window(
+                controller_settings,
+                wait_timeout_seconds=wait_timeout_seconds,
+                stable_window_seconds=stable_window_seconds,
+                cancellation_requested=cancellation_requested,
+            )
+            if window is None:
+                return False, message
+        else:
+            try:
+                self.controller_config, self._controller_selection_status = (
+                    self._select_controller_config(controller_settings)
+                )
+            except ValueError as error:
+                return False, str(error)
         self._target_hwnd = window.hwnd
 
         controller = Win32Controller(
@@ -545,6 +707,7 @@ class AppRuntime:
         controller_settings: dict | None = None,
         program_settings: dict | None = None,
         execution_queue: list[tuple[str, dict]] | None = None,
+        minimize_window: bool = False,
         cancellation_requested: Callable[[], bool] | None = None,
     ):
         released, release_message = self.release_session()
@@ -566,27 +729,55 @@ class AppRuntime:
                 entry == PROGRAM_LAUNCH_ENTRY
                 for entry, _override in (execution_queue or [])
             )
+            pipeline_task_requested = any(
+                entry != PROGRAM_LAUNCH_ENTRY
+                for entry, _override in (execution_queue or [])
+            )
+            wait_timeout_seconds = 0
+            stable_window_seconds = 0
+            prepared_window = None
             if program_launch_requested:
                 started, start_message = self._launch_program(program_settings)
                 if not started:
                     return False, start_message
-                window, window_message = self._find_target_window(
-                    controller_settings,
-                    wait_timeout_seconds=float(program_settings.get("startup_wait_seconds", 60)),
-                    cancellation_requested=cancellation_requested,
-                )
-                if window is None:
-                    return False, window_message
+                wait_timeout_seconds = float(program_settings.get("startup_wait_seconds", 60))
                 if self._program_started_for_session:
-                    if not self._wait_for_program_startup_settle(cancellation_requested):
-                        return False, "프로그램 시작 안정화 대기가 취소되었습니다."
+                    stable_window_seconds = PROGRAM_WINDOW_STABLE_SECONDS
+                if (
+                    self._program_started_for_session
+                    and minimize_window
+                    and pipeline_task_requested
+                ):
+                    prepared_window, window_message = self._find_target_window(
+                        controller_settings,
+                        wait_timeout_seconds=wait_timeout_seconds,
+                        poll_interval_seconds=PROGRAM_WINDOW_POLL_INTERVAL_SECONDS,
+                        cancellation_requested=cancellation_requested,
+                    )
+                    if prepared_window is None:
+                        return False, window_message
+                    prepared, prepare_message = (
+                        self._prepare_started_window_for_minimized_connection(
+                            prepared_window,
+                            wait_timeout_seconds,
+                            cancellation_requested,
+                        )
+                    )
+                    if not prepared:
+                        return False, prepare_message
+                    wait_timeout_seconds = 0
+                    stable_window_seconds = 0
 
             if cancellation_requested is not None and cancellation_requested():
                 return False, "작업 시작이 취소되었습니다."
 
-            # 대기 중 창이 교체되거나 종료됐을 수 있으므로 다시 찾아 연결한다.
+            # 시작 최소화 창은 클릭을 받지 않는 상태에서 실제 최소화가 확인된 뒤
+            # 연결한다. MaaFW는 연결 중 첫 캡처에서 자체 pseudo-minimize를 이어받는다.
             created, create_message = self._create_controller(
                 controller_settings,
+                wait_timeout_seconds=wait_timeout_seconds,
+                stable_window_seconds=stable_window_seconds,
+                window=prepared_window,
                 cancellation_requested=cancellation_requested,
             )
             if not created:
@@ -747,6 +938,9 @@ class AppRuntime:
                     except Exception as error:
                         cleanup_errors.append(f"컨트롤러 비활성화에 실패했습니다: {error}")
                 self.controller = None
+
+                if not self._restore_startup_window_guard():
+                    cleanup_errors.append("자동 실행 창의 입력 방지 상태를 해제하지 못했습니다.")
 
                 if self._preserve_minimized_window:
                     # 사용자가 요청한 최소화 상태는 세션 정리 후에도 유지한다.
