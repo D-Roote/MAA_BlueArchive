@@ -2,12 +2,13 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -146,6 +147,26 @@ class SettingsStore:
         }
 
 
+class AssociatedControlLabel(QLabel):
+    """A label that extends a checkable control's mouse hit area."""
+
+    activated = Signal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.activated.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class SettingsPanel(QWidget):
     minimize_changed = Signal(bool)
     program_launch_task_enabled_changed = Signal(bool)
@@ -230,21 +251,26 @@ class SettingsPanel(QWidget):
         general, general_layout = self._create_section(
             "일반", "작업 실행과 편집 동작을 설정합니다."
         )
-        self.minimize_checkbox = QCheckBox("사용")
+        self.minimize_checkbox = QCheckBox()
+        self.minimize_checkbox.setObjectName("settingsCheckbox")
         self._add_setting_row(
             general_layout,
             "실행 시 최소화",
             "작업을 시작할 때 대상 프로그램 창을 최소화합니다.",
             self.minimize_checkbox,
+            control_right_margin=12,
         )
-        self.program_launch_checkbox = QCheckBox("사용")
+        self.program_launch_checkbox = QCheckBox()
+        self.program_launch_checkbox.setObjectName("settingsCheckbox")
         self._add_setting_row(
             general_layout,
             "자동 실행 작업",
-            "활성화하면 자동 실행 작업을 목록 최상단에 추가합니다.",
+            "작업 시작 전 대상 프로그램을 자동 실행하는 작업을 목록 최상단에 표시합니다.",
             self.program_launch_checkbox,
+            control_right_margin=12,
         )
-        self.runtime_edit_checkbox = QCheckBox("허용")
+        self.runtime_edit_checkbox = QCheckBox()
+        self.runtime_edit_checkbox.setObjectName("settingsCheckbox")
         self._add_setting_row(
             general_layout,
             "작업 중 옵션 편집",
@@ -253,13 +279,16 @@ class SettingsPanel(QWidget):
                 "편집합니다. 변경 사항은 다음 실행부터 적용됩니다."
             ),
             self.runtime_edit_checkbox,
+            control_right_margin=12,
         )
-        self.clear_log_checkbox = QCheckBox("사용")
+        self.clear_log_checkbox = QCheckBox()
+        self.clear_log_checkbox.setObjectName("settingsCheckbox")
         self._add_setting_row(
             general_layout,
             "작업 시작 시 로그 초기화",
             "새로운 작업을 시작할 때 이전 실행의 로그를 비웁니다.",
             self.clear_log_checkbox,
+            control_right_margin=12,
         )
 
         program, program_layout = self._create_section(
@@ -290,7 +319,7 @@ class SettingsPanel(QWidget):
         program_path_layout.addWidget(self.program_path_input, 1)
         program_path_layout.addWidget(self.program_browse_button)
         program_path_layout.addWidget(self.program_apply_button)
-        self._add_setting_row(
+        self.program_path_row = self._add_setting_row(
             program_layout,
             "수동 경로",
             "비워 두면 자동 검색 결과를 사용합니다. 폴더 또는 실행 파일을 지정할 수 있습니다.",
@@ -299,7 +328,25 @@ class SettingsPanel(QWidget):
         self.program_active_status = QLabel()
         self.program_active_status.setObjectName("programPathStatus")
         self.program_active_status.setWordWrap(True)
-        program_layout.addWidget(self.program_active_status)
+        self.program_active_status_container = QWidget()
+        self.program_active_status_container.setObjectName(
+            "programActiveStatusContainer"
+        )
+        active_status_layout = QVBoxLayout(self.program_active_status_container)
+        active_status_layout.setContentsMargins(0, 8, 0, 0)
+        active_status_layout.setSpacing(0)
+        active_status_layout.addWidget(self.program_active_status)
+        self.program_active_status_effect = QGraphicsOpacityEffect(
+            self.program_active_status_container
+        )
+        self.program_active_status_effect.setOpacity(1.0)
+        self.program_active_status_container.setGraphicsEffect(
+            self.program_active_status_effect
+        )
+        program_layout.addWidget(self.program_active_status_container)
+        self.program_path_row.layout().setContentsMargins(0, 12, 0, 0)
+        self._program_status_animation = None
+        self._manual_path_error_active = False
 
         controller, controller_layout = self._create_section(
             "컨트롤러", "실행에 사용할 컨트롤러를 선택합니다."
@@ -350,7 +397,10 @@ class SettingsPanel(QWidget):
             section_layout = section.layout()
             last_widget = section_layout.itemAt(section_layout.count() - 1).widget()
             if last_widget is not None and last_widget.objectName() == "settingsRow":
-                last_widget.layout().setContentsMargins(0, 12, 0, 0)
+                margins = last_widget.layout().contentsMargins()
+                last_widget.layout().setContentsMargins(
+                    margins.left(), margins.top(), margins.right(), 0
+                )
 
         self.detail_layout.addStretch(1)
         self.detail_scroll.setWidget(self.detail_contents)
@@ -382,21 +432,32 @@ class SettingsPanel(QWidget):
         return section, layout
 
     @staticmethod
-    def _add_setting_row(parent_layout, title, description, control):
+    def _add_setting_row(
+        parent_layout,
+        title,
+        description,
+        control,
+        control_right_margin=0,
+    ):
         row = QFrame()
         row.setObjectName("settingsRow")
         row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         row_layout = QGridLayout(row)
-        row_layout.setContentsMargins(0, 12, 0, 12)
+        row_layout.setContentsMargins(0, 12, control_right_margin, 12)
         row_layout.setHorizontalSpacing(16)
         row_layout.setVerticalSpacing(2)
         row_layout.setColumnStretch(0, 1)
 
-        title_label = QLabel(title)
+        label_type = AssociatedControlLabel if isinstance(control, QCheckBox) else QLabel
+        title_label = label_type(title)
         title_label.setObjectName("settingsRowTitle")
-        description_label = QLabel(description)
+        description_label = label_type(description)
         description_label.setObjectName("settingsRowDescription")
         description_label.setWordWrap(True)
+
+        if isinstance(control, QCheckBox):
+            title_label.activated.connect(control.click)
+            description_label.activated.connect(control.click)
 
         control.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         row_layout.addWidget(title_label, 0, 0)
@@ -410,6 +471,9 @@ class SettingsPanel(QWidget):
             Qt.AlignmentFlag.AlignVCenter,
         )
         parent_layout.addWidget(row)
+        row.title_label = title_label
+        row.description_label = description_label
+        return row
 
     def _apply_config(self):
         general = self.config["general"]
@@ -562,21 +626,34 @@ class SettingsPanel(QWidget):
             self.program_path_input.setText(selected)
 
     def _apply_program_path(self):
+        if self._confirmed_manual_path or self._manual_path_error_active:
+            self._confirmed_manual_path = ""
+            self._manual_path_error_active = False
+            self.program_path_input.clear()
+            self._save()
+            self._refresh_program_status(animate=True)
+            self.program_changed.emit(self.program_settings())
+            return
+
         manual_path = self.program_path_input.text().strip()
         config = normalize_program_config(self.config.get("program"))
         if manual_path and resolve_manual_program_path(
             manual_path, config["executable_name"]
         ) is None:
-            self.program_active_status.setProperty("pathValid", False)
-            self.program_active_status.setText(
-                f"{config['executable_name']} 파일을 확인할 수 없습니다."
+            self._manual_path_error_active = True
+            self.program_apply_button.setText("초기화")
+            self._set_status_label(
+                self.program_active_status,
+                f"{config['executable_name']} 파일을 확인할 수 없습니다.",
+                False,
             )
-            self._refresh_status_style(self.program_active_status)
+            self._set_program_active_status_visible(True, animate=True)
             return
 
         self._confirmed_manual_path = manual_path
+        self._manual_path_error_active = False
         self._save()
-        self._refresh_program_status()
+        self._refresh_program_status(animate=True)
         self.program_changed.emit(self.program_settings())
 
     @staticmethod
@@ -585,31 +662,107 @@ class SettingsPanel(QWidget):
         label.style().polish(label)
         label.update()
 
-    def _refresh_program_status(self):
+    def _set_status_label(self, label, text, is_valid):
+        if label.text() == text and label.property("pathValid") == is_valid:
+            return
+        label.setText(text)
+        label.setProperty("pathValid", is_valid)
+        self._refresh_status_style(label)
+
+    def _set_program_active_status_visible(self, visible, animate=False):
+        container = self.program_active_status_container
+        opacity_effect = self.program_active_status_effect
+        if self._program_status_animation is not None:
+            self._program_status_animation.stop()
+            self._program_status_animation.deleteLater()
+            self._program_status_animation = None
+
+        if not animate or not self.isVisible():
+            container.setVisible(visible)
+            opacity_effect.setOpacity(1.0)
+            container.updateGeometry()
+            return
+
+        if visible:
+            if not container.isVisible():
+                opacity_effect.setOpacity(0.0)
+                container.show()
+            start_opacity = opacity_effect.opacity()
+            target_opacity = 1.0
+        else:
+            if not container.isVisible():
+                opacity_effect.setOpacity(1.0)
+                return
+            start_opacity = opacity_effect.opacity()
+            target_opacity = 0.0
+
+        # 레이아웃 높이는 매 프레임 바꾸지 않고 새 영역만 페이드하여
+        # 기존 설정 카드들이 반복해서 다시 그려지는 현상을 방지한다.
+        animation = QPropertyAnimation(opacity_effect, b"opacity", self)
+        animation.setDuration(140)
+        animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        animation.setStartValue(start_opacity)
+        animation.setEndValue(target_opacity)
+
+        def finish_transition():
+            if not visible:
+                container.hide()
+            opacity_effect.setOpacity(1.0)
+            container.updateGeometry()
+            if self._program_status_animation is animation:
+                self._program_status_animation = None
+            animation.deleteLater()
+
+        animation.finished.connect(finish_transition)
+        self._program_status_animation = animation
+        animation.start()
+
+    def _refresh_program_status(self, animate=False):
         config = {
             **normalize_program_config(self.config.get("program")),
             "manual_path": self._confirmed_manual_path,
         }
+        has_manual_path = bool(self._confirmed_manual_path)
+        show_active_status = has_manual_path or self._manual_path_error_active
+        self.program_apply_button.setText(
+            "초기화" if show_active_status else "확인"
+        )
         auto_path = find_auto_program_executable(config)
         if auto_path is None:
-            self.program_auto_status.setText("자동 검색: 설치 위치를 찾지 못했습니다.")
-            self.program_auto_status.setProperty("pathValid", False)
+            self._set_status_label(
+                self.program_auto_status,
+                "자동 검색: 설치 위치를 찾지 못했습니다.",
+                False,
+            )
         else:
-            self.program_auto_status.setText(f"자동 검색: {auto_path}")
-            self.program_auto_status.setProperty("pathValid", True)
+            self._set_status_label(
+                self.program_auto_status,
+                f"자동 검색: {auto_path}",
+                True,
+            )
+
+        if self._manual_path_error_active:
+            self._set_program_active_status_visible(True, animate)
+            return
+        if not has_manual_path:
+            # 접히는 동안 마지막 수동 경로 상태를 유지해 색상과 문구가 튀지 않게 한다.
+            self._set_program_active_status_visible(False, animate)
+            return
 
         active_path = find_program_executable(config)
         if active_path is None:
-            self.program_active_status.setText(
-                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다."
+            self._set_status_label(
+                self.program_active_status,
+                "사용할 실행 파일이 없습니다. 작업 목록의 자동 실행 작업이 비활성화됩니다.",
+                False,
             )
-            self.program_active_status.setProperty("pathValid", False)
         else:
-            source = "수동 경로" if self._confirmed_manual_path else "자동 경로"
-            self.program_active_status.setText(f"사용 경로 ({source}): {active_path}")
-            self.program_active_status.setProperty("pathValid", True)
-        self._refresh_status_style(self.program_auto_status)
-        self._refresh_status_style(self.program_active_status)
+            self._set_status_label(
+                self.program_active_status,
+                f"사용 경로: {active_path}",
+                True,
+            )
+        self._set_program_active_status_visible(True, animate)
 
     def _on_controller_changed(self, _index):
         self._update_controller_details()

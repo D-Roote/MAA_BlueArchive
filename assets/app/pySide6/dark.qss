@@ -124,6 +124,10 @@ QRadioButton {
     background-color: transparent;
 }
 
+QLabel#taskItemLabel[muted="true"] {
+    color: #94A3B8;
+}
+
 QLineEdit#optionInput,
 QComboBox#optionSelect {
     background-color: #1E2D46;
@@ -167,13 +171,52 @@ QTextEdit {
     color: #BBC9D9;
 }
 
+QLabel#logTitleLabel {
+    color: #E5EDF6;
+}
+
+QPushButton#logLatestButton,
+QPushButton#logCopyButton,
+QPushButton#logClearButton,
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
+    background-color: #1E2D46;
+    border-color: #405474;
+    color: #CCD7E5;
+}
+
+QPushButton#logCopyButton,
+QPushButton#logClearButton,
+QPushButton#logSaveButton,
+QPushButton#logMenuToggleButton {
+    background-color: #22314A;
+}
+
+QPushButton#logLatestButton:hover,
+QPushButton#logCopyButton:hover,
+QPushButton#logClearButton:hover,
+QPushButton#logSaveButton:hover,
+QPushButton#logMenuToggleButton:hover {
+    background-color: #283A55;
+    border-color: #2BB3E3;
+}
+
+QPushButton#logLatestButton {
+    color: #63D2F5;
+}
+
+QPushButton#logMenuToggleButton[menuExpanded="true"] {
+    background-color: #283A55;
+    border-color: #2BB3E3;
+}
+
 QScrollBar:vertical,
 QScrollBar:horizontal,
 QScrollBar::add-page:vertical,
 QScrollBar::sub-page:vertical,
 QScrollBar::add-page:horizontal,
 QScrollBar::sub-page:horizontal {
-    background-color: #263650;
+    background-color: transparent;
 }
 
 QScrollBar::handle:vertical,
@@ -181,6 +224,23 @@ QScrollBar::handle:horizontal,
 QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover {
     background-color: #168FBE;
+    border-color: #168FBE;
+}
+
+QScrollBar[contextual="true"]:vertical,
+QScrollBar[contextual="true"]::add-page:vertical,
+QScrollBar[contextual="true"]::sub-page:vertical {
+    background-color: #172238;
+}
+
+QScrollBar[contextual="true"]::handle:vertical {
+    background-color: transparent;
+    border-color: transparent;
+}
+
+QScrollBar[contextual="true"][contextualVisible="true"]::handle:vertical {
+    background-color: #168FBE;
+    border-color: #168FBE;
 }
 
 QWidget#settingsPanel,

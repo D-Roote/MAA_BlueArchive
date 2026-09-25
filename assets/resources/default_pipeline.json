@@ -10,6 +10,10 @@
         "threshold": 0.85,
         "method": 5
     },
+    "OCR": {
+        "recognition": "OCR",
+        "threshold": 0.6
+    },
     "on_error": [
         "Exception_Handling"
     ],
