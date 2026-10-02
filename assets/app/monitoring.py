@@ -46,7 +46,7 @@ def normalize_screen_preferences(value):
     value = value if isinstance(value, dict) else {}
     return {
         "mode": "continuous" if value.get("mode") == "continuous" else "single",
-        "fps": value.get("fps") if type(value.get("fps")) is int and value["fps"] in (1, 2, 5, 10) else 2,
+        "fps": value.get("fps") if type(value.get("fps")) is int and value["fps"] in (1, 2, 5, 10, 15, 30, 45, 60) else 2,
     }
 
 
@@ -98,6 +98,7 @@ class MonitoringService:
         self.connected_target = None
         self.targets = []
         self._discovered_preset = None
+        self._discovered_adb_path = ""
         self._initialized = False
 
     def preset(self, name):
@@ -155,6 +156,7 @@ class MonitoringService:
             if adb_path and not Path(adb_path).is_file():
                 raise ValueError("ADB 실행 파일 경로를 확인하세요.")
             self._init_toolkit()
+            self._discovered_adb_path = adb_path
             for device in Toolkit.find_adb_devices(adb_path or None) or []:
                 self.targets.append(ConnectionTarget(
                     device.address, f"{device.name} · {device.address}", "Adb", device=device,
@@ -182,7 +184,10 @@ class MonitoringService:
             }
             factory = lambda: Win32Controller(hWnd=target.hwnd, **methods)
         else:
-            if preferences["address"] and self._discovered_preset == name:
+            if preferences["adb_path"] != self._discovered_adb_path:
+                target = None
+            if (preferences["address"] and self._discovered_preset == name
+                    and preferences["adb_path"] == self._discovered_adb_path):
                 target = next((t for t in self.targets if t.key == preferences["address"]), None)
             if target is not None and target.device is not None:
                 device = target.device

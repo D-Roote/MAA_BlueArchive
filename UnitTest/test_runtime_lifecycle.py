@@ -12,11 +12,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import ANY, MagicMock, call, patch
 
+import numpy as np
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QSize, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -133,6 +136,19 @@ class RuntimeLifecycleTests(unittest.TestCase):
         tasker.assert_not_called()
         self.assertIsNone(runtime.resource)
         self.assertIsNone(runtime.tasker)
+
+    def test_cached_preview_never_posts_capture_and_returns_owned_frame(self):
+        controller = MagicMock(connected=True)
+        original = np.zeros((20, 30, 3), dtype=np.uint8)
+        controller.cached_image = original
+        self.runtime.controller = controller
+        frame = self.runtime.capture_cached_frame()
+        original[:] = 255
+        self.assertEqual(frame.max(), 0)
+        controller.post_screencap.assert_not_called()
+        self.runtime.controller = None
+        with self.assertRaises(RuntimeError):
+            self.runtime.capture_cached_frame()
 
     def test_window_search_ignores_app_and_uses_controller_settings(self):
         windows = [
@@ -1510,6 +1526,10 @@ class UILifecycleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        # Windows offscreen does not enumerate system fonts. Verify real Hangul metrics.
+        font = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf"
+        if sys.platform == "win32" and font.is_file():
+            QFontDatabase.addApplicationFont(str(font))
 
     def setUp(self):
         temp_dir = tempfile.TemporaryDirectory()
@@ -1763,6 +1783,214 @@ class UILifecycleTests(unittest.TestCase):
         saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["connection"], {"adb_path": "C:/tools/adb.exe", "address": "localhost:5555"})
         self.assertEqual(self.window.settings_panel.controller_settings(), preset)
+
+    def show_screen_panel(self):
+        self.window.show()
+        sections = self.window.ui.monitorSectionsWidget.sections()
+        section = next(s for s in sections if s.property("monitorSectionKey") == "screen")
+        section.findChild(QToolButton, "monitorSectionToggle").setChecked(True)
+        self.app.processEvents()
+        return self.window.monitor.screen
+
+    def configure_screen_capture(self):
+        monitor = self.window.monitor
+        controller = MagicMock(connected=True)
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+        controller.post_screencap.return_value.wait.return_value.succeeded = True
+        image = np.zeros((90, 160, 3), dtype=np.uint8)
+        image[:, :, 2] = 255
+        controller.post_screencap.return_value.wait.return_value.get.return_value = image
+        monitor.service.controller = controller
+        monitor._sync()
+        self.addCleanup(lambda: setattr(monitor.service, "controller", None))
+        return controller
+
+    def test_single_screen_test_captures_once_and_owns_correct_color(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        controller.post_screencap.assert_called_once()
+        self.assertEqual(screen.preview.image.size(), QSize(160, 90))
+        self.assertEqual(screen.preview.image.pixelColor(0, 0).name(), "#ff0000")
+        self.assertIn("160 × 90", screen.status.text())
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        drawn = screen.preview.image_rect()
+        self.assertAlmostEqual(drawn.width() / drawn.height(), 160 / 90, delta=0.03)
+        self.assertTrue(screen.preview.rect().contains(drawn))
+
+    def test_running_screen_reads_only_runtime_cache(self):
+        self.show_screen_panel()
+        self.configure_screen_capture()
+        runtime = self.window.runtime
+        runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
+        self.window.isRunning = True
+        with patch.object(self.window.monitor.service, "capture") as capture:
+            self.window.monitor.toggle_capture()
+            self.wait_for_monitor()
+        capture.assert_not_called()
+        runtime.capture_cached_frame.assert_called_once()
+        self.assertIn("실행 캐시", self.window.monitor.screen.status.text())
+        self.window.isRunning = False
+
+    def test_continuous_preview_stops_on_collapse_and_retains_last_frame(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.assertTrue(self.window.monitor.preview_timer.isActive())
+        section = self.window.monitor.screen_content.parentWidget()
+        section.findChild(QToolButton, "monitorSectionToggle").setChecked(False)
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertFalse(screen.preview.image.isNull())
+
+    def test_page_change_stops_preview_and_screen_preferences_persist(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(5))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["monitor"], {"mode": "continuous", "fps": 5})
+        store = SettingsStore(self.window.runtime.user_dir / "config" / "maa_config.json")
+        self.assertEqual(store.load()["monitor"], saved["monitor"])
+
+    def test_preview_capture_error_stops_loop_and_allows_retry(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        controller.post_screencap.return_value.wait.return_value.succeeded = False
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertIn("캡처에 실패", screen.status.text())
+        self.assertTrue(screen.capture_button.isEnabled())
+
+    def test_stopping_inflight_frame_discards_result_without_unsafe_termination(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_capture():
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                self.window.monitor.toggle_capture()
+                self.assertTrue(self.window.monitor.busy)
+                self.assertFalse(self.window.monitor.streaming)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+
+    def test_slow_continuous_preview_has_no_overlapping_requests(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocked_capture():
+            calls.append(1)
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                QTest.qWait(150)
+                self.window.monitor.capture_frame()
+                self.assertEqual(len(calls), 1)
+            finally:
+                self.window.monitor.stop_preview()
+                release.set()
+                self.wait_for_monitor()
+
+    def test_target_change_clears_previous_screenshot(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.window.monitor.select_target("different")
+        self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertIsNone(self.window.monitor.service.controller)
+
+    def test_continuous_timer_delivers_next_frame_at_selected_rate(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        for _ in range(100):
+            QTest.qWait(5)
+            if controller.post_screencap.call_count >= 2:
+                break
+        self.assertGreaterEqual(controller.post_screencap.call_count, 2)
+        self.window.monitor.stop_preview()
+        self.wait_for_monitor()
+
+    def test_program_settings_change_invalidates_preflight_and_image(self):
+        self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.settings_panel.program_changed.emit({"executable_name": "Other.exe"})
+        self.wait_for_monitor()
+        self.assertEqual(self.window.monitor.targets, [])
+        self.assertEqual(self.window.monitor.target_key, "")
+        self.assertIsNone(self.window.monitor.service.controller)
+
+    def test_preview_sync_does_not_rebuild_unchanged_connection_combos(self):
+        self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        combo = self.window.monitor.panels[0].preset_combo
+        removed = MagicMock()
+        combo.model().rowsRemoved.connect(removed)
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        removed.assert_not_called()
+        controller.post_screencap.assert_called_once()
+
+    def test_preview_close_waits_for_inflight_capture_then_releases_connection(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_capture():
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                self.window.close()
+                self.assertTrue(self.window._close_pending)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertIsNone(self.window.monitor.service.controller)
+        controller.post_inactive.assert_called_once()
+        self.assertFalse(self.window.isVisible())
 
     @staticmethod
     def find_task_item(window, task_name="Test"):

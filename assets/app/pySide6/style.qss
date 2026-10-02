@@ -353,6 +353,32 @@ QLineEdit#monitorLineEdit {
 
 QComboBox#monitorComboBox {
     combobox-popup: 0;
+    padding-right: 26px;
+}
+
+QComboBox#monitorComboBox:hover,
+QComboBox#monitorComboBox:focus,
+QLineEdit#monitorLineEdit:focus {
+    border-color: #00AEEF;
+}
+
+QComboBox#monitorComboBox:disabled {
+    color: #94A3B8;
+}
+
+QComboBox#monitorComboBox::down-arrow {
+    image: url("maabaicons:actions/chevron-down.svg");
+    width: 14px;
+    height: 14px;
+}
+
+QComboBox#monitorComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    selection-background-color: #DDEFF8;
+    selection-color: #006E94;
+    outline: none;
 }
 
 QComboBox#monitorComboBox::drop-down {
@@ -377,6 +403,13 @@ QPushButton#monitorActionButton:hover {
 
 QPushButton#monitorActionButton:disabled {
     color: #94A3B8;
+}
+
+QFrame#screenPreview {
+    background-color: #F1F5F9;
+    color: #64748B;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
 }
 
 QLabel#monitorStatus {

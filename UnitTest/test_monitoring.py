@@ -124,6 +124,21 @@ class MonitoringServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.connect("Android", "", {})
 
+    def test_changed_adb_executable_does_not_reuse_old_device_configuration(self):
+        old_path = Path(self.temp.name) / "old.exe"
+        new_path = Path(self.temp.name) / "new.exe"
+        old_path.touch()
+        new_path.touch()
+        device = SimpleNamespace(name="Emulator", address="localhost:5555", adb_path=old_path,
+                                 screencap_methods=16, input_methods=2, config={"old": True})
+        self.toolkit.find_adb_devices.return_value = [device]
+        self.service.discover("Android", {"adb_path": str(old_path)})
+        controller = MagicMock()
+        with patch("app.monitoring.AdbController", return_value=controller) as factory:
+            self.service.connect("Android", device.address, {"adb_path": str(new_path), "address": device.address})
+        self.assertEqual(factory.call_args.kwargs["adb_path"], str(new_path))
+        self.assertNotIn("config", factory.call_args.kwargs)
+
     def test_capture_copies_bgr_frame_and_rejects_empty_images(self):
         controller = MagicMock()
         image = np.zeros((20, 40, 3), dtype=np.uint8)

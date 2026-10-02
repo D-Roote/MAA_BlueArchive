@@ -1453,7 +1453,12 @@ class MainWindow(QMainWindow):
             for section in self.ui.monitorSectionsWidget.sections()
             if section.property("monitorSectionKey") == "connection"
         )
-        self.monitor = MonitorCoordinator(self, connection_content)
+        screen_content = next(
+            section.findChild(QWidget, "monitorSectionContent")
+            for section in self.ui.monitorSectionsWidget.sections()
+            if section.property("monitorSectionKey") == "screen"
+        )
+        self.monitor = MonitorCoordinator(self, connection_content, screen_content)
         self.monitor.busy_changed.connect(self.check_start_button_state)
         self.monitor.shutdown_ready.connect(self._finish_pending_close)
         setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
@@ -1496,6 +1501,8 @@ class MainWindow(QMainWindow):
     def _sync_page_navigation(self, index):
         self.ui.dashboardNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.mainTab))
         self.ui.settingsNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.settingTab))
+        if hasattr(self, "monitor") and index != self.ui.mainPages.indexOf(self.ui.mainTab):
+            self.monitor.stop_preview()
 
     def _setup_dashboard_layout(self):
         task_panel = self.ui.findChild(QWidget, "_1_settingStartWidget")
@@ -1615,6 +1622,8 @@ class MainWindow(QMainWindow):
         button.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
+        if key == "screen" and not expanded and hasattr(self, "monitor"):
+            self.monitor.stop_preview()
         if key == "log":
             self._log_section_expanded = expanded
             policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum

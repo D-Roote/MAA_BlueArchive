@@ -41,6 +41,14 @@ QLineEdit#monitorLineEdit {
     border-color: #405474;
 }
 
+QComboBox#monitorComboBox QAbstractItemView {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+    selection-background-color: #24445F;
+    selection-color: #63D2F5;
+}
+
 QPushButton#monitorActionButton {
     background-color: #1E2D46;
     border-color: #405474;
@@ -50,6 +58,13 @@ QPushButton#monitorActionButton {
 QPushButton#monitorActionButton:hover {
     background-color: #283A55;
     color: #63D2F5;
+}
+
+QFrame#screenPreview {
+    background-color: #152238;
+    color: #94A3B8;
+    border: 1px solid #30415E;
+    border-radius: 8px;
 }
 
 QLabel#monitorStatus {
