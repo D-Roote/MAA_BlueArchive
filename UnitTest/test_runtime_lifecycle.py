@@ -1646,6 +1646,124 @@ class UILifecycleTests(unittest.TestCase):
         self.window.stop_worker = stop_worker
         return worker
 
+    def wait_for_monitor(self):
+        for _ in range(400):
+            QTest.qWait(5)
+            if not self.window.monitor.busy:
+                self.app.processEvents()
+                return
+        self.fail("모니터 백그라운드 요청이 종료되지 않았습니다.")
+
+    def test_connection_panels_share_discovery_and_connection_status(self):
+        from app.monitoring import ConnectionTarget
+        monitor = self.window.monitor
+        target = ConnectionTarget("10", "Example · PID 123", "Win32", hwnd=10)
+        with patch.object(monitor.service, "discover", return_value=[target]):
+            monitor.discover()
+            self.wait_for_monitor()
+        self.assertEqual(monitor.target_key, "10")
+        for panel in monitor.panels:
+            self.assertEqual(panel.target_combo.currentData(), "10")
+            self.assertTrue(panel.connect_button.isEnabled())
+        with patch.object(monitor.service, "connect", return_value=target):
+            monitor.connect_target()
+            self.wait_for_monitor()
+        self.assertEqual(monitor.panels[0].status.text(), monitor.panels[1].status.text())
+        self.assertIn("연결 성공", monitor.panels[0].status.text())
+
+    def test_monitor_serializes_requests_and_discards_stale_discovery(self):
+        from app.monitoring import ConnectionTarget
+        monitor = self.window.monitor
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocked_discovery(*args):
+            calls.append(args)
+            entered.set()
+            release.wait(2)
+            return [ConnectionTarget("old", "old", "Win32")]
+
+        with patch.object(monitor.service, "discover", side_effect=blocked_discovery):
+            try:
+                monitor.discover()
+                self.assertTrue(entered.wait(1))
+                monitor.discover()
+                monitor.select_preset("Win32FramePool")
+                self.assertTrue(monitor.busy)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(monitor.targets, [])
+        self.assertEqual(monitor.target_key, "")
+
+    def test_task_start_waits_for_preflight_controller_cleanup(self):
+        monitor = self.window.monitor
+        controller = MagicMock()
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+        monitor.service.controller = controller
+        worker = MagicMock()
+        with patch("app.winUI.RuntimeWorker", return_value=worker) as factory:
+            self.window.on_task_start()
+            factory.assert_not_called()
+            self.wait_for_monitor()
+            factory.assert_called_once()
+        controller.post_inactive.assert_called_once()
+        self.assertIsNone(monitor.service.controller)
+        self.assertTrue(self.window.isRunning)
+        self.assertFalse(monitor.panels[0].discover_button.isEnabled())
+        self.window.worker = None
+        self.window._finish_run_if_idle()
+
+    def test_failed_preflight_cleanup_cancels_pending_task_start(self):
+        monitor = self.window.monitor
+        monitor.service.controller = MagicMock()
+        monitor.service.controller.post_inactive.return_value.wait.return_value.succeeded = False
+        with patch("app.winUI.RuntimeWorker") as factory:
+            self.window.on_task_start()
+            self.wait_for_monitor()
+            factory.assert_not_called()
+        self.assertIsNone(monitor.pending_start)
+        self.assertIn("해제에 실패", monitor.panels[0].status.text())
+        monitor.service.controller = None
+
+    def test_close_waits_for_connection_diagnostic_and_cleanup(self):
+        monitor = self.window.monitor
+        entered, release = threading.Event(), threading.Event()
+        controller = MagicMock()
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+
+        def blocked_connect(*_args):
+            entered.set()
+            release.wait(2)
+            monitor.service.controller = controller
+            return SimpleNamespace(label="connected")
+
+        self.window.show()
+        with patch.object(monitor.service, "connect", side_effect=blocked_connect):
+            try:
+                monitor.connect_target()
+                self.assertTrue(entered.wait(1))
+                self.window.close()
+                self.assertTrue(self.window._close_pending)
+                self.assertTrue(self.window.isVisible())
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        controller.post_inactive.assert_called_once()
+        self.assertTrue(monitor.ready_to_close)
+        self.assertFalse(self.window.isVisible())
+
+    def test_connection_preferences_persist_without_changing_runtime_preset(self):
+        monitor = self.window.monitor
+        preset = self.window.settings_panel.controller_settings()
+        monitor.change_preferences({"adb_path": " C:/tools/adb.exe ", "address": " localhost:5555 "})
+        for panel in monitor.panels:
+            self.assertEqual(panel.address.text(), "localhost:5555")
+        saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["connection"], {"adb_path": "C:/tools/adb.exe", "address": "localhost:5555"})
+        self.assertEqual(self.window.settings_panel.controller_settings(), preset)
+
     @staticmethod
     def find_task_item(window, task_name="Test"):
         task_list = window.option_list_widget

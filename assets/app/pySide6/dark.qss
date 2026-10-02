@@ -34,6 +34,28 @@ QFrame#optionGroupSeparator {
     background-color: #30415E;
 }
 
+QComboBox#monitorComboBox,
+QLineEdit#monitorLineEdit {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+}
+
+QPushButton#monitorActionButton {
+    background-color: #1E2D46;
+    border-color: #405474;
+    color: #CCD7E5;
+}
+
+QPushButton#monitorActionButton:hover {
+    background-color: #283A55;
+    color: #63D2F5;
+}
+
+QLabel#monitorStatus {
+    color: #AEBFD2;
+}
+
 QPushButton#dashboardNavButton,
 QPushButton#settingsNavButton {
     background-color: transparent;

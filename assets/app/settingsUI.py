@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.runtime import WIN32_METHOD_DEFAULTS, WIN32_METHOD_PRIORITY
+from app.monitoring import normalize_connection_preferences, normalize_screen_preferences
 from app.pg_init import (
     DEFAULT_PROGRAM_CONFIG,
     find_auto_program_executable,
@@ -40,6 +41,8 @@ DEFAULT_MAA_CONFIG = {
         "clear_log_on_start": True,
     },
     "controller": {},
+    "connection": {"adb_path": "", "address": ""},
+    "monitor": {"mode": "single", "fps": 2},
     "program": DEFAULT_PROGRAM_CONFIG,
     "appearance": {
         "theme": "light",
@@ -104,6 +107,8 @@ class SettingsStore:
                 config["controller"] = deepcopy(raw_controller)
 
             config["program"] = normalize_program_config(raw_config.get("program"))
+            config["connection"] = normalize_connection_preferences(raw_config.get("connection"))
+            config["monitor"] = normalize_screen_preferences(raw_config.get("monitor"))
 
             raw_appearance = raw_config.get("appearance")
             if isinstance(raw_appearance, dict):
@@ -372,6 +377,7 @@ class SettingsPanel(QWidget):
         self.controller_details.setObjectName("controllerDetails")
         self.controller_details.setWordWrap(True)
         controller_layout.addWidget(self.controller_details)
+        self._connection_layout = controller_layout
 
         appearance, appearance_layout = self._create_section(
             "외관", "애플리케이션의 표시 방식을 설정합니다."
@@ -587,6 +593,8 @@ class SettingsPanel(QWidget):
             "controller": SettingsStore.serialize_controller(
                 self.controller_combo.currentData()
             ),
+            "connection": normalize_connection_preferences(self.config.get("connection")),
+            "monitor": normalize_screen_preferences(self.config.get("monitor")),
             "program": {
                 **normalize_program_config(self.config.get("program")),
                 "manual_path": self._confirmed_manual_path,
@@ -595,6 +603,33 @@ class SettingsPanel(QWidget):
                 "theme": self.theme_combo.currentData() or "light",
             },
         }
+
+    def add_connection_panel(self, panel):
+        group = QFrame()
+        group.setObjectName("settingsConnectionGroup")
+        group.setProperty("connectionGroup", True)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(8)
+        label = QLabel("연결 설정 · 사전 확인")
+        label.setObjectName("settingsRowTitle")
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setMinimumHeight(24)
+        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        panel.layout().setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(label)
+        layout.addWidget(panel)
+        group.title_label = label
+        self._connection_group = group
+        self._connection_layout.addSpacing(8)
+        self._connection_layout.addWidget(group)
+
+    def save_monitor_preferences(self, connection=None, screen=None):
+        if connection is not None:
+            self.config["connection"] = normalize_connection_preferences(connection)
+        if screen is not None:
+            self.config["monitor"] = normalize_screen_preferences(screen)
+        self._save()
 
     def _save(self):
         self.config = self._collect_config()

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import AssociatedControlLabel, SettingsPanel
+from app.monitorUI import MonitorCoordinator
 
 
 WINDOW_SIZE = [1200, 800]
@@ -1447,6 +1448,14 @@ class MainWindow(QMainWindow):
         self._allow_option_edits_while_running = False
 
         self.setup_settings_ui()
+        connection_content = next(
+            section.findChild(QWidget, "monitorSectionContent")
+            for section in self.ui.monitorSectionsWidget.sections()
+            if section.property("monitorSectionKey") == "connection"
+        )
+        self.monitor = MonitorCoordinator(self, connection_content)
+        self.monitor.busy_changed.connect(self.check_start_button_state)
+        self.monitor.shutdown_ready.connect(self._finish_pending_close)
         setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
         self.setup_connections()
 
@@ -1813,6 +1822,8 @@ class MainWindow(QMainWindow):
     def on_task_start(self):
         if self.worker is not None or self.stop_worker is not None or self._close_pending:
             return
+        if self.monitor.prepare_task_start(self.on_task_start):
+            return
         if self.settings_panel.clear_log_on_start_enabled():
             self.clear_log()
         self.append_log("작업을 시작합니다...")
@@ -1840,6 +1851,7 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
         self.isRunning = True
+        self.monitor.task_state_changed()
 
         self.ui.workStartBtn.setText("작업 중지")
         self.ui.workStartBtn.clicked.disconnect(self.on_task_start)
@@ -1894,6 +1906,7 @@ class MainWindow(QMainWindow):
             return
         if self.isRunning:
             self.isRunning = False
+            self.monitor.task_state_changed()
             self.ui.workStartBtn.setText("작업 시작")
             self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
             self.ui.workStartBtn.clicked.connect(self.on_task_start)
@@ -1905,7 +1918,8 @@ class MainWindow(QMainWindow):
         worker_running = self.worker is not None
         stop_running = self.stop_worker is not None
 
-        if worker_running or stop_running:
+        self.monitor.shutdown()
+        if worker_running or stop_running or not self.monitor.ready_to_close:
             self._close_pending = True
             event.ignore()
             if worker_running:
@@ -1920,7 +1934,7 @@ class MainWindow(QMainWindow):
 
         worker_running = self.worker is not None
         stop_running = self.stop_worker is not None
-        if not worker_running and not stop_running:
+        if not worker_running and not stop_running and self.monitor.ready_to_close:
             QTimer.singleShot(0, self.close)
 
     def setup_dynamic_options(self):
@@ -2543,7 +2557,7 @@ class MainWindow(QMainWindow):
                 self.stop_worker is None and not self._close_pending
             )
             return
-        if self.stop_worker is not None or self._close_pending:
+        if self.stop_worker is not None or self._close_pending or self.monitor.pending_start is not None:
             self.ui.workStartBtn.setEnabled(False)
             return
         any_checked = False

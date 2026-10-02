@@ -340,6 +340,50 @@ QLabel#optionGroupTitle {
     font-weight: 500;
 }
 
+QComboBox#monitorComboBox,
+QLineEdit#monitorLineEdit {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    min-height: 22px;
+    padding: 4px 6px;
+    font-size: 9pt;
+}
+
+QComboBox#monitorComboBox {
+    combobox-popup: 0;
+}
+
+QComboBox#monitorComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+
+QPushButton#monitorActionButton {
+    border: 1px solid #DFE7F0;
+    border-radius: 6px;
+    background-color: #EDF2F7;
+    color: #52647B;
+    min-height: 24px;
+    padding: 2px 6px;
+    font-size: 8pt;
+}
+
+QPushButton#monitorActionButton:hover {
+    background-color: #E0EAF3;
+    color: #006E94;
+}
+
+QPushButton#monitorActionButton:disabled {
+    color: #94A3B8;
+}
+
+QLabel#monitorStatus {
+    color: #64748B;
+    font-size: 9pt;
+}
+
 QLabel#optionGroupTitle[firstGroup="true"] {
     margin-top: 0px;
 }
