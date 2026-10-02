@@ -2,7 +2,7 @@
    전체 기본 폰트 및 배경 설정
    ========================================= */
 QWidget {
-    background-color: #F4F7FB;
+    background-color: transparent;
     color: #334155;
     font-family: "Malgun Gothic", "Segoe UI", sans-serif;
     font-size: 10pt;
@@ -12,8 +12,123 @@ QMainWindow {
     background-color: #FFFFFF;
 }
 
+QWidget#centralwidget,
+QWidget#mainTab,
+QWidget#settingTab {
+    background-color: #F4F7FB;
+}
+
+QWidget#appHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+QLabel#appBrandLabel {
+    color: #172B4D;
+    font-size: 15pt;
+    font-weight: bold;
+}
+
+QPushButton#dashboardNavButton,
+QPushButton#settingsNavButton {
+    min-width: 78px;
+    min-height: 34px;
+    padding: 4px 14px;
+    border-radius: 7px;
+    background-color: transparent;
+    color: #64748B;
+    font-weight: bold;
+}
+
+QPushButton#dashboardNavButton:hover,
+QPushButton#settingsNavButton:hover {
+    background-color: #EFF6FD;
+    color: #176AA0;
+}
+
+QPushButton#dashboardNavButton:checked,
+QPushButton#settingsNavButton:checked {
+    background-color: #E6F5FC;
+    color: #006E94;
+}
+
+QWidget#_1_settingStartWidget,
+QWidget#_2_settingWidget,
+QWidget#_3_logPrintWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #DFE7F0;
+    border-radius: 12px;
+}
+
+QLabel#workspaceSectionTitle {
+    color: #1D3150;
+    font-size: 11pt;
+    font-weight: bold;
+    min-height: 24px;
+    padding: 0px;
+}
+
+QLabel#optionEmptyState {
+    color: #94A3B8;
+    font-size: 10pt;
+}
+
+QSplitter#workspaceSplitter::handle:horizontal {
+    background-color: transparent;
+}
+
+QScrollArea#monitorScrollArea,
+QWidget#monitorSectionsWidget {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#monitorSection,
+QFrame#monitorLogSection {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+
+QWidget#monitorSectionHeader,
+QWidget#monitorSectionContent,
+QWidget#monitorLogContent {
+    background-color: transparent;
+}
+
+QLabel#monitorDragHandle {
+    color: #94A3B8;
+    font-size: 11pt;
+    padding: 0px 5px;
+}
+
+QToolButton#monitorSectionToggle {
+    min-height: 24px;
+    border: none;
+    background-color: transparent;
+    color: #334155;
+    font-size: 10pt;
+    font-weight: bold;
+    text-align: left;
+    padding: 2px 4px;
+}
+
+QToolButton#monitorSectionToggle:hover {
+    color: #006E94;
+}
+
+QLabel#monitorFutureDescription {
+    color: #64748B;
+    font-size: 9pt;
+}
+
+QPushButton#workStartBtn {
+    font-size: 11pt;
+    border-radius: 8px;
+}
+
 QScrollArea#scrollSettingWidget {
-    border: 1px solid transparent;
+    border: none;
 }
 
 QFrame#line,
@@ -22,51 +137,6 @@ QFrame#line_4 {
     max-height: 1px;
     border: none;
     background-color: #E2E8F0;
-}
-
-QFrame#line_2,
-QFrame#line_3 {
-    min-width: 1px;
-    max-width: 1px;
-    border: none;
-    background-color: #E2E8F0;
-}
-
-/* =========================================
-   탭 위젯 (QTabWidget) - 기존 패딩 및 모서리 크기 유지
-   ========================================= */
-QTabWidget::pane {
-    border: 1px solid #E2E8F0;
-    background-color: #F4F7FB;
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
-    margin-top: -1px;
-}
-
-QTabWidget#tabWidget > QStackedWidget,
-QWidget#mainTab,
-QWidget#settingTab {
-    background-color: transparent;
-}
-
-QTabBar::tab {
-    background-color: #E6EDF5;
-    color: #475569;
-    padding: 10px 25px;
-    border: 1px solid #E2E8F0;
-    border-bottom: none;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-}
-
-QTabBar::tab:selected {
-    background-color: #00AEEF;
-    color: #FFFFFF;
-    font-weight: bold;
-}
-
-QTabBar::tab:hover:!selected {
-    background-color: #DDE8F5;
 }
 
 /* =========================================
@@ -260,6 +330,31 @@ QWidget#OptionItemWidget, QWidget > QLabel {
     background-color: transparent;
 }
 
+QLabel#taskItemLabel[muted="true"] {
+    color: #94A3B8;
+}
+
+QLabel#optionGroupTitle {
+    margin-top: 6px;
+    font-size: 10pt;
+    font-weight: 500;
+}
+
+QLabel#optionGroupTitle[firstGroup="true"] {
+    margin-top: 0px;
+}
+
+QFrame#optionGroupSeparator {
+    border: none;
+    background-color: #E2E8F0;
+}
+
+QLabel#optionChoiceLabel,
+QLabel#optionInputLabel {
+    background-color: transparent;
+    font-size: 10pt;
+}
+
 QCheckBox {
     spacing: 6px;
     background-color: transparent;
@@ -361,17 +456,19 @@ QLabel#optionInputError {
 }
 
 QComboBox#optionSelect {
+    /* Keep a bounded list with a scrollbar instead of a native menu popup. */
+    combobox-popup: 0;
     background-color: #FFFFFF;
     color: #334155;
     border: 1px solid #CBD5E0;
     border-radius: 6px;
-    padding: 7px 10px;
-    min-height: 20px;
+    padding: 6px 30px 6px 10px;
+    min-height: 24px;
 }
 
-QComboBox#optionSelect:hover,
-QComboBox#optionSelect:focus {
+QComboBox#optionSelect:hover {
     border-color: #00AEEF;
+    background-color: #F0F8FC;
 }
 
 QComboBox#optionSelect:disabled {
@@ -393,6 +490,21 @@ QComboBox#optionSelect QAbstractItemView {
     outline: none;
 }
 
+QComboBox#optionSelect QAbstractItemView::item {
+    min-height: 34px;
+    padding: 0px 10px;
+}
+
+QComboBox#optionSelect QAbstractItemView::item:hover {
+    background-color: #E6F5FC;
+    color: #006E94;
+}
+
+QComboBox#optionSelect QAbstractItemView::item:selected {
+    background-color: #00AEEF;
+    color: #FFFFFF;
+}
+
 /* =========================================
    로그 출력 (QTextEdit)
    ========================================= */
@@ -404,21 +516,77 @@ QTextEdit {
     padding: 8px;
 }
 
+QTextEdit#logPrintText {
+    padding-right: 1px;
+}
+
+QLabel#logTitleLabel {
+    color: #64748B;
+    font-size: 9pt;
+    font-weight: 500;
+}
+
+QWidget#logActionMenu {
+    background-color: #EDF2F7;
+    border-radius: 6px;
+}
+
+QToolButton#logLatestButton,
+QToolButton#logCopyButton,
+QToolButton#logClearButton,
+QToolButton#logSaveButton,
+QToolButton#logMenuToggleButton {
+    min-height: 22px;
+    padding: 2px 3px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background-color: transparent;
+    color: #52647B;
+    font-size: 8pt;
+    font-weight: normal;
+}
+
+QToolButton#logLatestButton:hover,
+QToolButton#logCopyButton:hover,
+QToolButton#logClearButton:hover,
+QToolButton#logSaveButton:hover,
+QToolButton#logMenuToggleButton:hover {
+    background-color: #E0EAF3;
+    border-color: transparent;
+    color: #006E94;
+}
+
+QToolButton#logLatestButton {
+    color: #006E94;
+    font-weight: bold;
+}
+
+QToolButton#logMenuToggleButton {
+    padding-left: 0px;
+    padding-right: 0px;
+}
+
+QToolButton#logMenuToggleButton[menuExpanded="true"] {
+    background-color: #E0EAF3;
+    border-color: transparent;
+}
+
 /* =========================================
    스크롤바
    ========================================= */
 QScrollBar:vertical {
     border: none;
-    background-color: #E2E8F0;
-    width: 10px;
-    border-radius: 5px;
+    background-color: transparent;
+    width: 5px;
+    border-radius: 3px;
     margin: 0px;
 }
 
 QScrollBar::handle:vertical {
     background-color: #00AEEF;
+    border: 1px solid #00AEEF;
     min-height: 20px;
-    border-radius: 5px;
+    border-radius: 3px;
 }
 
 QScrollBar::handle:vertical:hover {
@@ -433,8 +601,8 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     border: none;
-    background-color: #E2E8F0;
-    border-radius: 5px;
+    background-color: transparent;
+    border-radius: 3px;
 }
 
 QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
@@ -445,16 +613,17 @@ QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
 
 QScrollBar:horizontal {
     border: none;
-    background-color: #E2E8F0;
-    height: 10px;
-    border-radius: 5px;
+    background-color: transparent;
+    height: 5px;
+    border-radius: 3px;
     margin: 0px;
 }
 
 QScrollBar::handle:horizontal {
     background-color: #00AEEF;
+    border: 1px solid #00AEEF;
     min-width: 20px;
-    border-radius: 5px;
+    border-radius: 3px;
 }
 
 QScrollBar::handle:horizontal:hover {
@@ -469,12 +638,38 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     border: none;
-    background-color: #E2E8F0;
-    border-radius: 5px;
+    background-color: transparent;
+    border-radius: 3px;
 }
 
 QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal {
     image: none;
     width: 0px;
     height: 0px;
+}
+
+/* 시작 화면 스크롤바는 5px 슬롯 안에서 숨김/축소/확대한다. */
+QScrollBar[contextual="true"]:vertical,
+QScrollBar[contextual="true"]::add-page:vertical,
+QScrollBar[contextual="true"]::sub-page:vertical {
+    background-color: #F8FAFC;
+}
+
+QScrollBar[contextual="true"]::handle:vertical {
+    background-color: transparent;
+    min-height: 20px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    margin-left: 2px;
+    margin-right: 1px;
+}
+
+QScrollBar[contextual="true"][contextualVisible="true"]::handle:vertical {
+    background-color: #00AEEF;
+    border-color: #00AEEF;
+}
+
+QScrollBar[contextual="true"][contextualExpanded="true"]::handle:vertical {
+    margin-left: 0px;
+    margin-right: 1px;
 }

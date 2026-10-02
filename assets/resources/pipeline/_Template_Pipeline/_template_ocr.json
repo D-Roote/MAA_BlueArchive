@@ -1,0 +1,50 @@
+{
+    "_Template_OCR_Full_Screen": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "order_by": "Area",
+                "model": "ko"
+            }
+        }
+    },
+    "_Template_OCR_Region": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [0, 0, 0, 0],
+                "only_rec": true,
+                "model": "ko"
+            }
+        }
+    },
+    "_Template_OCR_Click_Text": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "model": "ko"
+            }
+        },
+        "action": {
+            "type": "Click"
+        }
+    },
+    "_Template_OCR_Color_Filter": {
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "lower": [0, 0, 0],
+                "upper": [255, 255, 255]
+            }
+        }
+    },
+    "_Template_OCR_Filtered_Text": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "model": "ko",
+                "color_filter": "_Template_OCR_Color_Filter"
+            }
+        }
+    }
+}

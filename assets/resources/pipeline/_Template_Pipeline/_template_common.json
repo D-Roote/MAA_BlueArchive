@@ -1,0 +1,43 @@
+{
+    "_Template_Click": {
+        "action": {
+            "type": "Click"
+        }
+    },
+    "_Template_Wait_For_Stable": {
+        "post_wait_freezes": 500
+    },
+    "_Template_Swipe": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [0, 0],
+                "end": [0, 0],
+                "duration": 300
+            }
+        }
+    },
+    "_Template_Any_Known_Popup": {
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    {
+                        "type": "TemplateMatch",
+                        "param": {
+                            "template": "public/reward.png",
+                            "roi": [508, 128, 264, 69]
+                        }
+                    },
+                    {
+                        "type": "TemplateMatch",
+                        "param": {
+                            "template": "public/sweep_window.png",
+                            "roi": [742, 208, 386, 46]
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}

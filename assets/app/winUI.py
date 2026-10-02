@@ -10,18 +10,21 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QCursor, QDrag, QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
-                               QListWidget, QListWidgetItem, QWidget, 
+                               QFrame, QListWidget, QListWidgetItem, QSizePolicy,
+                               QToolButton, QWidget,
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
-                               QPushButton, QRadioButton)
+                               QListView, QStyledItemDelegate,
+                               QFileDialog, QPushButton, QRadioButton, QStyle,
+                               QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
-from app.settingsUI import SettingsPanel
+from app.settingsUI import AssociatedControlLabel, SettingsPanel
 
 
 WINDOW_SIZE = [1200, 800]
@@ -34,10 +37,18 @@ APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR / "pySide6"
 UI_RESOURCE_DIR = APP_DIR / "resources"
 SETTINGS_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/settings.svg"
+LOG_MENU_EXPAND_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/chevron-left.svg"
+LOG_MENU_COLLAPSE_ICON_PATH = UI_RESOURCE_DIR / "icons/actions/chevron-right.svg"
 SETTINGS_ICON_SIZE = QSize(20, 20)
 SETTINGS_ICON_HOVER_SIZE = QSize(24, 24)
 RESET_ICON_SIZE = QSize(18, 18)
 RESET_ICON_HOVER_SIZE = QSize(22, 22)
+COMPACT_SCROLLBAR_WIDTH = 2
+EXPANDED_SCROLLBAR_WIDTH = 5
+SCROLLBAR_ACTIVITY_TIMEOUT_MS = 700
+LOG_ACTION_MENU_CLOSE_DELAY_MS = 700
+LOG_ACTION_MENU_ICON_SIZE = QSize(16, 16)
+TASK_SETTINGS_TRAILING_GAP = 4
 PROGRAM_LAUNCH_TASK_NAME = "__ProgramLaunch"
 PROGRAM_LAUNCH_TASK = {
     "name": PROGRAM_LAUNCH_TASK_NAME,
@@ -297,6 +308,315 @@ class TaskFooterHoverFilter(QObject):
         self.footer.update()
 
 
+class WorkspaceSplitterHandlePaintFilter(QObject):
+    """Keep the resize hit area, showing a rounded divider only on hover."""
+
+    def __init__(self, handle):
+        super().__init__(handle)
+        self.handle = handle
+        self._hovered = False
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Enter, QEvent.Type.Leave):
+            self._hovered = event.type() == QEvent.Type.Enter
+            self.handle.update()
+        elif event.type() == QEvent.Type.Paint:
+            painter = QPainter(self.handle)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            dark = (
+                getattr(self.handle.window(), "_effective_theme", TitleBarTheme.LIGHT)
+                == TitleBarTheme.DARK
+            )
+            painter.fillRect(self.handle.rect(), QColor("#111A2B" if dark else "#F4F7FB"))
+            if self._hovered:
+                rect = QRectF(
+                    (self.handle.width() - 4) / 2, 12,
+                    4, max(0, self.handle.height() - 24),
+                )
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#30415E" if dark else "#DFE7F0"))
+                painter.drawRoundedRect(rect, 2, 2)
+            painter.end()
+            return True
+        return super().eventFilter(watched, event)
+
+
+class CenteredOptionDelegate(QStyledItemDelegate):
+    """Use normal list rows rather than the native combo menu rendering."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.displayAlignment = (
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        size.setHeight(max(34, size.height()))
+        return size
+
+
+class RoundedScrollBarPaintFilter(QObject):
+    """Paint a pill-shaped handle because narrow Qt handles ignore QSS radius."""
+
+    def __init__(self, scroll_bar, contextual=False, popup=False):
+        super().__init__(scroll_bar)
+        self.scroll_bar = scroll_bar
+        self.contextual = bool(contextual)
+        self.popup = bool(popup)
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll_bar and event.type() == QEvent.Type.Paint:
+            self._paint()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _is_dark_theme(self):
+        ancestor = self.scroll_bar
+        while ancestor is not None:
+            if hasattr(ancestor, "_effective_theme"):
+                return ancestor._effective_theme == TitleBarTheme.DARK
+            ancestor = ancestor.parentWidget()
+        return False
+
+    def _surface_color(self):
+        if self.popup:
+            return QColor("#1E2D46" if self._is_dark_theme() else "#FFFFFF")
+        if self.contextual:
+            return QColor("#172238" if self._is_dark_theme() else "#F8FAFC")
+        return QColor("#111A2B" if self._is_dark_theme() else "#F4F7FB")
+
+    def _handle_color(self):
+        return QColor("#168FBE" if self._is_dark_theme() else "#00AEEF")
+
+    def _slider_rect(self):
+        option = QStyleOptionSlider()
+        self.scroll_bar.initStyleOption(option)
+        slider_rect = self.scroll_bar.style().subControlRect(
+            QStyle.ComplexControl.CC_ScrollBar,
+            option,
+            QStyle.SubControl.SC_ScrollBarSlider,
+            self.scroll_bar,
+        )
+        if self.contextual:
+            left_inset = (
+                0
+                if self.scroll_bar.property("contextualExpanded")
+                else EXPANDED_SCROLLBAR_WIDTH - COMPACT_SCROLLBAR_WIDTH - 1
+            )
+            slider_rect.adjust(left_inset, 0, -1, 0)
+        return slider_rect
+
+    def _paint(self):
+        painter = QPainter(self.scroll_bar)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.scroll_bar.rect(), self._surface_color())
+
+        should_draw = self.scroll_bar.maximum() > self.scroll_bar.minimum()
+        if self.contextual:
+            should_draw = should_draw and bool(
+                self.scroll_bar.property("contextualVisible")
+            )
+        if should_draw:
+            slider_rect = QRectF(self._slider_rect())
+            if slider_rect.width() > 0 and slider_rect.height() > 0:
+                radius = min(slider_rect.width(), slider_rect.height()) / 2
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(self._handle_color())
+                painter.drawRoundedRect(slider_rect, radius, radius)
+        painter.end()
+
+
+def setup_rounded_vertical_scrollbar(scroll_area, contextual=False, popup=False):
+    scroll_bar = scroll_area.verticalScrollBar()
+    scroll_bar._rounded_paint_filter = RoundedScrollBarPaintFilter(
+        scroll_bar, contextual=contextual, popup=popup
+    )
+    scroll_bar.installEventFilter(scroll_bar._rounded_paint_filter)
+
+
+class ContextualScrollBarController(QObject):
+    """Show a compact scrollbar only while its start-page area is in use."""
+
+    def __init__(self, scroll_area):
+        super().__init__(scroll_area)
+        self.scroll_area = scroll_area
+        self.viewport = scroll_area.viewport()
+        self.scroll_bar = scroll_area.verticalScrollBar()
+        self._activity_active = False
+        self._pointer_pressed = False
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.setInterval(SCROLLBAR_ACTIVITY_TIMEOUT_MS)
+        self._activity_timer.timeout.connect(self._finish_activity)
+
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_bar.setFixedWidth(EXPANDED_SCROLLBAR_WIDTH)
+        self.scroll_bar.setProperty("contextual", True)
+        self.scroll_bar.setProperty("contextualVisible", False)
+        self.scroll_bar.setProperty("contextualExpanded", False)
+        for widget in (scroll_area, self.viewport, self.scroll_bar):
+            widget.installEventFilter(self)
+        self.scroll_bar.rangeChanged.connect(self._schedule_sync)
+        self._refresh_style()
+
+    def eventFilter(self, watched, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Wheel:
+            self._begin_activity()
+        elif watched is self.scroll_bar and event_type == QEvent.Type.MouseButtonPress:
+            self._pointer_pressed = True
+            self._begin_activity(force_expanded=True)
+        elif watched is self.scroll_bar and event_type == QEvent.Type.MouseButtonRelease:
+            self._pointer_pressed = False
+            self._begin_activity()
+        elif event_type == QEvent.Type.Enter:
+            if watched is self.scroll_bar:
+                self._set_state(self._has_scroll_range(), True)
+            else:
+                self._set_state(self._has_scroll_range(), False)
+        elif event_type == QEvent.Type.Leave:
+            self._schedule_sync()
+        return super().eventFilter(watched, event)
+
+    @staticmethod
+    def _contains_global_position(widget, global_position):
+        return widget.rect().contains(widget.mapFromGlobal(global_position))
+
+    def _has_scroll_range(self):
+        return self.scroll_bar.maximum() > self.scroll_bar.minimum()
+
+    def _begin_activity(self, force_expanded=False):
+        self._activity_active = True
+        self._activity_timer.start()
+        expanded = force_expanded or self._pointer_pressed or self.scroll_bar.underMouse()
+        self._set_state(self._has_scroll_range(), expanded)
+
+    def _finish_activity(self):
+        self._activity_active = False
+        self._sync_state()
+
+    def _schedule_sync(self, *_args):
+        QTimer.singleShot(0, self._sync_state)
+
+    def _sync_state(self):
+        if not self._has_scroll_range():
+            self._set_state(False, False)
+            return
+
+        global_position = QCursor.pos()
+        pointer_in_area = self._contains_global_position(
+            self.scroll_area, global_position
+        )
+        pointer_on_scrollbar = self._contains_global_position(
+            self.scroll_bar, global_position
+        )
+        visible = (
+            pointer_in_area
+            or self._activity_active
+            or self._pointer_pressed
+            or self.scroll_bar.isSliderDown()
+        )
+        expanded = visible and (
+            pointer_on_scrollbar
+            or self._pointer_pressed
+            or self.scroll_bar.isSliderDown()
+        )
+        self._set_state(visible, expanded)
+
+    def _set_state(self, visible, expanded):
+        visible = bool(visible)
+        expanded = bool(visible and expanded)
+        if (
+            self.scroll_bar.property("contextualVisible") == visible
+            and self.scroll_bar.property("contextualExpanded") == expanded
+        ):
+            return
+        self.scroll_bar.setProperty("contextualVisible", visible)
+        self.scroll_bar.setProperty("contextualExpanded", expanded)
+        self._refresh_style()
+
+    def _refresh_style(self):
+        self.scroll_bar.style().unpolish(self.scroll_bar)
+        self.scroll_bar.style().polish(self.scroll_bar)
+        self.scroll_bar.update()
+
+
+def setup_contextual_vertical_scrollbar(scroll_area):
+    scroll_bar = scroll_area.verticalScrollBar()
+    scroll_bar._contextual_controller = ContextualScrollBarController(scroll_area)
+    setup_rounded_vertical_scrollbar(scroll_area, contextual=True)
+
+
+class LogActionMenuController(QObject):
+    """Expand log actions to the left and collapse after pointer leave."""
+
+    def __init__(self, container, toggle_button, action_buttons):
+        super().__init__(container)
+        self.container = container
+        self.toggle_button = toggle_button
+        self.action_buttons = tuple(action_buttons)
+        self._expand_icon = QIcon(str(LOG_MENU_EXPAND_ICON_PATH))
+        self._collapse_icon = QIcon(str(LOG_MENU_COLLAPSE_ICON_PATH))
+        self.toggle_button.setIconSize(LOG_ACTION_MENU_ICON_SIZE)
+        self._expanded = False
+        self._close_timer = QTimer(self)
+        self._close_timer.setSingleShot(True)
+        self._close_timer.setInterval(LOG_ACTION_MENU_CLOSE_DELAY_MS)
+        self._close_timer.timeout.connect(self._close_if_pointer_outside)
+
+        for widget in (container, toggle_button, *self.action_buttons):
+            widget.installEventFilter(self)
+        toggle_button.clicked.connect(self.toggle)
+        self.set_expanded(False)
+
+    def eventFilter(self, watched, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Enter:
+            self._close_timer.stop()
+        elif event_type == QEvent.Type.Leave and self._expanded:
+            QTimer.singleShot(0, self._start_close_if_pointer_outside)
+        return super().eventFilter(watched, event)
+
+    def _pointer_inside(self):
+        local_position = self.container.mapFromGlobal(QCursor.pos())
+        return self.container.rect().contains(local_position)
+
+    def _start_close_if_pointer_outside(self):
+        if self._expanded and not self._pointer_inside():
+            self._close_timer.start()
+
+    def _close_if_pointer_outside(self):
+        if not self._pointer_inside():
+            self.set_expanded(False)
+
+    def toggle(self):
+        self.set_expanded(not self._expanded)
+
+    def is_expanded(self):
+        return self._expanded
+
+    def set_expanded(self, expanded):
+        self._expanded = bool(expanded)
+        if not self._expanded:
+            self._close_timer.stop()
+        for button in self.action_buttons:
+            button.setVisible(self._expanded)
+        self.toggle_button.setText("")
+        self.toggle_button.setIcon(
+            self._collapse_icon if self._expanded else self._expand_icon
+        )
+        self.toggle_button.setProperty("menuExpanded", self._expanded)
+        self.toggle_button.setAccessibleName(
+            "로그 작업 메뉴 접기" if self._expanded else "로그 작업 메뉴 펼치기"
+        )
+        self.toggle_button.style().unpolish(self.toggle_button)
+        self.toggle_button.style().polish(self.toggle_button)
+        self.toggle_button.update()
+        self.container.layout().activate()
+        self.container.updateGeometry()
+
+
 class DeleteDropEventFilter(QObject):
     """삭제 영역 위에서 드래그 가능 커서를 유지하되 삭제는 목록이 처리한다."""
 
@@ -329,6 +649,7 @@ class TaskSettingsButton(QPushButton):
 
 class TaskPickerPopup(QListWidget):
     task_selected = Signal(object)
+    popup_hidden = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -342,33 +663,54 @@ class TaskPickerPopup(QListWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._dismiss_timer = QTimer(self)
-        self._dismiss_timer.setSingleShot(True)
+        self._dismiss_timer.setSingleShot(False)
         self._dismiss_timer.setInterval(80)
         self._dismiss_timer.timeout.connect(self._hide_if_pointer_outside)
         self.itemClicked.connect(self._select_task)
         self.itemActivated.connect(self._select_task)
 
     def set_anchor_button(self, button):
-        if self._anchor_button is not None:
-            self._anchor_button.removeEventFilter(self)
         self._anchor_button = button
-        button.installEventFilter(self)
 
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "_anchor_button", None):
-            if event.type() == QEvent.Type.Enter:
-                self._dismiss_timer.stop()
-            elif event.type() == QEvent.Type.Leave:
-                self._dismiss_timer.start()
+        if (
+            self.isVisible()
+            and self._anchor_button is not None
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
+            global_position = (
+                event.globalPosition().toPoint()
+                if hasattr(event, "globalPosition")
+                else QCursor.pos()
+            )
+            if self._contains_global_position(
+                self._anchor_button, global_position
+            ):
+                # Qt.Popup grabs outside clicks, so the receiver may be the popup
+                # even when the pointer is over the anchor button. Consume that
+                # press after closing to avoid both reopening and a stuck :pressed.
+                self.hide()
+                event.accept()
+                return True
         return super().eventFilter(watched, event)
 
-    def enterEvent(self, event):
-        self._dismiss_timer.stop()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
+    def showEvent(self, event):
+        super().showEvent(event)
+        application = QApplication.instance()
+        if application is not None:
+            application.installEventFilter(self)
         self._dismiss_timer.start()
-        super().leaveEvent(event)
+
+    def hideEvent(self, event):
+        self._dismiss_timer.stop()
+        application = QApplication.instance()
+        if application is not None:
+            application.removeEventFilter(self)
+        if self._anchor_button is not None:
+            self._anchor_button.setDown(False)
+            self._anchor_button.update()
+        super().hideEvent(event)
+        self.popup_hidden.emit()
 
     @staticmethod
     def _contains_global_position(widget, global_position):
@@ -412,9 +754,11 @@ class TaskPickerPopup(QListWidget):
         horizontal_position = width_reference.mapToGlobal(QPoint(0, 0))
         self.setFixedSize(width_reference.width(), height)
         self.move(horizontal_position.x(), position.y() - height)
-        self.setCurrentRow(0)
         self.show()
         self.setFocus()
+        # show/focus 과정에서 Qt가 첫 행을 current item으로 지정하므로 마지막에 해제한다.
+        self.setCurrentRow(-1)
+        self.clearSelection()
 
     def _select_task(self, item):
         task = item.data(Qt.UserRole)
@@ -426,6 +770,15 @@ class TaskPickerPopup(QListWidget):
             self.hide()
             event.accept()
             return
+        if self.currentRow() < 0 and self.count():
+            if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Home):
+                self.setCurrentRow(0)
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_End):
+                self.setCurrentRow(self.count() - 1)
+                event.accept()
+                return
         super().keyPressEvent(event)
 
 
@@ -488,7 +841,8 @@ class OptionItemWidget(QWidget):
 
         display_name = task_data.get("label", task_data.get("name", "Unknown Task"))
         self.label = QLabel(display_name)
-        self.label.setStyleSheet("background: transparent;")
+        self.label.setObjectName("taskItemLabel")
+        self.label.setProperty("muted", False)
 
         layout.addWidget(self.label, 1) 
 
@@ -499,6 +853,7 @@ class OptionItemWidget(QWidget):
         
         if self.task_options:
             layout.addWidget(self.setting_btn)
+            layout.addSpacing(TASK_SETTINGS_TRAILING_GAP)
             self.setting_btn.clicked.connect(lambda: on_setting_clicked_callback(self))
         else:
             self.setting_btn.hide()
@@ -514,11 +869,13 @@ class OptionItemWidget(QWidget):
             self.checkbox.blockSignals(False)
         self.setToolTip("" if self._available else reason)
         self.checkbox.setEnabled(self._available and not self._locked)
-        self.label.setStyleSheet(
-            "background: transparent;"
-            if self._available and not self._locked
-            else "background: transparent; color: #94A3B8;"
-        )
+        self._set_label_muted(not self._available or self._locked)
+
+    def _set_label_muted(self, muted):
+        self.label.setProperty("muted", bool(muted))
+        self.label.style().unpolish(self.label)
+        self.label.style().polish(self.label)
+        self.label.update()
 
     def has_valid_input(self):
         for opt_name, opt in self.task_options:
@@ -555,15 +912,13 @@ class OptionItemWidget(QWidget):
         self.checkbox.setEnabled(self._available and not self._locked)
         # 실행 중에도 세부 설정 화면은 열 수 있도록 한다.
         self.setting_btn.setEnabled(True)
-        if self._locked or not self._available:
-            self.label.setStyleSheet("background: transparent; color: #94A3B8;")
-        else:
-            self.label.setStyleSheet("background: transparent;")
+        self._set_label_muted(self._locked or not self._available)
 
 # 커스텀 리스트 위젯
 class DragDropListWidget(QListWidget):
     TASK_DRAG_MIME = "application/x-maaba-task-item"
     DRAG_LINE_MARGIN = 5
+    DRAG_LINE_RIGHT_MARGIN = DRAG_LINE_MARGIN + TASK_SETTINGS_TRAILING_GAP
     drag_started = Signal()
     drag_finished = Signal(object, object)
 
@@ -838,8 +1193,192 @@ class DragDropListWidget(QListWidget):
     def _drag_line_span(self):
         return (
             self.DRAG_LINE_MARGIN,
-            max(self.DRAG_LINE_MARGIN, self.viewport().width() - self.DRAG_LINE_MARGIN),
+            max(
+                self.DRAG_LINE_MARGIN,
+                self.viewport().width() - self.DRAG_LINE_RIGHT_MARGIN,
+            ),
         )
+
+
+class MonitorDragHandle(QLabel):
+    """모니터링 섹션의 전용 손잡이에서 드래그를 시작한다."""
+
+    def __init__(self, sections, section):
+        super().__init__("⋮⋮", section)
+        self.sections = sections
+        self.section = section
+        self.setObjectName("monitorDragHandle")
+        self.setAccessibleName("모니터링 영역 순서 변경")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._press_position = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_position = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._press_position is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self._press_position).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._press_position = None
+            self.sections.start_section_drag(self.section, self)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._press_position = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+
+
+class MonitorSectionsWidget(QWidget):
+    """작업 목록과 동일하게 내부 이동만 허용하는 세로 섹션 목록."""
+
+    DRAG_MIME = "application/x-maaba-monitor-section"
+    order_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._dragged_section = None
+        self._drag_source = None
+        self._drop_before = None
+
+    def sections(self):
+        layout = self.layout()
+        if layout is None:
+            return []
+        return [
+            layout.itemAt(index).widget()
+            for index in range(layout.count())
+            if layout.itemAt(index).widget() is not None
+            and layout.itemAt(index).widget().property("monitorSectionKey")
+        ]
+
+    def section_order(self):
+        return [section.property("monitorSectionKey") for section in self.sections()]
+
+    def start_section_drag(self, section, source):
+        if section not in self.sections():
+            return
+        drag = QDrag(source)
+        mime_data = QMimeData()
+        mime_data.setData(self.DRAG_MIME, b"1")
+        drag.setMimeData(mime_data)
+        preview = QPixmap(max(140, section.width() - 12), 36)
+        preview.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(preview)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#E6F5FC"))
+        painter.setPen(QPen(QColor("#00AEEF"), 1))
+        painter.drawRoundedRect(preview.rect().adjusted(1, 1, -1, -1), 6, 6)
+        painter.setPen(QColor("#1D3150"))
+        painter.drawText(
+            preview.rect().adjusted(12, 0, -12, 0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            section.property("monitorSectionTitle"),
+        )
+        painter.end()
+        drag.setPixmap(preview)
+        drag.setHotSpot(QPoint(preview.width() - 18, preview.height() // 2))
+
+        self._dragged_section = section
+        self._drag_source = source
+        self._drop_before = None
+        section.hide()
+        self.sync_section_layout()
+        try:
+            drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+        finally:
+            section.show()
+            self.sync_section_layout()
+            self._dragged_section = None
+            self._drag_source = None
+            self._clear_drop_target()
+
+    def _is_internal_drag(self, event):
+        return (
+            self._dragged_section is not None
+            and event.source() is self._drag_source
+            and event.mimeData().hasFormat(self.DRAG_MIME)
+        )
+
+    def dragEnterEvent(self, event):
+        if self._is_internal_drag(event):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if not self._is_internal_drag(event):
+            event.ignore()
+            self._clear_drop_target()
+            return
+        self._update_drop_target(event.position().toPoint().y())
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def dragLeaveEvent(self, event):
+        self._clear_drop_target()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if not self._is_internal_drag(event):
+            event.ignore()
+            self._clear_drop_target()
+            return
+        self._update_drop_target(event.position().toPoint().y())
+        moved = self.move_section(self._dragged_section, self._drop_before)
+        self._clear_drop_target()
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+        if moved:
+            self.order_changed.emit()
+
+    def _update_drop_target(self, y):
+        # 숨긴 섹션을 제외한 실제 카드 위치로 삽입 대상을 결정한다.
+        self.layout().activate()
+        visible = [
+            section for section in self.sections()
+            if section is not self._dragged_section and not section.isHidden()
+        ]
+        for section in visible:
+            if y < section.y() + section.height() // 2:
+                self._drop_before = section
+                return
+        self._drop_before = None
+
+    def _clear_drop_target(self):
+        self._drop_before = None
+
+    def sync_section_layout(self):
+        has_expanding_section = any(
+            not section.isHidden()
+            and section.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+            for section in self.sections()
+        )
+        self.layout().setAlignment(
+            Qt.AlignmentFlag(0) if has_expanding_section else Qt.AlignmentFlag.AlignTop
+        )
+
+    def move_section(self, section, before_section=None):
+        before_order = self.sections()
+        if section not in before_order or (before_section is not None and before_section not in before_order):
+            return False
+        if before_section is section:
+            return False
+        layout = self.layout()
+        layout.removeWidget(section)
+        destination = layout.indexOf(before_section) if before_section is not None else layout.count()
+        layout.insertWidget(destination, section)
+        return self.sections() != before_order
 
 # 메인 윈도우
 class MainWindow(QMainWindow):
@@ -853,15 +1392,16 @@ class MainWindow(QMainWindow):
         QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
         loader.registerCustomWidget(DragDropListWidget)
+        loader.registerCustomWidget(MonitorSectionsWidget)
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
 
         setup_settings_icon_button(self.ui.endSettingBtn)
         
-        self.ui.tabWidget.setUsesScrollButtons(False)
-        # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
-        self.ui.tabWidget.setCurrentWidget(self.ui.mainTab)
+        self._setup_workspace_navigation()
+        self._setup_dashboard_layout()
+        self.ui.mainPages.setCurrentWidget(self.ui.mainTab)
 
         qss_contents = []
         for qss_path in base_qss_paths:
@@ -874,6 +1414,18 @@ class MainWindow(QMainWindow):
             with open(dark_qss_path, "r", encoding="utf-8") as file:
                 self._dark_style_sheet = file.read()
         self.setStyleSheet(self._base_style_sheet)
+        setup_contextual_vertical_scrollbar(self.ui.taskOptionList)
+        setup_contextual_vertical_scrollbar(self.ui.logPrintText)
+        setup_rounded_vertical_scrollbar(self.ui.scrollSettingWidget)
+        self.log_action_menu_controller = LogActionMenuController(
+            self.ui.logActionMenu,
+            self.ui.logMenuToggleButton,
+            (
+                self.ui.logCopyButton,
+                self.ui.logClearButton,
+                self.ui.logSaveButton,
+            ),
+        )
 
         self.setCentralWidget(self.ui.centralwidget)
         self.setWindowTitle(WINDOW_TITLE)
@@ -895,19 +1447,195 @@ class MainWindow(QMainWindow):
         self._allow_option_edits_while_running = False
 
         self.setup_settings_ui()
+        setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
         self.setup_connections()
 
+        self._restore_monitor_order()
         self.setup_dynamic_options()
+        self.clear_sub_cases()
         self.on_program_settings_changed(self.settings_panel.program_settings())
         self.check_start_button_state()
 
     def setup_connections(self):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
+        self.ui.logLatestButton.clicked.connect(self.scroll_log_to_latest)
+        self.ui.logCopyButton.clicked.connect(self.copy_log)
+        self.ui.logClearButton.clicked.connect(self.clear_log)
+        self.ui.logSaveButton.clicked.connect(self.save_log)
+        self.ui.logPrintText.verticalScrollBar().valueChanged.connect(
+            self._update_log_follow_button
+        )
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.toggled.connect(
                 self.on_main_minimize_setting_changed
             )
+
+    def _setup_workspace_navigation(self):
+        self.page_navigation = QButtonGroup(self)
+        self.page_navigation.setExclusive(True)
+        for button, page in (
+            (self.ui.dashboardNavButton, self.ui.mainTab),
+            (self.ui.settingsNavButton, self.ui.settingTab),
+        ):
+            self.page_navigation.addButton(button)
+            button.clicked.connect(
+                lambda _checked=False, target=page: self.ui.mainPages.setCurrentWidget(target)
+            )
+        self.ui.mainPages.currentChanged.connect(self._sync_page_navigation)
+
+    def _sync_page_navigation(self, index):
+        self.ui.dashboardNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.mainTab))
+        self.ui.settingsNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.settingTab))
+
+    def _setup_dashboard_layout(self):
+        task_panel = self.ui.findChild(QWidget, "_1_settingStartWidget")
+        option_panel = self.ui.findChild(QWidget, "_2_settingWidget")
+        monitor_panel = self.ui.findChild(QWidget, "_3_logPrintWidget")
+        task_panel.setFixedWidth(312)
+        option_panel.setMinimumWidth(300)
+        monitor_panel.setMinimumWidth(309)
+        splitter = self.ui.workspaceSplitter
+        splitter.setHandleWidth(10)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([480, 360])
+        handle = splitter.handle(1)
+        handle._rounded_paint_filter = WorkspaceSplitterHandlePaintFilter(handle)
+        handle.installEventFilter(handle._rounded_paint_filter)
+
+        task_title = QLabel("작업 목록", task_panel)
+        task_title.setObjectName("workspaceSectionTitle")
+        task_panel.findChild(QVBoxLayout, "settingStartWidget_1").insertWidget(0, task_title)
+
+        option_title = QLabel("세부 설정", option_panel)
+        option_title.setObjectName("workspaceSectionTitle")
+        option_panel.findChild(QVBoxLayout, "verticalLayout_5").insertWidget(0, option_title)
+
+        log_layout = monitor_panel.findChild(QVBoxLayout, "logLayout")
+        monitor_title = QLabel("모니터링", monitor_panel)
+        monitor_title.setObjectName("workspaceSectionTitle")
+        log_layout.insertWidget(0, monitor_title)
+        setup_rounded_vertical_scrollbar(self.ui.monitorScrollArea)
+
+        sections = self.ui.monitorSectionsWidget
+        section_layout = sections.layout()
+        section_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        connection = self._create_future_monitor_section(
+            "connection", "연결", "클라이언트 연결 확인 기능을 이곳에 추가할 예정입니다."
+        )
+        screen = self._create_future_monitor_section(
+            "screen", "화면", "실시간 스크린샷과 테스트 화면을 이곳에 표시할 예정입니다."
+        )
+        section_layout.insertWidget(0, connection)
+        section_layout.insertWidget(1, screen)
+
+        log_section = self.ui.monitorLogSection
+        self._add_monitor_section_header(
+            log_section, self.ui.monitorLogContent, "log", "로그", expanded=True
+        )
+        self._log_section_expanded = True
+        self.ui.logPrintText.setMinimumHeight(160)
+        self.ui.logPrintText.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.ui.monitorLogContent.layout().setStretch(1, 1)
+        log_section.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.ui.monitorLogContent.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        sections.sync_section_layout()
+        self.ui.logPrintText.setAcceptDrops(False)
+        sections.order_changed.connect(self.save_user_config)
+
+    def _create_future_monitor_section(self, key, title, description):
+        section = QFrame(self.ui.monitorSectionsWidget)
+        section.setObjectName("monitorSection")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(0)
+        content = QWidget(section)
+        content.setObjectName("monitorSectionContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(12, 10, 12, 14)
+        description_label = QLabel(description, content)
+        description_label.setObjectName("monitorFutureDescription")
+        description_label.setWordWrap(True)
+        content_layout.addWidget(description_label)
+        section_layout.addWidget(content)
+        self._add_monitor_section_header(section, content, key, title, expanded=False)
+        return section
+
+    def _add_monitor_section_header(self, section, content, key, title, expanded):
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        section.setProperty("monitorSectionKey", key)
+        section.setProperty("monitorSectionTitle", title)
+        header = QWidget(section)
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        header.setObjectName("monitorSectionHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 8, 3)
+        header_layout.setSpacing(4)
+        handle = MonitorDragHandle(self.ui.monitorSectionsWidget, section)
+        toggle = QToolButton(header)
+        toggle.setObjectName("monitorSectionToggle")
+        toggle.setAccessibleName(f"{title} 영역 펼치기 또는 접기")
+        toggle.setText(title)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toggle.setCheckable(True)
+        toggle.setChecked(expanded)
+        toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        toggle.toggled.connect(
+            lambda checked, target=content, button=toggle, name=key:
+            self._set_monitor_section_expanded(target, button, name, checked)
+        )
+        header_layout.addWidget(toggle, 1)
+        header_layout.addWidget(handle)
+        section.layout().insertWidget(0, header)
+        content.setVisible(expanded)
+
+    def _set_monitor_section_expanded(self, content, button, key, expanded):
+        content.setVisible(expanded)
+        button.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        if key == "log":
+            self._log_section_expanded = expanded
+            policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum
+            self.ui.monitorLogSection.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            content.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            self.ui.monitorSectionsWidget.sync_section_layout()
+            self._update_log_follow_button()
+
+    def _restore_monitor_order(self):
+        config_path = self.runtime.user_dir / "config" / "user_config.json"
+        try:
+            saved_order = json.loads(config_path.read_text(encoding="utf-8")).get("monitor_order")
+        except (OSError, ValueError, AttributeError):
+            return
+        sections = self.ui.monitorSectionsWidget
+        if (
+            not isinstance(saved_order, list)
+            or len(saved_order) != 3
+            or not all(isinstance(key, str) for key in saved_order)
+            or set(saved_order) != {"connection", "screen", "log"}
+        ):
+            return
+        section_by_key = {
+            section.property("monitorSectionKey"): section for section in sections.sections()
+        }
+        layout = sections.layout()
+        for index, key in enumerate(saved_order):
+            section = section_by_key[key]
+            layout.removeWidget(section)
+            layout.insertWidget(index, section)
 
     def setup_settings_ui(self):
         config_dir = self.runtime.user_dir / "config"
@@ -1002,72 +1730,91 @@ class MainWindow(QMainWindow):
             system_color_scheme=system_color_scheme,
         )
 
-    def update_tab_widths(self):
-        tab_bar = self.ui.tabWidget.tabBar()
-        count = tab_bar.count()
-        if count == 0:
-            return
-
-
-        # border(좌우 1px씩) + padding(좌우 25px씩)가
-        # width 지정값 위에 추가로 그려지므로, 미리 빼야 실제 렌더링 폭이
-        # 등분값과 정확히 일치함 (안 빼면 탭들이 넘쳐서 스크롤 화살표가 자동 생성됨)
-        EXTRA_PER_TAB = 52  # border 2 + padding 50
-
-        total_width = self.ui.tabWidget.width()
-        target_width = total_width // count
-        tab_width = max(target_width - EXTRA_PER_TAB, 20)
-
-        tab_bar.setStyleSheet(f"""
-            QTabBar::tab {{
-                width: {tab_width}px;
-            }}
-            QTabBar::tab:last {{
-                margin-right: 0px;
-            }}
-        """)
-
     def showEvent(self, event):
         super().showEvent(event)
         self.set_title_bar_theme(self._title_bar_theme)
-        QTimer.singleShot(0, self.update_tab_widths)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_tab_widths()
 
     def append_log(self, message):
         current_time = datetime.now().strftime("%H:%M:%S")
         time_text = f"[{current_time}] "
-        
-        cursor = self.ui.logPrintText.textCursor()
+
+        log_view = self.ui.logPrintText
+        scroll_bar = log_view.verticalScrollBar()
+        previous_scroll_value = scroll_bar.value()
+        was_at_bottom = previous_scroll_value >= scroll_bar.maximum() - 1
+
+        cursor = QTextCursor(log_view.document())
         cursor.movePosition(QTextCursor.End)
-        self.ui.logPrintText.setTextCursor(cursor)
-        
+
         block_format = cursor.blockFormat()
         block_format.setAlignment(Qt.AlignLeft)
-        
+
         block_format.setTopMargin(0)
         block_format.setBottomMargin(0)
-        
+
         block_format.setLeftMargin(0)
         block_format.setTextIndent(0)
         cursor.setBlockFormat(block_format)
         cursor.insertText(time_text)
-        
-        block_format.setLeftMargin(58)    
-        block_format.setTextIndent(-58)  
+
+        block_format.setLeftMargin(58)
+        block_format.setTextIndent(-58)
         cursor.setBlockFormat(block_format)
-        
+
         cursor.insertText(message + "\n")
-        
-        self.ui.logPrintText.ensureCursorVisible()
+
+        if was_at_bottom:
+            self.scroll_log_to_latest()
+        else:
+            scroll_bar.setValue(previous_scroll_value)
+            self._update_log_follow_button()
+
+    def _update_log_follow_button(self, _value=None):
+        scroll_bar = self.ui.logPrintText.verticalScrollBar()
+        is_at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 1
+        self.ui.logLatestButton.setVisible(
+            self._log_section_expanded and not is_at_bottom
+        )
+
+    def scroll_log_to_latest(self):
+        scroll_bar = self.ui.logPrintText.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+        self.ui.logLatestButton.hide()
+
+    def copy_log(self):
+        log_view = self.ui.logPrintText
+        cursor = log_view.textCursor()
+        text = cursor.selectedText().replace("\u2029", "\n")
+        QApplication.clipboard().setText(text if cursor.hasSelection() else log_view.toPlainText())
+
+    def clear_log(self):
+        self.ui.logPrintText.clear()
+        self.ui.logLatestButton.hide()
+
+    def save_log(self):
+        default_name = f"MAABA-log-{datetime.now():%Y%m%d-%H%M%S}.txt"
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "실행 로그 저장",
+            default_name,
+            "텍스트 파일 (*.txt);;모든 파일 (*)",
+        )
+        if not file_path:
+            return False
+        try:
+            Path(file_path).write_text(
+                self.ui.logPrintText.toPlainText(), encoding="utf-8"
+            )
+        except OSError as error:
+            self.append_log(f"로그를 저장하지 못했습니다: {error}")
+            return False
+        return True
 
     def on_task_start(self):
         if self.worker is not None or self.stop_worker is not None or self._close_pending:
             return
         if self.settings_panel.clear_log_on_start_enabled():
-            self.ui.logPrintText.clear()
+            self.clear_log()
         self.append_log("작업을 시작합니다...")
         self.ui.workStartBtn.setEnabled(False)
 
@@ -1212,6 +1959,9 @@ class MainWindow(QMainWindow):
         self.task_picker = TaskPickerPopup(self)
         self.task_picker.set_anchor_button(self.task_add_button)
         self.task_picker.task_selected.connect(self.add_task)
+        self.task_picker.popup_hidden.connect(
+            self.task_list_actions._footer_hover_filter._sync_hovered
+        )
         self.task_add_button.clicked.connect(self.show_task_picker)
         self.task_reset_button.clicked.connect(self.reset_task_list)
 
@@ -1345,6 +2095,9 @@ class MainWindow(QMainWindow):
     def show_task_picker(self):
         if not self.task_add_button.isEnabled():
             return
+        if self.task_picker.isVisible():
+            self.task_picker.hide()
+            return
         self.task_picker.show_above(
             self.task_list_actions,
             self.option_list_widget,
@@ -1450,32 +2203,59 @@ class MainWindow(QMainWindow):
         self.check_start_button_state()
         self.save_user_config()
 
-    def clear_sub_cases(self):
-        layout = self.ui.scrollSettingContents.layout()
-        if layout is not None:
-            while layout.count():
-                child = layout.takeAt(0)
-                if child.widget():
-                    child.widget().hide()
-                    child.widget().deleteLater()
+    def _option_content_layout(self):
+        container = self.ui.scrollSettingContents
+        layout = container.layout()
+        if layout is None:
+            layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 4, 4, 8)
+        layout.setSpacing(8)
+        return layout
+
+    def clear_sub_cases(self, show_placeholder=True):
+        layout = self._option_content_layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().hide()
+                child.widget().deleteLater()
+        if show_placeholder:
+            self._add_option_placeholder(layout, "작업 목록의 설정 버튼을 눌러\n세부 옵션을 확인하세요.")
+
+    def _add_option_placeholder(self, layout, message):
+        label = QLabel(message, self.ui.scrollSettingContents)
+        label.setObjectName("optionEmptyState")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        layout.addWidget(label)
 
     def show_sub_cases(self, item_widget):
         task_options = item_widget.task_options
 
         container_widget = self.ui.scrollSettingContents
-        layout = container_widget.layout()
-        
-        if layout is None:
-            layout = QVBoxLayout(container_widget)
-            layout.setContentsMargins(10, 10, 10, 10)
+        layout = self._option_content_layout()
             
-        self.clear_sub_cases()
+        self.clear_sub_cases(show_placeholder=False)
 
-        for opt_name, opt in task_options:
+        if not task_options:
+            self._add_option_placeholder(layout, "이 작업에는 세부 옵션이 없습니다.")
+            return
+
+        for index, (opt_name, opt) in enumerate(task_options):
             opt_type = opt.get("type", "select")
+            if index:
+                separator = QFrame(container_widget)
+                separator.setObjectName("optionGroupSeparator")
+                separator.setFrameShape(QFrame.Shape.HLine)
+                separator.setFixedHeight(1)
+                layout.addWidget(separator)
             
-            title_label = QLabel(f"[{opt.get('label', opt_name)}]")
-            title_label.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 10px;")
+            title_label = QLabel(opt.get('label', opt_name))
+            title_label.setObjectName("optionGroupTitle")
+            title_label.setProperty("firstGroup", index == 0)
+            title_label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
             title_label.setWordWrap(True)
             layout.addWidget(title_label)
 
@@ -1502,17 +2282,25 @@ class MainWindow(QMainWindow):
                     if case_name in item_widget.selected_options.get(opt_name, []):
                         radio_btn.setChecked(True)
 
-                    case_label = QLabel(case.get('label', case_name))
-                    case_label.setStyleSheet("background: transparent;")
-                    case_label.setWordWrap(True) 
+                    case_label = AssociatedControlLabel(case.get('label', case_name))
+                    case_label.setObjectName("optionChoiceLabel")
+                    case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    case_label.activated.connect(radio_btn.click)
                     
                     def make_radio_slot(w, o_name, c_name):
                         return lambda checked: self.update_widget_option_radio(w, o_name, c_name, checked)
                         
                     radio_btn.toggled.connect(make_radio_slot(item_widget, opt_name, case_name))
                     
-                    row_layout.addWidget(radio_btn)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        radio_btn, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     select_layout.addWidget(row_widget)
 
                 layout.addWidget(select_container)
@@ -1522,6 +2310,19 @@ class MainWindow(QMainWindow):
                 combo_box.setObjectName("optionSelect")
                 combo_box.setProperty("optionName", opt_name)
                 combo_box.setAccessibleName(opt.get("label", opt_name))
+                combo_box.ensurePolished()
+                popup = QListView(combo_box)
+                popup.setObjectName("optionSelectPopup")
+                popup.setMouseTracking(True)
+                popup.viewport().setMouseTracking(True)
+                popup.setUniformItemSizes(True)
+                popup.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+                popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                combo_box.setView(popup)
+                popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                combo_box.setItemDelegate(CenteredOptionDelegate(popup))
+                combo_box.setMaxVisibleItems(8)
+                setup_rounded_vertical_scrollbar(popup, popup=True)
 
                 for case in cases:
                     case_name = case.get("name")
@@ -1566,17 +2367,25 @@ class MainWindow(QMainWindow):
                     if case_name in item_widget.selected_options.get(opt_name, []):
                         case_cb.setChecked(True)
                     
-                    case_label = QLabel(case.get('label', case_name))
-                    case_label.setStyleSheet("background: transparent;")
-                    case_label.setWordWrap(True) 
+                    case_label = AssociatedControlLabel(case.get('label', case_name))
+                    case_label.setObjectName("optionChoiceLabel")
+                    case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    case_label.activated.connect(case_cb.click)
                     
                     def make_checkbox_slot(w, o_name, c_name):
                         return lambda checked: self.update_widget_option_checkbox(w, o_name, c_name, checked)
                     
                     case_cb.toggled.connect(make_checkbox_slot(item_widget, opt_name, case_name))
                     
-                    row_layout.addWidget(case_cb)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        case_cb, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     layout.addWidget(row_widget)
 
             elif opt_type == "switch":
@@ -1596,17 +2405,25 @@ class MainWindow(QMainWindow):
                     if yes_case_name in item_widget.selected_options.get(opt_name, []):
                         switch_cb.setChecked(True)
 
-                    case_label = QLabel(case_label_text)
-                    case_label.setStyleSheet("background: transparent;")
+                    case_label = AssociatedControlLabel(case_label_text)
+                    case_label.setObjectName("optionChoiceLabel")
                     case_label.setWordWrap(True)
+                    case_label.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    case_label.activated.connect(switch_cb.click)
 
                     def make_switch_slot(w, o_name, y_name, n_name):
                         return lambda checked: self.update_widget_option_switch(w, o_name, y_name, n_name, checked)
 
                     switch_cb.toggled.connect(make_switch_slot(item_widget, opt_name, yes_case_name, no_case_name))
 
-                    row_layout.addWidget(switch_cb)
-                    row_layout.addWidget(case_label, 1)
+                    row_layout.addWidget(
+                        switch_cb, 0, Qt.AlignmentFlag.AlignVCenter
+                    )
+                    row_layout.addWidget(
+                        case_label, 1, Qt.AlignmentFlag.AlignVCenter
+                    )
                     layout.addWidget(row_widget)
 
             elif opt_type == "input":
@@ -1622,7 +2439,7 @@ class MainWindow(QMainWindow):
                     input_layout.setSpacing(4)
 
                     input_label = QLabel(input_config.get("label", input_name))
-                    input_label.setStyleSheet("background: transparent;")
+                    input_label.setObjectName("optionInputLabel")
                     input_layout.addWidget(input_label)
 
                     line_edit = QLineEdit(input_container)
@@ -1842,7 +2659,15 @@ class MainWindow(QMainWindow):
         try:
             temp_path = config_path.with_suffix(".tmp")
             with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump({"tasks": tasks_data}, f, ensure_ascii=False, indent=4)
+                json.dump(
+                    {
+                        "tasks": tasks_data,
+                        "monitor_order": self.ui.monitorSectionsWidget.section_order(),
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=4,
+                )
                 f.flush()
             temp_path.replace(config_path)
         except Exception as e:
@@ -1886,6 +2711,7 @@ class RuntimeWorker(QThread):
                 self.controller_settings,
                 program_settings=self.program_settings,
                 execution_queue=self.execution_queue,
+                minimize_window=self.minimize_window,
                 cancellation_requested=self.isInterruptionRequested,
             )
             if not initialized:
