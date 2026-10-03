@@ -3,6 +3,7 @@ from datetime import datetime
 from copy import deepcopy
 from enum import Enum
 from uuid import uuid4
+import base64
 import ctypes
 import json
 import re
@@ -10,7 +11,7 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QByteArray, QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QCursor, QDrag, QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtUiTools import QUiLoader
@@ -1508,6 +1509,13 @@ class MonitorSectionsWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._ui_state_ready = False
+        self._first_ui_show = True
+        self._saved_ui_state = {}
+        self._ui_save_timer = QTimer(self)
+        self._ui_save_timer.setSingleShot(True)
+        self._ui_save_timer.setInterval(300)
+        self._ui_save_timer.timeout.connect(self.save_user_config)
 
         ui_path = UI_DIR / UI_FILENAME
         base_qss_paths = (UI_DIR / QSS_FILENAME, UI_DIR / SETTINGS_QSS_FILENAME)
@@ -1562,6 +1570,12 @@ class MainWindow(QMainWindow):
         )
 
         self.runtime = AppRuntime()
+        try:
+            saved = json.loads((self.runtime.user_dir / "config" / "user_config.json").read_text(encoding="utf-8"))
+            state = saved.get("ui_state")
+            self._saved_ui_state = state if isinstance(state, dict) else {}
+        except (OSError, ValueError, AttributeError):
+            pass
         self.log_sink = self.runtime.log_sink
         self.worker = None
         self.stop_worker = None
@@ -1592,6 +1606,65 @@ class MainWindow(QMainWindow):
         self.clear_sub_cases()
         self.on_program_settings_changed(self.settings_panel.program_settings())
         self.check_start_button_state()
+        self._restore_ui_state()
+        self._ui_state_ready = True
+
+    def _capture_ui_state(self):
+        return {
+            "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
+            "workspace_sizes": self.ui.workspaceSplitter.sizes(),
+            "monitor_expanded": {
+                section.property("monitorSectionKey"): bool(section.property("monitorExpanded"))
+                for section in self.ui.monitorSectionsWidget.sections()
+            },
+        }
+
+    def _restore_workspace_sizes(self):
+        sizes = self._saved_ui_state.get("workspace_sizes")
+        if (isinstance(sizes, list) and len(sizes) == 2
+                and all(type(size) is int and 0 < size <= 100000 for size in sizes)):
+            self.ui.workspaceSplitter.setSizes(sizes)
+
+    def _restore_ui_state(self):
+        geometry = self._saved_ui_state.get("geometry")
+        if isinstance(geometry, str) and 0 < len(geometry) <= 8192:
+            try:
+                self.restoreGeometry(QByteArray(base64.b64decode(geometry, validate=True)))
+                # A minimized exit must not hide the app at the next startup.
+                self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+            except ValueError:
+                pass
+        expanded = self._saved_ui_state.get("monitor_expanded")
+        if isinstance(expanded, dict):
+            for section in self.ui.monitorSectionsWidget.sections():
+                value = expanded.get(section.property("monitorSectionKey"))
+                if type(value) is bool:
+                    section.findChild(QToolButton, "monitorSectionToggle").setChecked(value)
+        self._restore_workspace_sizes()
+
+    def _schedule_ui_state_save(self, *_args):
+        if getattr(self, "_ui_state_ready", False) and not self.isMinimized():
+            self._ui_save_timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._ui_state_ready and self._first_ui_show:
+            self._first_ui_show = False
+            # Apply widths against the actual post-layout window size once.
+            self._restore_workspace_sizes()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._schedule_ui_state_save()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._schedule_ui_state_save()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._schedule_ui_state_save()
 
     def setup_connections(self):
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
@@ -1620,6 +1693,7 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, target=page: self.ui.mainPages.setCurrentWidget(target)
             )
         self.ui.mainPages.currentChanged.connect(self._sync_page_navigation)
+        self.ui.workspaceSplitter.splitterMoved.connect(self._schedule_ui_state_save)
 
     def _sync_page_navigation(self, index):
         self.ui.dashboardNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.mainTab))
@@ -1762,6 +1836,7 @@ class MainWindow(QMainWindow):
         if key == "log":
             self._log_section_expanded = expanded
             self._update_log_follow_button()
+        self._schedule_ui_state_save()
 
     def _restore_monitor_order(self):
         config_path = self.runtime.user_dir / "config" / "user_config.json"
@@ -2060,6 +2135,8 @@ class MainWindow(QMainWindow):
         self._finish_pending_close()
 
     def closeEvent(self, event):
+        self._ui_save_timer.stop()
+        self.save_user_config()
         worker_running = self.worker is not None
         stop_running = self.stop_worker is not None
 
@@ -2823,6 +2900,7 @@ class MainWindow(QMainWindow):
                         "tasks": tasks_data,
                         "monitor_order": self.ui.monitorSectionsWidget.section_order(),
                         "monitor_height_weights": self.ui.monitorSectionsWidget.height_weights(),
+                        "ui_state": self._capture_ui_state() if self._ui_state_ready else self._saved_ui_state,
                     },
                     f,
                     ensure_ascii=False,
