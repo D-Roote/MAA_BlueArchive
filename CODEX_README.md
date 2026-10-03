@@ -1,5 +1,45 @@
 # 연결·화면 모니터 구현 기록
 
+## 작업 완료 후 동작 — 구현 완료
+
+### 직전 커밋 추가 수정 — 광학 정렬 및 컨트롤러별 UI
+
+- `OpticalCheckBox`는 QCheckBox의 네이티브 표시·선택·클릭·키보드 동작을 유지하되, [tightBoundingRect](https://doc.qt.io/qtforpython-6/PySide6/QtGui/QFontMetricsF.html#PySide6.QtGui.QFontMetricsF.tightBoundingRect)로 실제 글자 영역의 중심을 표시 아이콘의 중심에 맞춘다. 숫자상 위젯 높이가 아닌 실제 그려진 텍스트 픽셀로 밝은/어두운 테마, 한글/영문 혼합, 선택/해제 상태를 검증한다.
+- 공유 연결 설정에서 선택한 프리셋을 `interface.json.controller` 및 리소스 허용 목록으로 판별한다. 타입 이름/포트로 추측하지 않는다. Win32는 대상 프로그램 종료/MAA 종료 유지, Adb는 앱 종료/에뮬레이터 종료/MAA 종료 표시. 컨트롤러 선택 변경 시 열려 있는 세부 설정과 왼쪽 요약을 즉시 동기화한다. Adb만 선언된 경우에도 첫 허용 프리셋을 판별한다.
+- `close_emulator=true`이면 `close_app=true`를 저장 정규화와 UI 모두에서 강제하며 앱 종료를 해제할 수 없다. 에뮬레이터 선택 해제 후에는 앱 종료도 해제 가능. 각 타입의 선택은 따로 보존하고 화면 요약/실행 스냅샷에서는 다른 타입의 종료 옵션을 제외한다. 이번에만/모두 해제/재실행 저장 동작 유지.
+- **ADB 종료는 UI/선택 저장 단계이며 실제 명령은 미구현**: [공식 ADB 문서](https://developer.android.com/tools/adb#am)에서 `am force-stop`에는 패키지가 필요함을 확인했다. 현재 설정에는 종료 패키지 및 대상 에뮬레이터 PID/인스턴스 매핑이 없고 작업 런타임도 Win32 전용이다. 포트만 보고 임의 앱/에뮬레이터를 종료하지 않는다. UI에 준비 단계 안내를 표시하고 해당 요청은 로그를 남기고 생략한다. MAA 종료 및 시스템 옵션은 기존 구현을 유지한다.
+- 사용자 요청에 따라 위 수정은 `83fc2a4`에 amend한다. 사용자 JSON은 변경하지 않는다. 아래 최초 구현의 테스트 수는 이전 검증 기록이다.
+- 검증: 전체 UnitTest **214개**, 완료 후 동작 **42개**(기본/150% 배율), `py_compile`, `git diff --check` 통과. Win32 및 Adb 밝은/어두운 테마 렌더링 확인. 실제 ADB/전원/프로그램 종료 호출 없음.
+
+### 최초 구현
+
+- 참고: MAA의 [PostActionSetting](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaWpfGui/Models/PostActionSetting.cs), [TaskQueueView](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaWpfGui/Views/UI/TaskQueueView.xaml). 중앙 세부 설정에 옵션 표시, 왼쪽에는 중앙 정렬된 제목/요약과 설정 아이콘을 둔다. 코드를 복사하지 않고 현재 Qt 구조에 맞게 작성한다.
+- 대상 프로그램 종료/MAA 종료는 독립 선택. 화면 잠금/절전/최대 절전/시스템 종료는 하나만 선택하며 다시 클릭하면 해제할 수 있다. 모두 해제는 모든 옵션과 이번에만을 해제한다.
+- `user_config.json.after_actions`에는 영구 선택만 저장한다. 이번에만 활성화 중의 변경은 세션 전용이며 기존 영구 선택은 보존한다. 정상 완료 시 세션 선택을 소비하고 영구 선택으로 돌아온다. 재실행은 항상 영구 선택 및 이번에만 해제 상태로 시작한다.
+- 실제 파이프라인 작업을 하나 이상 정상 완료한 경우에만 수행한다. 초기화/작업/정리 실패, 수동 중지, 창 닫기, 프로그램 실행만 한 경우에는 수행하지 않는다. 실행 시 옵션 스냅샷 고정, 양쪽 작업 스레드 종료와 SDK 정리 이후 정확히 한 번 처리한다.
+- 프로그램 종료는 실제 실행 컨트롤러의 HWND/PID/전체 실행 경로를 연결 시 보관하고 종료 직전 재검증한 후 `WM_CLOSE`를 요청한다. 프로세스명 일괄 종료/강제 종료는 사용하지 않는다. 현재 실행 런타임은 Win32 전용이므로 ADB 앱/에뮬레이터 종료는 범위 밖이다.
+- Windows: [LockWorkStation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation), [SetSuspendState](https://learn.microsoft.com/en-us/windows/win32/api/powrprof/nf-powrprof-setsuspendstate), [ExitWindowsEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-exitwindowsex). 전원 권한 활성화/복원, 실패 로그, 강제 종료 플래그 없음. MAA 종료는 기존 안전한 close 흐름을 사용한다.
+- MAA 종료와 시스템 동작을 함께 선택하면 SDK/모니터 정리가 끝나고 close가 허용된 시점에 숨겨진 별도 Python 도우미를 시작한다. [상속 핸들](https://docs.python.org/3/library/subprocess.html#subprocess.STARTUPINFO)로 해당 MAA 프로세스의 실제 종료를 기다린 후 시스템 요청. 절전 중 MAA 종료가 지연되거나 종료 시 전원 요청이 유실되는 것을 방지한다. 결과는 `assets/user/debug/after_action.log`에 기록한다. 현재 Python 실행 환경 기준이며 frozen 배포는 도우미 패키징 확장이 필요하다.
+- 검증은 모의 Windows API만 사용하며 실제 잠금/전원/게임 종료는 수행하지 않는다. UI 정렬, 선택 배타성/해제, 저장/복원/이번에만, 정상/실패/중지/닫기/콜백 순서, 대상 재검증을 회귀 테스트한다. 모두 한 커밋으로 작성한다.
+
+구현: `afterActions.py`(선택 모델/Windows 요청/종료 후 도우미), `afterActionUI.py`(세부 설정), `winUI.py`(실행 스냅샷/종료 판정/저장/요약). 완료 후 설정은 실행 중 편집 불가이며 기존 작업 옵션 편집 허용 정책은 유지한다.
+단독 시스템 동작은 요청 실패를 실행 로그에 표시한다. 프로그램 정상 종료·잠금·시스템 종료는 요청 수락과 실제 완료가 다를 수 있다. 에뮬레이터/강제 프로세스 종료, 장시간 검증 및 실제 전원 동작 검증은 포함하지 않는다.
+밝은/어두운 테마에서 정렬과 옵션 화면을 확인했다. 요약 길이가 바뀌어도 왼쪽 영역의 라벨 중심과 설정 아이콘 오른쪽 여백은 유지한다. 추가 회귀 **33개**, 전체 UnitTest **205개**, `py_compile`, `git diff --check` 통과. Windows API 시그니처 로딩 확인(실제 동작 호출 없음). 커밋: `Feat: 작업 완료 후 종료 및 전원 동작 추가`. 사용자 JSON 두 파일은 변경/커밋하지 않는다.
+
+저장 예시 (직접 수정 없이 UI에서 선택하면 자동 저장):
+
+```json
+"after_actions": {
+    "close_program": false,
+    "close_app": false,
+    "close_emulator": false,
+    "close_maa": false,
+    "system_action": ""
+}
+```
+
+`system_action`은 `""`, `"lock"`, `"sleep"`, `"hibernate"`, `"shutdown"` 중 하나다. `once`는 세션 전용으로 저장하지 않는다.
+
 ## 최신 추가 수정 — 정렬, FPS, UI 상태 복원
 
 사용자가 연속 표시/높이 조절의 의도한 동작을 실기 확인했다.

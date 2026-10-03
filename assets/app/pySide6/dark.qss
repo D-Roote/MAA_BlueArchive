@@ -196,6 +196,19 @@ QPushButton#endSettingBtn {
     background-color: transparent;
 }
 
+QLabel#endWorkStatusLabel {
+    color: #D6E1F0;
+}
+
+QLabel#endStatusLabel,
+QLabel#afterActionHint {
+    color: #9FB0C9;
+}
+
+QWidget#settingStartWidget_2 QFrame#line {
+    background-color: #31435E;
+}
+
 QPushButton#stopBtn {
     background-color: #D95F6A;
 }

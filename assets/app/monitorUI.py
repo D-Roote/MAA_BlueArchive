@@ -252,6 +252,7 @@ class MonitorOperation(QThread):
 class MonitorCoordinator(QObject):
     busy_changed = Signal()
     shutdown_ready = Signal()
+    preset_changed = Signal()
 
     def __init__(self, window, section_content, screen_content):
         super().__init__(window)
@@ -395,6 +396,7 @@ class MonitorCoordinator(QObject):
             if isinstance(data, dict) and data.get("name") == name:
                 combo.setCurrentIndex(index)
                 break
+        self.preset_changed.emit()
 
     def select_target(self, key):
         if key == self.target_key:

@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import AssociatedControlLabel, SettingsPanel
 from app.monitorUI import MonitorCoordinator
+from app.afterActions import AfterActionPreferences, WindowsAfterActionBackend, capture_window_target
+from app.afterActionUI import AfterActionPanel
 
 
 WINDOW_SIZE = [1200, 800]
@@ -1533,6 +1535,7 @@ class MainWindow(QMainWindow):
         
         self._setup_workspace_navigation()
         self._setup_dashboard_layout()
+        self._setup_after_action_footer()
         self.ui.mainPages.setCurrentWidget(self.ui.mainTab)
 
         qss_contents = []
@@ -1570,10 +1573,21 @@ class MainWindow(QMainWindow):
         )
 
         self.runtime = AppRuntime()
+        self.after_actions = AfterActionPreferences()
+        self.after_action_backend = WindowsAfterActionBackend()
+        self.after_action_panel = None
+        self._run_after_actions = None
+        self._run_completion_target = None
+        self._run_succeeded = False
+        self._run_stop_requested = False
+        self._completion_pending = False
+        self._deferred_system_action = ""
+        self._closing = False
         try:
             saved = json.loads((self.runtime.user_dir / "config" / "user_config.json").read_text(encoding="utf-8"))
             state = saved.get("ui_state")
             self._saved_ui_state = state if isinstance(state, dict) else {}
+            self.after_actions = AfterActionPreferences(saved.get("after_actions"))
         except (OSError, ValueError, AttributeError):
             pass
         self.log_sink = self.runtime.log_sink
@@ -1598,16 +1612,129 @@ class MainWindow(QMainWindow):
         self.monitor = MonitorCoordinator(self, connection_content, screen_content)
         self.monitor.busy_changed.connect(self.check_start_button_state)
         self.monitor.shutdown_ready.connect(self._finish_pending_close)
+        self.monitor.preset_changed.connect(self._refresh_after_action_summary)
         setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
         self.setup_connections()
 
         self._restore_monitor_order()
         self.setup_dynamic_options()
         self.clear_sub_cases()
+        self._refresh_after_action_summary()
         self.on_program_settings_changed(self.settings_panel.program_settings())
         self.check_start_button_state()
         self._restore_ui_state()
         self._ui_state_ready = True
+
+    def _setup_after_action_footer(self):
+        footer = self.ui.settingStartWidget_2
+        footer.setMinimumHeight(70)
+        footer.setMaximumHeight(16777215)
+        footer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        footer.parentWidget().layout().setAlignment(footer, Qt.AlignmentFlag(0))
+        outer = footer.layout()
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(4)
+        # Balance the icon hitbox on the opposite side so both labels share
+        # the full footer's horizontal center, not just the text column's.
+        outer.insertSpacing(0, 30)
+        self.ui.endLabelWidget.setMaximumWidth(16777215)
+        self.ui.endLabelWidget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        outer.setStretch(1, 1)
+        inner = self.ui.endLabelWidget.layout()
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        for label in (self.ui.endWorkStatusLabel, self.ui.endStatusLabel):
+            label.setMaximumWidth(16777215)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.ui.endStatusLabel.setWordWrap(True)
+        self.ui.line.setMinimumWidth(0)
+        self.ui.line.setMaximumWidth(16777215)
+        self.ui.line.setFixedHeight(1)
+        self.ui.line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.ui.endSettingBtn.setFixedSize(30, 30)
+        outer.setAlignment(self.ui.endSettingBtn, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.endSettingBtn.setToolTip("작업 완료 후 동작 설정")
+        self.ui.endSettingBtn.setAccessibleName("작업 완료 후 동작 설정")
+
+    def _after_action_controller_type(self):
+        # The shared connection panels already resolve interface declarations
+        # and resource allow-lists. Never infer a type from a name or address.
+        preset = next((preset for preset in self.monitor.service.presets
+                       if preset["name"] == self.monitor.preset_name), None)
+        return preset["type"] if preset is not None else "Win32"
+
+    def _refresh_after_action_summary(self):
+        self.ui.endWorkStatusLabel.setText("작업 완료 후" + (" · 이번에만" if self.after_actions.once else ""))
+        controller_type = self._after_action_controller_type()
+        description = self.after_actions.description(controller_type)
+        self.ui.endStatusLabel.setText(description)
+        self.ui.endStatusLabel.setToolTip(description)
+        editable = not self.isRunning and not self._close_pending and not self._completion_pending and not self._closing
+        self.ui.endSettingBtn.setEnabled(editable)
+        if self.after_action_panel is not None:
+            self.after_action_panel.set_controller_type(controller_type)
+            self.after_action_panel.setEnabled(editable)
+
+    def show_after_actions(self):
+        if self.isRunning or self._close_pending or self._completion_pending or self._closing:
+            return
+        self.clear_sub_cases(show_placeholder=False)
+        panel = AfterActionPanel(self.after_actions, self.ui.scrollSettingContents,
+                                 controller_type=self._after_action_controller_type())
+        self.after_action_panel = panel
+        self._option_content_layout().addWidget(panel)
+        panel.changed.connect(self._after_actions_changed)
+        self._refresh_after_action_summary()
+
+    def _after_actions_changed(self):
+        self._refresh_after_action_summary()
+        self.save_user_config()
+
+    def _finish_after_actions(self):
+        actions, self._run_after_actions = self._run_after_actions, None
+        eligible = self._run_succeeded and not self._run_stop_requested and not self._close_pending
+        self._run_succeeded = False
+        if not eligible or actions is None:
+            self._refresh_after_action_summary()
+            return
+        self.after_actions.consume()
+        self.save_user_config()
+        if any(actions.values()):
+            self._completion_pending = True
+            self.ui.workStartBtn.setEnabled(False)
+            QTimer.singleShot(0, lambda: self._execute_after_actions(actions, self._run_completion_target))
+        self._refresh_after_action_summary()
+
+    def _execute_after_actions(self, actions, target):
+        try:
+            if self._close_pending or self._closing:
+                return
+            if actions.get("close_app") or actions.get("close_emulator"):
+                self.append_log("ADB 앱·에뮬레이터 종료는 UI 준비 단계이므로 실제 종료 요청을 생략합니다.")
+            if actions["close_program"]:
+                try:
+                    self.after_action_backend.close_program(target)
+                    self.append_log("완료 후 대상 프로그램 정상 종료를 요청했습니다.")
+                except Exception as error:
+                    self.append_log(f"완료 후 대상 프로그램 종료 실패: {error}")
+            if actions["system_action"] and actions["close_maa"]:
+                self._deferred_system_action = actions["system_action"]
+            elif actions["system_action"]:
+                try:
+                    self.append_log("완료 후 시스템 동작을 요청합니다.")
+                    self.after_action_backend.system_action(actions["system_action"])
+                except Exception as error:
+                    self.append_log(f"완료 후 시스템 동작 실패: {error}")
+            if actions["close_maa"]:
+                self.append_log("완료 후 MAA를 종료합니다.")
+                self.close()
+        finally:
+            self._completion_pending = False
+            self._run_completion_target = None
+            self._refresh_after_action_summary()
+            self.check_start_button_state()
+            self._finish_pending_close()
 
     def _capture_ui_state(self):
         return {
@@ -1667,6 +1794,7 @@ class MainWindow(QMainWindow):
             self._schedule_ui_state_save()
 
     def setup_connections(self):
+        self.ui.endSettingBtn.clicked.connect(self.show_after_actions)
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.ui.logLatestButton.clicked.connect(self.scroll_log_to_latest)
         self.ui.logCopyButton.clicked.connect(self.copy_log)
@@ -2040,7 +2168,7 @@ class MainWindow(QMainWindow):
         return True
 
     def on_task_start(self):
-        if self.worker is not None or self.stop_worker is not None or self._close_pending:
+        if self.worker is not None or self.stop_worker is not None or self._close_pending or self._completion_pending or self._closing:
             return
         if self.monitor.prepare_task_start(self.on_task_start):
             return
@@ -2050,6 +2178,12 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(False)
 
         execution_queue = self.build_execution_queue()
+        self._run_after_actions = self.after_actions.for_controller(self._after_action_controller_type()) if any(
+            entry != PROGRAM_LAUNCH_ENTRY for entry, _override in execution_queue
+        ) else None
+        self._run_succeeded = False
+        self._run_stop_requested = False
+        self._run_completion_target = None
 
         minimize_window = False
         if hasattr(self.ui, 'minimizeEnableBtn'):
@@ -2061,6 +2195,7 @@ class MainWindow(QMainWindow):
             minimize_window,
             controller_settings=self.settings_panel.controller_settings(),
             program_settings=self.settings_panel.program_settings(),
+            completion_actions=self._run_after_actions,
         )
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
@@ -2079,8 +2214,10 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(True)
 
         self.set_options_locked(True)
+        self._refresh_after_action_summary()
 
     def on_task_stop(self):
+        self._run_stop_requested = True
         self.ui.workStartBtn.setEnabled(False)
 
         if not self.worker:
@@ -2113,6 +2250,8 @@ class MainWindow(QMainWindow):
         self.runtime.log_sink.set_log_callback(None)
 
         if worker is not None:
+            self._run_succeeded = bool(worker.succeeded)
+            self._run_completion_target = getattr(worker, "completion_target", None)
             prefix = "▶" if worker.succeeded else "⚠"
             self.append_log(f"{prefix} {worker.result_message}\n")
             worker.deleteLater()
@@ -2124,7 +2263,8 @@ class MainWindow(QMainWindow):
         # 두 finished 콜백이 모두 처리되기 전에는 새 실행을 허용하지 않는다.
         if self.worker is not None or self.stop_worker is not None:
             return
-        if self.isRunning:
+        was_running = self.isRunning
+        if was_running:
             self.isRunning = False
             self.monitor.task_state_changed()
             self.ui.workStartBtn.setText("작업 시작")
@@ -2132,9 +2272,13 @@ class MainWindow(QMainWindow):
             self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.set_options_locked(False)
         self.check_start_button_state()
+        if was_running:
+            self._finish_after_actions()
         self._finish_pending_close()
 
     def closeEvent(self, event):
+        self._closing = True
+        self._run_stop_requested = True
         self._ui_save_timer.stop()
         self.save_user_config()
         worker_running = self.worker is not None
@@ -2148,6 +2292,12 @@ class MainWindow(QMainWindow):
                 self.on_task_stop()
             return
 
+        if self._deferred_system_action:
+            action, self._deferred_system_action = self._deferred_system_action, ""
+            try:
+                self.after_action_backend.defer_system_action(action, self.runtime.user_dir / "debug" / "after_action.log")
+            except Exception as error:
+                self.append_log(f"MAA 종료 후 시스템 동작 예약 실패: {error}")
         super().closeEvent(event)
 
     def _finish_pending_close(self):
@@ -2449,6 +2599,7 @@ class MainWindow(QMainWindow):
         return layout
 
     def clear_sub_cases(self, show_placeholder=True):
+        self.after_action_panel = None
         layout = self._option_content_layout()
         while layout.count():
             child = layout.takeAt(0)
@@ -2774,6 +2925,9 @@ class MainWindow(QMainWindow):
         self.on_user_config_changed()
 
     def check_start_button_state(self):
+        if self._completion_pending or self._closing:
+            self.ui.workStartBtn.setEnabled(False)
+            return
         if self.isRunning:
             self.ui.workStartBtn.setEnabled(
                 self.stop_worker is None and not self._close_pending
@@ -2901,6 +3055,7 @@ class MainWindow(QMainWindow):
                         "monitor_order": self.ui.monitorSectionsWidget.section_order(),
                         "monitor_height_weights": self.ui.monitorSectionsWidget.height_weights(),
                         "ui_state": self._capture_ui_state() if self._ui_state_ready else self._saved_ui_state,
+                        "after_actions": dict(self.after_actions.saved),
                     },
                     f,
                     ensure_ascii=False,
@@ -2933,6 +3088,7 @@ class RuntimeWorker(QThread):
         minimize_window=False,
         controller_settings=None,
         program_settings=None,
+        completion_actions=None,
     ):
         super().__init__()
         self.runtime = runtime
@@ -2940,6 +3096,8 @@ class RuntimeWorker(QThread):
         self.minimize_window = minimize_window
         self.controller_settings = controller_settings
         self.program_settings = program_settings
+        self.completion_actions = completion_actions or {}
+        self.completion_target = None
         self.succeeded = False
         self.result_message = "작업을 시작하지 못했습니다."
 
@@ -2957,6 +3115,11 @@ class RuntimeWorker(QThread):
                 return
 
             self.log.emit(init_message)
+            if self.completion_actions.get("close_program"):
+                try:
+                    self.completion_target = capture_window_target(self.runtime._target_hwnd)
+                except (OSError, RuntimeError) as error:
+                    self.log.emit(f"완료 후 종료 대상 확인 실패: {error}")
             if self.isInterruptionRequested():
                 self.result_message = "작업 시작이 취소되었습니다."
                 return
