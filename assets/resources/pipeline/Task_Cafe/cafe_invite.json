@@ -11,7 +11,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [880, 650, 1, 1]
             }
@@ -39,7 +39,7 @@
     "Cafe_MomoTalk_1st": {
         "anchor": {"Current_Momo": "Cafe_MomoTalk_2nd"},
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [800, 220, 1, 1]
             }
@@ -60,7 +60,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -71,7 +71,7 @@
     "Cafe_MomoTalk_2nd": {
         "anchor": {"Current_Momo": "Cafe_MomoTalk_3rd"},
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [800, 300, 1, 1]
             }
@@ -92,7 +92,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -103,7 +103,7 @@
     "Cafe_MomoTalk_3rd": {
         "anchor": {"Current_Momo": "Cafe_MomoTalk_4th"},
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [800, 380, 1, 1]
             }
@@ -124,7 +124,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -135,7 +135,7 @@
     "Cafe_MomoTalk_4th": {
         "anchor": {"Current_Momo": "Cafe_MomoTalk_5th"},
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [800, 460, 1, 1]
             }
@@ -156,7 +156,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -167,7 +167,7 @@
     "Cafe_MomoTalk_5th": {
         "anchor": {"Current_Momo": "Cafe_MomoTalk_1st"},
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [800, 540, 1, 1]
             }
@@ -179,7 +179,7 @@
     },
     "Cafe_MomoTalk_5th_Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -201,7 +201,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [500, 500, 1, 1]
             }

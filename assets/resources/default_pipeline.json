@@ -25,11 +25,11 @@
             }
         }
     },
-    "LongPress": {
+    "Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
-                "duration": 10
+                "target": true
             }
         }
     }

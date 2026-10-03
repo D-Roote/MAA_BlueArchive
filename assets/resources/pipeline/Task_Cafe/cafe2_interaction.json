@@ -30,7 +30,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target_offset": [45, 0, 1, 1]
             }
@@ -87,7 +87,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target_offset": [45, 0, 1, 1]
             }
@@ -144,7 +144,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target_offset": [45, 0, 1, 1]
             }
@@ -201,7 +201,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target_offset": [45, 0, 1, 1]
             }

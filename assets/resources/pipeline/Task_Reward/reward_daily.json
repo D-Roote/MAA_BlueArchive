@@ -9,7 +9,7 @@
     },
     "Reward_Mission_Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [50, 230, 1, 1]
             }
@@ -50,7 +50,7 @@
     },
     "Reward_Mission_Reward_Claim": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1150, 670, 1, 1]
             }
@@ -91,7 +91,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [970, 670, 1, 1]
             }
@@ -111,7 +111,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [655, 635, 1, 1]
             }

@@ -8,7 +8,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [640, 500, 1, 1]
             }

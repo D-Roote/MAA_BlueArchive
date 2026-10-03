@@ -31,7 +31,7 @@
 
     "Schedule_Next_Aca": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1245, 360, 1, 1]
             }
@@ -52,7 +52,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "target": [1160, 660, 1, 1]
         },
         "repeat": 2,
@@ -74,7 +74,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -93,7 +93,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -112,7 +112,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -131,7 +131,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -150,7 +150,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -169,7 +169,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -188,7 +188,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -207,7 +207,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [
@@ -226,7 +226,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_wait_freezes": 300,
         "next": [

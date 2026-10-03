@@ -9,7 +9,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [770, 500, 1, 1]
             }
@@ -35,7 +35,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [650, 600, 1, 1]
             }

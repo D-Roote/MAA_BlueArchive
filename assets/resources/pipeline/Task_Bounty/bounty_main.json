@@ -18,7 +18,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [700, 400, 1, 1]
             }
@@ -37,7 +37,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1000, 200, 1, 1]
             }
@@ -70,7 +70,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1100, 635, 1, 1]
             }
@@ -90,7 +90,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1100, 525, 1, 1]
             }
@@ -110,7 +110,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1100, 425, 1, 1]
             }
@@ -131,7 +131,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1100, 300, 1, 1]
             }
@@ -153,7 +153,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1000, 400, 1, 1]
             }
@@ -175,7 +175,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [765, 500, 1, 1]
             }
@@ -187,7 +187,7 @@
     },
     "Bounty_Sweep_Reward_Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [650, 450, 1, 1]
             }
@@ -198,7 +198,7 @@
     },
     "Bounty_Sweep_Reward_Click_2": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [650, 555, 1, 1]
             }

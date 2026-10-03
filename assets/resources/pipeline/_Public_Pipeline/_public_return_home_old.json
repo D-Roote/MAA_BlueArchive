@@ -13,7 +13,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1240, 30, 1, 1]
             }

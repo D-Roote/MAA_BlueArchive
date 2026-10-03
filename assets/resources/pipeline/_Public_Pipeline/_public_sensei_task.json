@@ -8,7 +8,7 @@
             }
         },
         "action": {
-            "type": "LongPress"
+            "type": "Click"
         },
         "post_delay": 3000,
         "post_wait_freezes": 100,

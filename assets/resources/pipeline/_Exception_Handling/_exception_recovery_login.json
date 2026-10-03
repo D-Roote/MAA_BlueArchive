@@ -18,7 +18,7 @@
 	},
     "Recover_Login_MaxHit_Click_1": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1010, 135, 1, 1]
             }
@@ -31,7 +31,7 @@
     },
     "Recover_Login_MaxHit_Click_2": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1111, 123, 1, 1]
             }
@@ -58,7 +58,7 @@
     },
     "Recover_Login_Menu_Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1010, 135, 1, 1]
             }
@@ -77,7 +77,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1010, 135, 1, 1]
             }
@@ -89,7 +89,7 @@
     },
     "Recover_Login_Reward_Menu_Click": {
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1010, 135, 1, 1]
             }
@@ -108,7 +108,7 @@
             }
         },
         "action": {
-            "type": "LongPress",
+            "type": "Click",
             "param": {
                 "target": [1111, 123, 1, 1]
             }
