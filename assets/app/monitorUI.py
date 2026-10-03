@@ -1,7 +1,7 @@
 """Shared connection panels and serial background diagnostics."""
 from time import monotonic
 
-from PySide6.QtCore import QObject, QRect, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -20,6 +20,39 @@ def owned_qimage(frame):
     return QImage(frame.data, width, height, frame.strides[0], QImage.Format.Format_BGR888).copy()
 
 
+class ScreenImageCanvas(QWidget):
+    """Opaque frame surface: invalidate pixels here, not the surrounding cards."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.image = QImage()
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() in (QEvent.Type.Polish, QEvent.Type.StyleChange, QEvent.Type.Show):
+            # The global transparent QWidget QSS resets this during polishing.
+            # Our paintEvent always covers every pixel, including letterboxing.
+            self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        return handled
+
+    def image_rect(self):
+        if self.image.isNull() or self.rect().isEmpty():
+            return QRect()
+        result = QRect(self.rect().topLeft(), self.image.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio))
+        result.moveCenter(self.rect().center())
+        return result
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.parentWidget().palette().window().color())
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if self.image.isNull():
+            painter.setPen(self.parentWidget().palette().text().color())
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "연결 확인 후 화면을 테스트하세요")
+        else:
+            painter.drawImage(self.image_rect(), self.image)
+
+
 class ScreenPreview(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -28,29 +61,21 @@ class ScreenPreview(QFrame):
         self.setMinimumWidth(0)
         self.setFixedHeight(180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.image = QImage()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.canvas = ScreenImageCanvas(self)
+        layout.addWidget(self.canvas)
+
+    @property
+    def image(self):
+        return self.canvas.image
 
     def set_image(self, image):
-        self.image = image
-        self.update()
+        self.canvas.image = image
+        self.canvas.update()
 
     def image_rect(self):
-        bounds = self.rect().adjusted(8, 8, -8, -8)
-        if self.image.isNull() or bounds.isEmpty():
-            return QRect()
-        result = QRect(bounds.topLeft(), self.image.size().scaled(bounds.size(), Qt.AspectRatioMode.KeepAspectRatio))
-        result.moveCenter(bounds.center())
-        return result
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        if self.image.isNull():
-            painter.setPen(self.palette().text().color())
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "연결 확인 후 화면을 테스트하세요")
-        else:
-            painter.drawImage(self.image_rect(), self.image)
+        return self.canvas.image_rect().translated(self.canvas.pos())
 
 
 class ScreenPanel(QWidget):
@@ -294,7 +319,7 @@ class MonitorCoordinator(QObject):
         status = "작업 실행 중 · 작업 컨트롤러 사용, 사전 재연결은 종료 후 가능합니다." if self.window.isRunning else self.status
         for panel in self.panels:
             panel.sync(self.service.presets, self.preset_name, self.targets, self.target_key,
-                       self.preferences, status, self.busy, self.window.isRunning,
+                       self.preferences, status, self.busy or self.streaming, self.window.isRunning,
                        self.service.controller is not None)
         available = (not self.shutting_down and self.pending_start is None
                      and (self.window.isRunning or self.service.controller is not None))
@@ -323,6 +348,7 @@ class MonitorCoordinator(QObject):
         if self.busy or self.shutting_down or self.pending_start is not None or not self.screen_content.isVisible():
             return
         self.streaming = self.screen_preferences["mode"] == "continuous"
+        self._sync()
         self.capture_frame()
 
     def capture_frame(self):
@@ -342,7 +368,8 @@ class MonitorCoordinator(QObject):
             return {"image": owned_qimage(frame), "elapsed": monotonic() - started,
                     "source": "실행 캐시" if running else "테스트 캡처", "epoch": epoch}
 
-        self.screen.status.setText("화면을 가져오고 있습니다…")
+        if not self.streaming or self.screen.preview.image.isNull():
+            self.screen.status.setText("화면을 가져오고 있습니다…")
         self._request("frame", capture)
 
     def _runtime_preset_changed(self, preset):
@@ -410,8 +437,9 @@ class MonitorCoordinator(QObject):
         self.worker = worker
         generation = self.generation
         worker.finished.connect(lambda: self._finished(worker, kind, generation))
-        self._sync()
-        self.busy_changed.emit()
+        if kind != "frame" or not self.streaming:
+            self._sync()
+            self.busy_changed.emit()
         worker.start()
         return True
 
@@ -423,13 +451,16 @@ class MonitorCoordinator(QObject):
             if succeeded and result["epoch"] == self.preview_generation and generation == self.generation:
                 image = result["image"]
                 self.screen.preview.set_image(image)
-                self.screen.status.setText(
-                    f"{image.width()} × {image.height()} · {result['elapsed'] * 1000:.0f} ms · {result['source']}"
-                    + (" · FPS는 최대 요청 빈도" if self.streaming else "")
-                )
+                status = (f"{image.width()} × {image.height()} · {self.screen_preferences['fps']} FPS · {result['source']}"
+                          if self.streaming else
+                          f"{image.width()} × {image.height()} · {result['elapsed'] * 1000:.0f} ms · {result['source']}")
+                if self.screen.status.text() != status:
+                    self.screen.status.setText(status)
                 if self.streaming and not self.shutting_down and self.pending_start is None:
                     interval = 1 / self.screen_preferences["fps"]
                     self.preview_timer.start(max(1, round((interval - result["elapsed"]) * 1000)))
+                    # Continuous capture is one UI session, not a busy/idle toggle per frame.
+                    return
             elif (not succeeded and generation == self.generation
                   and worker.preview_generation == self.preview_generation):
                 self.stop_preview()

@@ -17,7 +17,7 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QSize, Qt
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QPointF, QSize, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
@@ -1967,6 +1967,63 @@ class UILifecycleTests(unittest.TestCase):
         self.wait_for_monitor()
         removed.assert_not_called()
         controller.post_screencap.assert_called_once()
+
+    def test_continuous_frames_keep_status_controls_and_panel_geometry_stable(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        monitor = self.window.monitor
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        with patch.object(monitor, "_sync", wraps=monitor._sync) as sync:
+            try:
+                monitor.toggle_capture()
+                self.wait_for_monitor()
+                status = screen.status.text()
+                geometry = screen.geometry()
+                first_calls = controller.post_screencap.call_count
+                self.assertFalse(monitor.panels[0].discover_button.isEnabled())
+                for _ in range(100):
+                    QTest.qWait(5)
+                    if controller.post_screencap.call_count >= first_calls + 2 and not monitor.busy:
+                        break
+                self.assertGreaterEqual(controller.post_screencap.call_count, first_calls + 2)
+                self.assertEqual(screen.status.text(), status)
+                self.assertNotIn("가져오고", status)
+                self.assertEqual(screen.geometry(), geometry)
+                self.assertEqual(sync.call_count, 1)
+                self.assertTrue(screen.capture_button.isEnabled())
+            finally:
+                monitor.stop_preview()
+                self.wait_for_monitor()
+        self.assertTrue(monitor.panels[0].discover_button.isEnabled())
+
+    def test_new_frames_repaint_only_opaque_image_canvas(self):
+        class PaintCounter(QObject):
+            def __init__(self, parent):
+                super().__init__(parent)
+                self.paints = 0
+
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.Paint:
+                    self.paints += 1
+                return False
+
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.app.processEvents()
+        canvas_count = PaintCounter(screen.preview.canvas)
+        panel_count = PaintCounter(self.window.ui.monitorSectionsWidget)
+        screen.preview.canvas.installEventFilter(canvas_count)
+        self.window.ui.monitorSectionsWidget.installEventFilter(panel_count)
+        self.assertTrue(screen.preview.canvas.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent))
+        for value in (30, 80, 150):
+            from app.monitorUI import owned_qimage
+            screen.preview.set_image(owned_qimage(np.full((90, 160, 3), value, dtype=np.uint8)))
+            self.app.processEvents()
+        self.assertGreaterEqual(canvas_count.paints, 3)
+        self.assertEqual(panel_count.paints, 0)
 
     def test_preview_close_waits_for_inflight_capture_then_releases_connection(self):
         screen = self.show_screen_panel()
