@@ -1,24 +1,36 @@
 {
-    "Default": { 
+    "Default": {
         "rate_limit": 500,
         "timeout": 30000,
         "pre_delay": 200,
-        "post_delay": 200
+        "post_delay": 200,
+        "on_error": [
+            "Exception_Handling"
+        ]
     },
     "TemplateMatch": {
-        "recognition": "TemplateMatch",
-        "threshold": 0.85,
-        "method": 5
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "threshold": 0.85,
+                "method": 5
+            }
+        }
     },
     "OCR": {
-        "recognition": "OCR",
-        "threshold": 0.6
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "threshold": 0.6
+            }
+        }
     },
-    "on_error": [
-        "Exception_Handling"
-    ],
     "LongPress": {
-        "action": "LongPress",
-        "duration": 10
+        "action": {
+            "type": "LongPress",
+            "param": {
+                "duration": 10
+            }
+        }
     }
 }
