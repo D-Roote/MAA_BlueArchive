@@ -914,6 +914,15 @@ class AppRuntime:
             if not released:
                 raise RuntimeError(release_message)
 
+    def capture_cached_frame(self):
+        """Read only: preview must never enqueue extra captures during a task."""
+        from app.monitoring import MonitoringService
+        with self._task_post_lock:
+            controller = self.controller
+            if controller is None or not controller.connected:
+                raise RuntimeError("실행 컨트롤러가 아직 준비되지 않았습니다.")
+            return MonitoringService.validate_frame(controller.cached_image)
+
     def release_session(self):
         """정지 완료 후 Tasker, 컨트롤러, 창 상태 순서로 실행 상태를 정리한다."""
         self.log_sink.set_first_action_callback(None)

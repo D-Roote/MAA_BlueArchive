@@ -1,6 +1,6 @@
 /* 어두운 색상 스키마: 검정보다 군청과 남색 계열의 표면색을 사용한다. */
 QWidget {
-    background-color: #111A2B;
+    background-color: transparent;
     color: #DCE6F2;
 }
 
@@ -10,34 +10,121 @@ QStatusBar {
     background-color: #111A2B;
 }
 
-QFrame#line,
-QFrame#line_2,
-QFrame#line_3,
-QFrame#line_4 {
-    background-color: #30415E;
-}
-
-QTabWidget::pane {
-    border: 1px solid #30415E;
+QWidget#centralwidget,
+QWidget#mainTab,
+QWidget#settingTab {
     background-color: #111A2B;
 }
 
-QTabBar::tab {
-    background-color: #22314A;
+QWidget#appHeader {
+    background-color: #172238;
+    border-bottom: 1px solid #30415E;
+}
+
+QLabel#appBrandLabel,
+QLabel#workspaceSectionTitle {
+    color: #F0F6FD;
+}
+
+QLabel#optionEmptyState {
+    color: #8CA0BA;
+}
+
+QFrame#optionGroupSeparator {
+    background-color: #30415E;
+}
+
+QComboBox#monitorComboBox,
+QLineEdit#monitorLineEdit {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+}
+
+QComboBox#monitorComboBox QAbstractItemView {
+    background-color: #1E2D46;
+    color: #E5EDF6;
+    border-color: #405474;
+    selection-background-color: #24445F;
+    selection-color: #63D2F5;
+}
+
+QPushButton#monitorActionButton {
+    background-color: #1E2D46;
+    border-color: #405474;
+    color: #CCD7E5;
+}
+
+QPushButton#monitorActionButton:hover {
+    background-color: #283A55;
+    color: #63D2F5;
+}
+
+QFrame#screenPreview {
+    background-color: #152238;
+    color: #94A3B8;
+    border: 1px solid #30415E;
+    border-radius: 8px;
+}
+
+QLabel#monitorStatus {
     color: #AEBFD2;
-    border: 1px solid #30415E;
-    border-bottom: none;
 }
 
-QTabBar::tab:selected {
-    background-color: #168FBE;
-    color: #F5F9FD;
-    border: 1px solid #30415E;
-    border-bottom: none;
+QPushButton#dashboardNavButton,
+QPushButton#settingsNavButton {
+    background-color: transparent;
+    color: #AEBFD2;
 }
 
-QTabBar::tab:hover:!selected {
-    background-color: #2A3B58;
+QPushButton#dashboardNavButton:hover,
+QPushButton#settingsNavButton:hover {
+    background-color: #253751;
+    color: #E5EDF6;
+}
+
+QPushButton#dashboardNavButton:checked,
+QPushButton#settingsNavButton:checked {
+    background-color: #24445F;
+    color: #63D2F5;
+}
+
+QWidget#_1_settingStartWidget,
+QWidget#_2_settingWidget,
+QWidget#_3_logPrintWidget {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QSplitter#workspaceSplitter::handle:horizontal {
+    background-color: transparent;
+}
+
+QFrame#monitorSection,
+QFrame#monitorLogSection {
+    background-color: #172238;
+    border-color: #30415E;
+}
+
+QLabel#monitorDragHandle {
+    color: #8CA0BA;
+}
+
+QToolButton#monitorSectionToggle {
+    color: #E5EDF6;
+}
+
+QToolButton#monitorSectionToggle:hover {
+    color: #63D2F5;
+}
+
+QLabel#monitorFutureDescription {
+    color: #AEBFD2;
+}
+
+QFrame#line,
+QFrame#line_4 {
+    background-color: #30415E;
 }
 
 QListWidget {
@@ -109,6 +196,19 @@ QPushButton#endSettingBtn {
     background-color: transparent;
 }
 
+QLabel#endWorkStatusLabel {
+    color: #D6E1F0;
+}
+
+QLabel#endStatusLabel,
+QLabel#afterActionHint {
+    color: #9FB0C9;
+}
+
+QWidget#settingStartWidget_2 QFrame#line {
+    background-color: #31435E;
+}
+
 QPushButton#stopBtn {
     background-color: #D95F6A;
 }
@@ -138,8 +238,7 @@ QComboBox#optionSelect {
 
 QLineEdit#optionInput:hover,
 QLineEdit#optionInput:focus,
-QComboBox#optionSelect:hover,
-QComboBox#optionSelect:focus {
+QComboBox#optionSelect:hover {
     border-color: #2BB3E3;
 }
 
@@ -165,6 +264,20 @@ QComboBox#optionSelect QAbstractItemView {
     selection-color: #F5F9FD;
 }
 
+QComboBox#optionSelect:hover {
+    background-color: #283A55;
+}
+
+QComboBox#optionSelect QAbstractItemView::item:hover {
+    background-color: #283A55;
+    color: #63D2F5;
+}
+
+QComboBox#optionSelect QAbstractItemView::item:selected {
+    background-color: #168FBE;
+    color: #F5F9FD;
+}
+
 QTextEdit {
     background-color: #172238;
     border-color: #30415E;
@@ -172,42 +285,40 @@ QTextEdit {
 }
 
 QLabel#logTitleLabel {
-    color: #E5EDF6;
+    color: #AEBFD2;
 }
 
-QPushButton#logLatestButton,
-QPushButton#logCopyButton,
-QPushButton#logClearButton,
-QPushButton#logSaveButton,
-QPushButton#logMenuToggleButton {
+QWidget#logActionMenu {
     background-color: #1E2D46;
-    border-color: #405474;
+}
+
+QToolButton#logLatestButton,
+QToolButton#logCopyButton,
+QToolButton#logClearButton,
+QToolButton#logSaveButton,
+QToolButton#logMenuToggleButton {
+    background-color: transparent;
+    border-color: transparent;
     color: #CCD7E5;
 }
 
-QPushButton#logCopyButton,
-QPushButton#logClearButton,
-QPushButton#logSaveButton,
-QPushButton#logMenuToggleButton {
-    background-color: #22314A;
-}
-
-QPushButton#logLatestButton:hover,
-QPushButton#logCopyButton:hover,
-QPushButton#logClearButton:hover,
-QPushButton#logSaveButton:hover,
-QPushButton#logMenuToggleButton:hover {
+QToolButton#logLatestButton:hover,
+QToolButton#logCopyButton:hover,
+QToolButton#logClearButton:hover,
+QToolButton#logSaveButton:hover,
+QToolButton#logMenuToggleButton:hover {
     background-color: #283A55;
-    border-color: #2BB3E3;
+    border-color: transparent;
+    color: #F5F9FD;
 }
 
-QPushButton#logLatestButton {
+QToolButton#logLatestButton {
     color: #63D2F5;
 }
 
-QPushButton#logMenuToggleButton[menuExpanded="true"] {
+QToolButton#logMenuToggleButton[menuExpanded="true"] {
     background-color: #283A55;
-    border-color: #2BB3E3;
+    border-color: transparent;
 }
 
 QScrollBar:vertical,

@@ -3,6 +3,7 @@ from datetime import datetime
 from copy import deepcopy
 from enum import Enum
 from uuid import uuid4
+import base64
 import ctypes
 import json
 import re
@@ -10,19 +11,24 @@ import sys
 
 from ctypes import wintypes
 
-from PySide6.QtCore import QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QByteArray, QDir, QEvent, QMimeData, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (QTextCursor,
                            QColor, QCursor, QDrag, QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
-                               QListWidget, QListWidgetItem, QWidget, 
+                               QFrame, QListWidget, QListWidgetItem, QSizePolicy,
+                               QToolButton, QWidget, QSplitter, QSplitterHandle,
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
+                               QListView, QStyledItemDelegate,
                                QFileDialog, QPushButton, QRadioButton, QStyle,
                                QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
 from app.settingsUI import AssociatedControlLabel, SettingsPanel
+from app.monitorUI import MonitorCoordinator
+from app.afterActions import AfterActionPreferences, WindowsAfterActionBackend, capture_window_target
+from app.afterActionUI import AfterActionPanel
 
 
 WINDOW_SIZE = [1200, 800]
@@ -306,13 +312,62 @@ class TaskFooterHoverFilter(QObject):
         self.footer.update()
 
 
+class WorkspaceSplitterHandlePaintFilter(QObject):
+    """Keep the resize hit area, showing a rounded divider only on hover."""
+
+    def __init__(self, handle):
+        super().__init__(handle)
+        self.handle = handle
+        self._hovered = False
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Enter, QEvent.Type.Leave):
+            self._hovered = event.type() == QEvent.Type.Enter
+            self.handle.update()
+        elif event.type() == QEvent.Type.Paint:
+            painter = QPainter(self.handle)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            dark = (
+                getattr(self.handle.window(), "_effective_theme", TitleBarTheme.LIGHT)
+                == TitleBarTheme.DARK
+            )
+            painter.fillRect(self.handle.rect(), QColor("#111A2B" if dark else "#F4F7FB"))
+            if self._hovered:
+                rect = QRectF(
+                    (self.handle.width() - 4) / 2, 12,
+                    4, max(0, self.handle.height() - 24),
+                )
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#30415E" if dark else "#DFE7F0"))
+                painter.drawRoundedRect(rect, 2, 2)
+            painter.end()
+            return True
+        return super().eventFilter(watched, event)
+
+
+class CenteredOptionDelegate(QStyledItemDelegate):
+    """Use normal list rows rather than the native combo menu rendering."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.displayAlignment = (
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        size.setHeight(max(34, size.height()))
+        return size
+
+
 class RoundedScrollBarPaintFilter(QObject):
     """Paint a pill-shaped handle because narrow Qt handles ignore QSS radius."""
 
-    def __init__(self, scroll_bar, contextual=False):
+    def __init__(self, scroll_bar, contextual=False, popup=False):
         super().__init__(scroll_bar)
         self.scroll_bar = scroll_bar
         self.contextual = bool(contextual)
+        self.popup = bool(popup)
 
     def eventFilter(self, watched, event):
         if watched is self.scroll_bar and event.type() == QEvent.Type.Paint:
@@ -321,12 +376,16 @@ class RoundedScrollBarPaintFilter(QObject):
         return super().eventFilter(watched, event)
 
     def _is_dark_theme(self):
-        return (
-            getattr(self.scroll_bar.window(), "_effective_theme", TitleBarTheme.LIGHT)
-            == TitleBarTheme.DARK
-        )
+        ancestor = self.scroll_bar
+        while ancestor is not None:
+            if hasattr(ancestor, "_effective_theme"):
+                return ancestor._effective_theme == TitleBarTheme.DARK
+            ancestor = ancestor.parentWidget()
+        return False
 
     def _surface_color(self):
+        if self.popup:
+            return QColor("#1E2D46" if self._is_dark_theme() else "#FFFFFF")
         if self.contextual:
             return QColor("#172238" if self._is_dark_theme() else "#F8FAFC")
         return QColor("#111A2B" if self._is_dark_theme() else "#F4F7FB")
@@ -372,10 +431,10 @@ class RoundedScrollBarPaintFilter(QObject):
         painter.end()
 
 
-def setup_rounded_vertical_scrollbar(scroll_area, contextual=False):
+def setup_rounded_vertical_scrollbar(scroll_area, contextual=False, popup=False):
     scroll_bar = scroll_area.verticalScrollBar()
     scroll_bar._rounded_paint_filter = RoundedScrollBarPaintFilter(
-        scroll_bar, contextual=contextual
+        scroll_bar, contextual=contextual, popup=popup
     )
     scroll_bar.installEventFilter(scroll_bar._rounded_paint_filter)
 
@@ -1144,10 +1203,321 @@ class DragDropListWidget(QListWidget):
             ),
         )
 
+
+class MonitorDragHandle(QLabel):
+    """모니터링 섹션의 전용 손잡이에서 드래그를 시작한다."""
+
+    def __init__(self, sections, section):
+        super().__init__("⋮⋮", section)
+        self.sections = sections
+        self.section = section
+        self.setObjectName("monitorDragHandle")
+        self.setAccessibleName("모니터링 영역 순서 변경")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._press_position = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_position = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._press_position is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self._press_position).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._press_position = None
+            self.sections.start_section_drag(self.section, self)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._press_position = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+
+
+class MonitorVerticalHandle(QSplitterHandle):
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self._hovered = False
+        self.setAccessibleName("화면과 로그 높이 조절")
+        self.setToolTip("드래그하여 펼쳐진 화면과 로그의 높이를 조절합니다")
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if not self.isEnabled():
+            return
+        dark = getattr(self.window(), "_effective_theme", None) == TitleBarTheme.DARK
+        color = "#00AEEF" if self._hovered else ("#405474" if dark else "#CBD5E0")
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPoint(self.width() // 2 - 20, self.height() // 2),
+                         QPoint(self.width() // 2 + 20, self.height() // 2))
+
+
+class MonitorVerticalSplitter(QSplitter):
+    def createHandle(self):
+        return MonitorVerticalHandle(self.orientation(), self)
+
+
+class MonitorSectionsWidget(QWidget):
+    """작업 목록과 동일하게 내부 이동만 허용하는 세로 섹션 목록."""
+
+    DRAG_MIME = "application/x-maaba-monitor-section"
+    order_changed = Signal()
+    sizes_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._dragged_section = None
+        self._drag_source = None
+        self._drop_before = None
+        self.splitter = None
+        self._height_weights = {"screen": 1, "log": 1}
+        self._constraint_timer = QTimer(self)
+        self._constraint_timer.setSingleShot(True)
+        self._constraint_timer.timeout.connect(self.sync_section_layout)
+
+    def sections(self):
+        if self.splitter is not None:
+            return [self.splitter.widget(index) for index in range(self.splitter.count())]
+        layout = self.layout()
+        if layout is None:
+            return []
+        return [
+            layout.itemAt(index).widget()
+            for index in range(layout.count())
+            if layout.itemAt(index).widget() is not None
+            and layout.itemAt(index).widget().property("monitorSectionKey")
+        ]
+
+    def section_order(self):
+        return [section.property("monitorSectionKey") for section in self.sections()]
+
+    def enable_resizing(self):
+        cards = self.sections()
+        layout = self.layout()
+        for card in cards:
+            layout.removeWidget(card)
+        self.splitter = MonitorVerticalSplitter(Qt.Orientation.Vertical, self)
+        self.splitter.setObjectName("monitorVerticalSplitter")
+        self.splitter.setHandleWidth(8)
+        self.splitter.setChildrenCollapsible(False)
+        for card in cards:
+            self.splitter.addWidget(card)
+            card.installEventFilter(self)
+        layout.addWidget(self.splitter)
+        self.splitter.splitterMoved.connect(self._remember_sizes)
+        self.sync_section_layout()
+
+    def eventFilter(self, obj, event):
+        # Connection status can wrap to more lines; it remains content-sized.
+        if obj.property("monitorSectionKey") == "connection" and event.type() == QEvent.Type.LayoutRequest:
+            self._constraint_timer.start(0)
+        return super().eventFilter(obj, event)
+
+    def height_weights(self):
+        return dict(self._height_weights)
+
+    def restore_height_weights(self, value):
+        if (isinstance(value, dict) and all(type(value.get(key)) is int and 0 < value[key] <= 100000
+                                          for key in self._height_weights)):
+            self._height_weights = {key: value[key] for key in self._height_weights}
+            self.sync_section_layout()
+
+    @staticmethod
+    def _is_expanding(card):
+        return (card.property("monitorSectionKey") in ("screen", "log")
+                and card.property("monitorExpanded") and not card.isHidden())
+
+    def _remember_sizes(self, _position, _index):
+        expanding = [card for card in self.sections() if self._is_expanding(card)]
+        if len(expanding) == 2:
+            self._height_weights = {card.property("monitorSectionKey"): card.height() for card in expanding}
+            self.sizes_changed.emit()
+
+    def start_section_drag(self, section, source):
+        if section not in self.sections():
+            return
+        drag = QDrag(source)
+        mime_data = QMimeData()
+        mime_data.setData(self.DRAG_MIME, b"1")
+        drag.setMimeData(mime_data)
+        preview = QPixmap(max(140, section.width() - 12), 36)
+        preview.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(preview)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#E6F5FC"))
+        painter.setPen(QPen(QColor("#00AEEF"), 1))
+        painter.drawRoundedRect(preview.rect().adjusted(1, 1, -1, -1), 6, 6)
+        painter.setPen(QColor("#1D3150"))
+        painter.drawText(
+            preview.rect().adjusted(12, 0, -12, 0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            section.property("monitorSectionTitle"),
+        )
+        painter.end()
+        drag.setPixmap(preview)
+        drag.setHotSpot(QPoint(preview.width() - 18, preview.height() // 2))
+
+        self._dragged_section = section
+        self._drag_source = source
+        self._drop_before = None
+        section.hide()
+        self.sync_section_layout()
+        try:
+            drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+        finally:
+            section.show()
+            self.sync_section_layout()
+            self._dragged_section = None
+            self._drag_source = None
+            self._clear_drop_target()
+
+    def _is_internal_drag(self, event):
+        return (
+            self._dragged_section is not None
+            and event.source() is self._drag_source
+            and event.mimeData().hasFormat(self.DRAG_MIME)
+        )
+
+    def dragEnterEvent(self, event):
+        if self._is_internal_drag(event):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if not self._is_internal_drag(event):
+            event.ignore()
+            self._clear_drop_target()
+            return
+        self._update_drop_target(event.position().toPoint().y())
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def dragLeaveEvent(self, event):
+        self._clear_drop_target()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if not self._is_internal_drag(event):
+            event.ignore()
+            self._clear_drop_target()
+            return
+        self._update_drop_target(event.position().toPoint().y())
+        moved = self.move_section(self._dragged_section, self._drop_before)
+        self._clear_drop_target()
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+        if moved:
+            self.order_changed.emit()
+
+    def _update_drop_target(self, y):
+        # 숨긴 섹션을 제외한 실제 카드 위치로 삽입 대상을 결정한다.
+        self.layout().activate()
+        visible = [
+            section for section in self.sections()
+            if section is not self._dragged_section and not section.isHidden()
+        ]
+        for section in visible:
+            if y < section.mapTo(self, QPoint()).y() + section.height() // 2:
+                self._drop_before = section
+                return
+        self._drop_before = None
+
+    def _clear_drop_target(self):
+        self._drop_before = None
+
+    def sync_section_layout(self):
+        if self.splitter is not None:
+            cards = self.sections()
+            expanding = [card for card in cards if self._is_expanding(card)]
+            fixed = {}
+            for index, card in enumerate(cards):
+                grows = card in expanding
+                if grows:
+                    card.setMaximumHeight(16777215)
+                    card.setMinimumHeight(max(0, card.minimumSizeHint().height()))
+                else:
+                    height = max(0, card.sizeHint().height())
+                    card.setFixedHeight(height)
+                    fixed[index] = 0 if card.isHidden() else height
+                self.splitter.setStretchFactor(index, 1 if grows else 0)
+            for index in range(1, len(cards)):
+                enabled = any(card in expanding for card in cards[:index]) and any(card in expanding for card in cards[index:])
+                handle = self.splitter.handle(index)
+                handle.setEnabled(enabled)
+                handle.setCursor(Qt.CursorShape.SplitVCursor if enabled else Qt.CursorShape.ArrowCursor)
+                handle.update()
+            self.layout().setAlignment(Qt.AlignmentFlag(0) if expanding else Qt.AlignmentFlag.AlignTop)
+            self.splitter.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Expanding if expanding else QSizePolicy.Policy.Maximum)
+            self.splitter.setMaximumHeight(16777215 if expanding else sum(fixed.values()) + 8 * (len(cards) - 1))
+            if expanding:
+                available = max(sum(card.minimumHeight() for card in expanding),
+                                self.splitter.height() - sum(fixed.values()) - 8 * (len(cards) - 1))
+                total = sum(self._height_weights[card.property("monitorSectionKey")] for card in expanding)
+                sizes = [round(available * self._height_weights[card.property("monitorSectionKey")] / total)
+                         if card in expanding else fixed[index] for index, card in enumerate(cards)]
+                self.splitter.setSizes(sizes)
+            self.updateGeometry()
+            return
+        has_expanding_section = any(
+            not section.isHidden()
+            and section.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+            for section in self.sections()
+        )
+        self.layout().setAlignment(
+            Qt.AlignmentFlag(0) if has_expanding_section else Qt.AlignmentFlag.AlignTop
+        )
+
+    def move_section(self, section, before_section=None):
+        before_order = self.sections()
+        if section not in before_order or (before_section is not None and before_section not in before_order):
+            return False
+        if before_section is section:
+            return False
+        if self.splitter is not None:
+            remaining = [card for card in before_order if card is not section]
+            destination = remaining.index(before_section) if before_section is not None else len(remaining)
+            self.splitter.insertWidget(destination, section)
+            self.sync_section_layout()
+            return self.sections() != before_order
+        layout = self.layout()
+        layout.removeWidget(section)
+        destination = layout.indexOf(before_section) if before_section is not None else layout.count()
+        layout.insertWidget(destination, section)
+        return self.sections() != before_order
+
 # 메인 윈도우
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._ui_state_ready = False
+        self._first_ui_show = True
+        self._saved_ui_state = {}
+        self._ui_save_timer = QTimer(self)
+        self._ui_save_timer.setSingleShot(True)
+        self._ui_save_timer.setInterval(300)
+        self._ui_save_timer.timeout.connect(self.save_user_config)
 
         ui_path = UI_DIR / UI_FILENAME
         base_qss_paths = (UI_DIR / QSS_FILENAME, UI_DIR / SETTINGS_QSS_FILENAME)
@@ -1156,15 +1526,17 @@ class MainWindow(QMainWindow):
         QDir.setSearchPaths("maabaicons", [str(UI_RESOURCE_DIR / "icons")])
         loader = QUiLoader()
         loader.registerCustomWidget(DragDropListWidget)
+        loader.registerCustomWidget(MonitorSectionsWidget)
         self.ui = loader.load(str(ui_path), self)
         if self.ui is None:
             raise RuntimeError(f"UI 파일을 불러오지 못했습니다: {ui_path}: {loader.errorString()}")
 
         setup_settings_icon_button(self.ui.endSettingBtn)
         
-        self.ui.tabWidget.setUsesScrollButtons(False)
-        # Designer에서 어떤 탭을 편집했든 앱은 항상 시작 탭으로 연다.
-        self.ui.tabWidget.setCurrentWidget(self.ui.mainTab)
+        self._setup_workspace_navigation()
+        self._setup_dashboard_layout()
+        self._setup_after_action_footer()
+        self.ui.mainPages.setCurrentWidget(self.ui.mainTab)
 
         qss_contents = []
         for qss_path in base_qss_paths:
@@ -1201,6 +1573,23 @@ class MainWindow(QMainWindow):
         )
 
         self.runtime = AppRuntime()
+        self.after_actions = AfterActionPreferences()
+        self.after_action_backend = WindowsAfterActionBackend()
+        self.after_action_panel = None
+        self._run_after_actions = None
+        self._run_completion_target = None
+        self._run_succeeded = False
+        self._run_stop_requested = False
+        self._completion_pending = False
+        self._deferred_system_action = ""
+        self._closing = False
+        try:
+            saved = json.loads((self.runtime.user_dir / "config" / "user_config.json").read_text(encoding="utf-8"))
+            state = saved.get("ui_state")
+            self._saved_ui_state = state if isinstance(state, dict) else {}
+            self.after_actions = AfterActionPreferences(saved.get("after_actions"))
+        except (OSError, ValueError, AttributeError):
+            pass
         self.log_sink = self.runtime.log_sink
         self.worker = None
         self.stop_worker = None
@@ -1210,14 +1599,202 @@ class MainWindow(QMainWindow):
         self._allow_option_edits_while_running = False
 
         self.setup_settings_ui()
+        connection_content = next(
+            section.findChild(QWidget, "monitorSectionContent")
+            for section in self.ui.monitorSectionsWidget.sections()
+            if section.property("monitorSectionKey") == "connection"
+        )
+        screen_content = next(
+            section.findChild(QWidget, "monitorSectionContent")
+            for section in self.ui.monitorSectionsWidget.sections()
+            if section.property("monitorSectionKey") == "screen"
+        )
+        self.monitor = MonitorCoordinator(self, connection_content, screen_content)
+        self.monitor.busy_changed.connect(self.check_start_button_state)
+        self.monitor.shutdown_ready.connect(self._finish_pending_close)
+        self.monitor.preset_changed.connect(self._refresh_after_action_summary)
         setup_rounded_vertical_scrollbar(self.settings_panel.detail_scroll)
         self.setup_connections()
 
+        self._restore_monitor_order()
         self.setup_dynamic_options()
+        self.clear_sub_cases()
+        self._refresh_after_action_summary()
         self.on_program_settings_changed(self.settings_panel.program_settings())
         self.check_start_button_state()
+        self._restore_ui_state()
+        self._ui_state_ready = True
+
+    def _setup_after_action_footer(self):
+        footer = self.ui.settingStartWidget_2
+        footer.setMinimumHeight(70)
+        footer.setMaximumHeight(16777215)
+        footer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        footer.parentWidget().layout().setAlignment(footer, Qt.AlignmentFlag(0))
+        outer = footer.layout()
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(4)
+        # Balance the icon hitbox on the opposite side so both labels share
+        # the full footer's horizontal center, not just the text column's.
+        outer.insertSpacing(0, 30)
+        self.ui.endLabelWidget.setMaximumWidth(16777215)
+        self.ui.endLabelWidget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        outer.setStretch(1, 1)
+        inner = self.ui.endLabelWidget.layout()
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        for label in (self.ui.endWorkStatusLabel, self.ui.endStatusLabel):
+            label.setMaximumWidth(16777215)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.ui.endStatusLabel.setWordWrap(True)
+        self.ui.line.setMinimumWidth(0)
+        self.ui.line.setMaximumWidth(16777215)
+        self.ui.line.setFixedHeight(1)
+        self.ui.line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.ui.endSettingBtn.setFixedSize(30, 30)
+        outer.setAlignment(self.ui.endSettingBtn, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.endSettingBtn.setToolTip("작업 완료 후 동작 설정")
+        self.ui.endSettingBtn.setAccessibleName("작업 완료 후 동작 설정")
+
+    def _after_action_controller_type(self):
+        # The shared connection panels already resolve interface declarations
+        # and resource allow-lists. Never infer a type from a name or address.
+        preset = next((preset for preset in self.monitor.service.presets
+                       if preset["name"] == self.monitor.preset_name), None)
+        return preset["type"] if preset is not None else "Win32"
+
+    def _refresh_after_action_summary(self):
+        self.ui.endWorkStatusLabel.setText("작업 완료 후" + (" · 이번에만" if self.after_actions.once else ""))
+        controller_type = self._after_action_controller_type()
+        description = self.after_actions.description(controller_type)
+        self.ui.endStatusLabel.setText(description)
+        self.ui.endStatusLabel.setToolTip(description)
+        editable = not self.isRunning and not self._close_pending and not self._completion_pending and not self._closing
+        self.ui.endSettingBtn.setEnabled(editable)
+        if self.after_action_panel is not None:
+            self.after_action_panel.set_controller_type(controller_type)
+            self.after_action_panel.setEnabled(editable)
+
+    def show_after_actions(self):
+        if self.isRunning or self._close_pending or self._completion_pending or self._closing:
+            return
+        self.clear_sub_cases(show_placeholder=False)
+        panel = AfterActionPanel(self.after_actions, self.ui.scrollSettingContents,
+                                 controller_type=self._after_action_controller_type())
+        self.after_action_panel = panel
+        self._option_content_layout().addWidget(panel)
+        panel.changed.connect(self._after_actions_changed)
+        self._refresh_after_action_summary()
+
+    def _after_actions_changed(self):
+        self._refresh_after_action_summary()
+        self.save_user_config()
+
+    def _finish_after_actions(self):
+        actions, self._run_after_actions = self._run_after_actions, None
+        eligible = self._run_succeeded and not self._run_stop_requested and not self._close_pending
+        self._run_succeeded = False
+        if not eligible or actions is None:
+            self._refresh_after_action_summary()
+            return
+        self.after_actions.consume()
+        self.save_user_config()
+        if any(actions.values()):
+            self._completion_pending = True
+            self.ui.workStartBtn.setEnabled(False)
+            QTimer.singleShot(0, lambda: self._execute_after_actions(actions, self._run_completion_target))
+        self._refresh_after_action_summary()
+
+    def _execute_after_actions(self, actions, target):
+        try:
+            if self._close_pending or self._closing:
+                return
+            if actions.get("close_app") or actions.get("close_emulator"):
+                self.append_log("ADB 앱·에뮬레이터 종료는 UI 준비 단계이므로 실제 종료 요청을 생략합니다.")
+            if actions["close_program"]:
+                try:
+                    self.after_action_backend.close_program(target)
+                    self.append_log("완료 후 대상 프로그램 정상 종료를 요청했습니다.")
+                except Exception as error:
+                    self.append_log(f"완료 후 대상 프로그램 종료 실패: {error}")
+            if actions["system_action"] and actions["close_maa"]:
+                self._deferred_system_action = actions["system_action"]
+            elif actions["system_action"]:
+                try:
+                    self.append_log("완료 후 시스템 동작을 요청합니다.")
+                    self.after_action_backend.system_action(actions["system_action"])
+                except Exception as error:
+                    self.append_log(f"완료 후 시스템 동작 실패: {error}")
+            if actions["close_maa"]:
+                self.append_log("완료 후 MAA를 종료합니다.")
+                self.close()
+        finally:
+            self._completion_pending = False
+            self._run_completion_target = None
+            self._refresh_after_action_summary()
+            self.check_start_button_state()
+            self._finish_pending_close()
+
+    def _capture_ui_state(self):
+        return {
+            "geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
+            "workspace_sizes": self.ui.workspaceSplitter.sizes(),
+            "monitor_expanded": {
+                section.property("monitorSectionKey"): bool(section.property("monitorExpanded"))
+                for section in self.ui.monitorSectionsWidget.sections()
+            },
+        }
+
+    def _restore_workspace_sizes(self):
+        sizes = self._saved_ui_state.get("workspace_sizes")
+        if (isinstance(sizes, list) and len(sizes) == 2
+                and all(type(size) is int and 0 < size <= 100000 for size in sizes)):
+            self.ui.workspaceSplitter.setSizes(sizes)
+
+    def _restore_ui_state(self):
+        geometry = self._saved_ui_state.get("geometry")
+        if isinstance(geometry, str) and 0 < len(geometry) <= 8192:
+            try:
+                self.restoreGeometry(QByteArray(base64.b64decode(geometry, validate=True)))
+                # A minimized exit must not hide the app at the next startup.
+                self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+            except ValueError:
+                pass
+        expanded = self._saved_ui_state.get("monitor_expanded")
+        if isinstance(expanded, dict):
+            for section in self.ui.monitorSectionsWidget.sections():
+                value = expanded.get(section.property("monitorSectionKey"))
+                if type(value) is bool:
+                    section.findChild(QToolButton, "monitorSectionToggle").setChecked(value)
+        self._restore_workspace_sizes()
+
+    def _schedule_ui_state_save(self, *_args):
+        if getattr(self, "_ui_state_ready", False) and not self.isMinimized():
+            self._ui_save_timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._ui_state_ready and self._first_ui_show:
+            self._first_ui_show = False
+            # Apply widths against the actual post-layout window size once.
+            self._restore_workspace_sizes()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._schedule_ui_state_save()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._schedule_ui_state_save()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._schedule_ui_state_save()
 
     def setup_connections(self):
+        self.ui.endSettingBtn.clicked.connect(self.show_after_actions)
         self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.ui.logLatestButton.clicked.connect(self.scroll_log_to_latest)
         self.ui.logCopyButton.clicked.connect(self.copy_log)
@@ -1231,6 +1808,186 @@ class MainWindow(QMainWindow):
             self.ui.minimizeEnableBtn.toggled.connect(
                 self.on_main_minimize_setting_changed
             )
+
+    def _setup_workspace_navigation(self):
+        self.page_navigation = QButtonGroup(self)
+        self.page_navigation.setExclusive(True)
+        for button, page in (
+            (self.ui.dashboardNavButton, self.ui.mainTab),
+            (self.ui.settingsNavButton, self.ui.settingTab),
+        ):
+            self.page_navigation.addButton(button)
+            button.clicked.connect(
+                lambda _checked=False, target=page: self.ui.mainPages.setCurrentWidget(target)
+            )
+        self.ui.mainPages.currentChanged.connect(self._sync_page_navigation)
+        self.ui.workspaceSplitter.splitterMoved.connect(self._schedule_ui_state_save)
+
+    def _sync_page_navigation(self, index):
+        self.ui.dashboardNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.mainTab))
+        self.ui.settingsNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.settingTab))
+        if hasattr(self, "monitor") and index != self.ui.mainPages.indexOf(self.ui.mainTab):
+            self.monitor.stop_preview()
+
+    def _setup_dashboard_layout(self):
+        task_panel = self.ui.findChild(QWidget, "_1_settingStartWidget")
+        option_panel = self.ui.findChild(QWidget, "_2_settingWidget")
+        monitor_panel = self.ui.findChild(QWidget, "_3_logPrintWidget")
+        task_panel.setFixedWidth(312)
+        option_panel.setMinimumWidth(300)
+        monitor_panel.setMinimumWidth(309)
+        splitter = self.ui.workspaceSplitter
+        splitter.setHandleWidth(10)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([480, 360])
+        handle = splitter.handle(1)
+        handle._rounded_paint_filter = WorkspaceSplitterHandlePaintFilter(handle)
+        handle.installEventFilter(handle._rounded_paint_filter)
+
+        task_title = QLabel("작업 목록", task_panel)
+        task_title.setObjectName("workspaceSectionTitle")
+        task_panel.findChild(QVBoxLayout, "settingStartWidget_1").insertWidget(0, task_title)
+
+        option_title = QLabel("세부 설정", option_panel)
+        option_title.setObjectName("workspaceSectionTitle")
+        option_panel.findChild(QVBoxLayout, "verticalLayout_5").insertWidget(0, option_title)
+
+        log_layout = monitor_panel.findChild(QVBoxLayout, "logLayout")
+        monitor_title = QLabel("모니터링", monitor_panel)
+        monitor_title.setObjectName("workspaceSectionTitle")
+        log_layout.insertWidget(0, monitor_title)
+        setup_rounded_vertical_scrollbar(self.ui.monitorScrollArea)
+
+        sections = self.ui.monitorSectionsWidget
+        section_layout = sections.layout()
+        section_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        connection = self._create_future_monitor_section(
+            "connection", "연결", "클라이언트 연결 확인 기능을 이곳에 추가할 예정입니다."
+        )
+        screen = self._create_future_monitor_section(
+            "screen", "화면", "실시간 스크린샷과 테스트 화면을 이곳에 표시할 예정입니다."
+        )
+        section_layout.insertWidget(0, connection)
+        section_layout.insertWidget(1, screen)
+
+        log_section = self.ui.monitorLogSection
+        self._add_monitor_section_header(
+            log_section, self.ui.monitorLogContent, "log", "로그", expanded=True
+        )
+        self._log_section_expanded = True
+        self.ui.logPrintText.setMinimumHeight(160)
+        self.ui.logPrintText.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.ui.monitorLogContent.layout().setStretch(1, 1)
+        log_section.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.ui.monitorLogContent.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        sections.enable_resizing()
+        self.ui.logPrintText.setAcceptDrops(False)
+        sections.order_changed.connect(self.save_user_config)
+        sections.sizes_changed.connect(self.save_user_config)
+
+    def _create_future_monitor_section(self, key, title, description):
+        section = QFrame(self.ui.monitorSectionsWidget)
+        section.setObjectName("monitorSection")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(0)
+        content = QWidget(section)
+        content.setObjectName("monitorSectionContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(12, 10, 12, 14)
+        description_label = QLabel(description, content)
+        description_label.setObjectName("monitorFutureDescription")
+        description_label.setWordWrap(True)
+        content_layout.addWidget(description_label)
+        section_layout.addWidget(content)
+        self._add_monitor_section_header(section, content, key, title, expanded=False)
+        return section
+
+    def _add_monitor_section_header(self, section, content, key, title, expanded):
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        section.setProperty("monitorSectionKey", key)
+        section.setProperty("monitorSectionTitle", title)
+        section.setProperty("monitorExpanded", expanded)
+        header = QWidget(section)
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        header.setObjectName("monitorSectionHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 8, 3)
+        header_layout.setSpacing(4)
+        handle = MonitorDragHandle(self.ui.monitorSectionsWidget, section)
+        toggle = QToolButton(header)
+        toggle.setObjectName("monitorSectionToggle")
+        toggle.setAccessibleName(f"{title} 영역 펼치기 또는 접기")
+        toggle.setText(title)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toggle.setCheckable(True)
+        toggle.setChecked(expanded)
+        toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        toggle.toggled.connect(
+            lambda checked, target=content, button=toggle, name=key:
+            self._set_monitor_section_expanded(target, button, name, checked)
+        )
+        header_layout.addWidget(toggle, 1)
+        header_layout.addWidget(handle)
+        section.layout().insertWidget(0, header)
+        content.setVisible(expanded)
+
+    def _set_monitor_section_expanded(self, content, button, key, expanded):
+        section = content.parentWidget()
+        section.setProperty("monitorExpanded", expanded)
+        section.setMinimumHeight(0)
+        section.setMaximumHeight(16777215)
+        content.setVisible(expanded)
+        button.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        if key == "screen" and not expanded and hasattr(self, "monitor"):
+            self.monitor.stop_preview()
+        if key in ("screen", "log"):
+            policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum
+            section.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            content.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            section.layout().setStretch(section.layout().indexOf(content), 1 if expanded else 0)
+        self.ui.monitorSectionsWidget.sync_section_layout()
+        if key == "log":
+            self._log_section_expanded = expanded
+            self._update_log_follow_button()
+        self._schedule_ui_state_save()
+
+    def _restore_monitor_order(self):
+        config_path = self.runtime.user_dir / "config" / "user_config.json"
+        try:
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            saved_order = saved.get("monitor_order")
+        except (OSError, ValueError, AttributeError):
+            return
+        sections = self.ui.monitorSectionsWidget
+        sections.restore_height_weights(saved.get("monitor_height_weights"))
+        if (
+            not isinstance(saved_order, list)
+            or len(saved_order) != 3
+            or not all(isinstance(key, str) for key in saved_order)
+            or set(saved_order) != {"connection", "screen", "log"}
+        ):
+            return
+        section_by_key = {
+            section.property("monitorSectionKey"): section for section in sections.sections()
+        }
+        for index, key in enumerate(saved_order):
+            section = section_by_key[key]
+            sections.move_section(section, sections.sections()[index])
 
     def setup_settings_ui(self):
         config_dir = self.runtime.user_dir / "config"
@@ -1319,45 +2076,20 @@ class MainWindow(QMainWindow):
                 if content
             )
         self.setStyleSheet(style_sheet)
+        if hasattr(self.ui, "monitorSectionsWidget"):
+            sections = self.ui.monitorSectionsWidget
+            for child in sections.findChildren(QWidget):
+                child.ensurePolished()
+            sections.sync_section_layout()
         return apply_windows_title_bar_theme(
             int(self.winId()),
             self._title_bar_theme,
             system_color_scheme=system_color_scheme,
         )
 
-    def update_tab_widths(self):
-        tab_bar = self.ui.tabWidget.tabBar()
-        count = tab_bar.count()
-        if count == 0:
-            return
-
-
-        # border(좌우 1px씩) + padding(좌우 25px씩)가
-        # width 지정값 위에 추가로 그려지므로, 미리 빼야 실제 렌더링 폭이
-        # 등분값과 정확히 일치함 (안 빼면 탭들이 넘쳐서 스크롤 화살표가 자동 생성됨)
-        EXTRA_PER_TAB = 52  # border 2 + padding 50
-
-        total_width = self.ui.tabWidget.width()
-        target_width = total_width // count
-        tab_width = max(target_width - EXTRA_PER_TAB, 20)
-
-        tab_bar.setStyleSheet(f"""
-            QTabBar::tab {{
-                width: {tab_width}px;
-            }}
-            QTabBar::tab:last {{
-                margin-right: 0px;
-            }}
-        """)
-
     def showEvent(self, event):
         super().showEvent(event)
         self.set_title_bar_theme(self._title_bar_theme)
-        QTimer.singleShot(0, self.update_tab_widths)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_tab_widths()
 
     def append_log(self, message):
         current_time = datetime.now().strftime("%H:%M:%S")
@@ -1397,7 +2129,9 @@ class MainWindow(QMainWindow):
     def _update_log_follow_button(self, _value=None):
         scroll_bar = self.ui.logPrintText.verticalScrollBar()
         is_at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 1
-        self.ui.logLatestButton.setVisible(not is_at_bottom)
+        self.ui.logLatestButton.setVisible(
+            self._log_section_expanded and not is_at_bottom
+        )
 
     def scroll_log_to_latest(self):
         scroll_bar = self.ui.logPrintText.verticalScrollBar()
@@ -1434,7 +2168,9 @@ class MainWindow(QMainWindow):
         return True
 
     def on_task_start(self):
-        if self.worker is not None or self.stop_worker is not None or self._close_pending:
+        if self.worker is not None or self.stop_worker is not None or self._close_pending or self._completion_pending or self._closing:
+            return
+        if self.monitor.prepare_task_start(self.on_task_start):
             return
         if self.settings_panel.clear_log_on_start_enabled():
             self.clear_log()
@@ -1442,6 +2178,12 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(False)
 
         execution_queue = self.build_execution_queue()
+        self._run_after_actions = self.after_actions.for_controller(self._after_action_controller_type()) if any(
+            entry != PROGRAM_LAUNCH_ENTRY for entry, _override in execution_queue
+        ) else None
+        self._run_succeeded = False
+        self._run_stop_requested = False
+        self._run_completion_target = None
 
         minimize_window = False
         if hasattr(self.ui, 'minimizeEnableBtn'):
@@ -1453,6 +2195,7 @@ class MainWindow(QMainWindow):
             minimize_window,
             controller_settings=self.settings_panel.controller_settings(),
             program_settings=self.settings_panel.program_settings(),
+            completion_actions=self._run_after_actions,
         )
 
         self.worker.log.connect(self.append_log, Qt.QueuedConnection)
@@ -1463,6 +2206,7 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
         self.isRunning = True
+        self.monitor.task_state_changed()
 
         self.ui.workStartBtn.setText("작업 중지")
         self.ui.workStartBtn.clicked.disconnect(self.on_task_start)
@@ -1470,8 +2214,10 @@ class MainWindow(QMainWindow):
         self.ui.workStartBtn.setEnabled(True)
 
         self.set_options_locked(True)
+        self._refresh_after_action_summary()
 
     def on_task_stop(self):
+        self._run_stop_requested = True
         self.ui.workStartBtn.setEnabled(False)
 
         if not self.worker:
@@ -1504,6 +2250,8 @@ class MainWindow(QMainWindow):
         self.runtime.log_sink.set_log_callback(None)
 
         if worker is not None:
+            self._run_succeeded = bool(worker.succeeded)
+            self._run_completion_target = getattr(worker, "completion_target", None)
             prefix = "▶" if worker.succeeded else "⚠"
             self.append_log(f"{prefix} {worker.result_message}\n")
             worker.deleteLater()
@@ -1515,26 +2263,41 @@ class MainWindow(QMainWindow):
         # 두 finished 콜백이 모두 처리되기 전에는 새 실행을 허용하지 않는다.
         if self.worker is not None or self.stop_worker is not None:
             return
-        if self.isRunning:
+        was_running = self.isRunning
+        if was_running:
             self.isRunning = False
+            self.monitor.task_state_changed()
             self.ui.workStartBtn.setText("작업 시작")
             self.ui.workStartBtn.clicked.disconnect(self.on_task_stop)
             self.ui.workStartBtn.clicked.connect(self.on_task_start)
         self.set_options_locked(False)
         self.check_start_button_state()
+        if was_running:
+            self._finish_after_actions()
         self._finish_pending_close()
 
     def closeEvent(self, event):
+        self._closing = True
+        self._run_stop_requested = True
+        self._ui_save_timer.stop()
+        self.save_user_config()
         worker_running = self.worker is not None
         stop_running = self.stop_worker is not None
 
-        if worker_running or stop_running:
+        self.monitor.shutdown()
+        if worker_running or stop_running or not self.monitor.ready_to_close:
             self._close_pending = True
             event.ignore()
             if worker_running:
                 self.on_task_stop()
             return
 
+        if self._deferred_system_action:
+            action, self._deferred_system_action = self._deferred_system_action, ""
+            try:
+                self.after_action_backend.defer_system_action(action, self.runtime.user_dir / "debug" / "after_action.log")
+            except Exception as error:
+                self.append_log(f"MAA 종료 후 시스템 동작 예약 실패: {error}")
         super().closeEvent(event)
 
     def _finish_pending_close(self):
@@ -1543,7 +2306,7 @@ class MainWindow(QMainWindow):
 
         worker_running = self.worker is not None
         stop_running = self.stop_worker is not None
-        if not worker_running and not stop_running:
+        if not worker_running and not stop_running and self.monitor.ready_to_close:
             QTimer.singleShot(0, self.close)
 
     def setup_dynamic_options(self):
@@ -1826,32 +2589,60 @@ class MainWindow(QMainWindow):
         self.check_start_button_state()
         self.save_user_config()
 
-    def clear_sub_cases(self):
-        layout = self.ui.scrollSettingContents.layout()
-        if layout is not None:
-            while layout.count():
-                child = layout.takeAt(0)
-                if child.widget():
-                    child.widget().hide()
-                    child.widget().deleteLater()
+    def _option_content_layout(self):
+        container = self.ui.scrollSettingContents
+        layout = container.layout()
+        if layout is None:
+            layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 4, 4, 8)
+        layout.setSpacing(8)
+        return layout
+
+    def clear_sub_cases(self, show_placeholder=True):
+        self.after_action_panel = None
+        layout = self._option_content_layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().hide()
+                child.widget().deleteLater()
+        if show_placeholder:
+            self._add_option_placeholder(layout, "작업 목록의 설정 버튼을 눌러\n세부 옵션을 확인하세요.")
+
+    def _add_option_placeholder(self, layout, message):
+        label = QLabel(message, self.ui.scrollSettingContents)
+        label.setObjectName("optionEmptyState")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        layout.addWidget(label)
 
     def show_sub_cases(self, item_widget):
         task_options = item_widget.task_options
 
         container_widget = self.ui.scrollSettingContents
-        layout = container_widget.layout()
-        
-        if layout is None:
-            layout = QVBoxLayout(container_widget)
-            layout.setContentsMargins(10, 10, 10, 10)
+        layout = self._option_content_layout()
             
-        self.clear_sub_cases()
+        self.clear_sub_cases(show_placeholder=False)
 
-        for opt_name, opt in task_options:
+        if not task_options:
+            self._add_option_placeholder(layout, "이 작업에는 세부 옵션이 없습니다.")
+            return
+
+        for index, (opt_name, opt) in enumerate(task_options):
             opt_type = opt.get("type", "select")
+            if index:
+                separator = QFrame(container_widget)
+                separator.setObjectName("optionGroupSeparator")
+                separator.setFrameShape(QFrame.Shape.HLine)
+                separator.setFixedHeight(1)
+                layout.addWidget(separator)
             
-            title_label = QLabel(f"[{opt.get('label', opt_name)}]")
+            title_label = QLabel(opt.get('label', opt_name))
             title_label.setObjectName("optionGroupTitle")
+            title_label.setProperty("firstGroup", index == 0)
+            title_label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
             title_label.setWordWrap(True)
             layout.addWidget(title_label)
 
@@ -1906,6 +2697,19 @@ class MainWindow(QMainWindow):
                 combo_box.setObjectName("optionSelect")
                 combo_box.setProperty("optionName", opt_name)
                 combo_box.setAccessibleName(opt.get("label", opt_name))
+                combo_box.ensurePolished()
+                popup = QListView(combo_box)
+                popup.setObjectName("optionSelectPopup")
+                popup.setMouseTracking(True)
+                popup.viewport().setMouseTracking(True)
+                popup.setUniformItemSizes(True)
+                popup.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+                popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                combo_box.setView(popup)
+                popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                combo_box.setItemDelegate(CenteredOptionDelegate(popup))
+                combo_box.setMaxVisibleItems(8)
+                setup_rounded_vertical_scrollbar(popup, popup=True)
 
                 for case in cases:
                     case_name = case.get("name")
@@ -2121,12 +2925,15 @@ class MainWindow(QMainWindow):
         self.on_user_config_changed()
 
     def check_start_button_state(self):
+        if self._completion_pending or self._closing:
+            self.ui.workStartBtn.setEnabled(False)
+            return
         if self.isRunning:
             self.ui.workStartBtn.setEnabled(
                 self.stop_worker is None and not self._close_pending
             )
             return
-        if self.stop_worker is not None or self._close_pending:
+        if self.stop_worker is not None or self._close_pending or self.monitor.pending_start is not None:
             self.ui.workStartBtn.setEnabled(False)
             return
         any_checked = False
@@ -2242,7 +3049,18 @@ class MainWindow(QMainWindow):
         try:
             temp_path = config_path.with_suffix(".tmp")
             with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump({"tasks": tasks_data}, f, ensure_ascii=False, indent=4)
+                json.dump(
+                    {
+                        "tasks": tasks_data,
+                        "monitor_order": self.ui.monitorSectionsWidget.section_order(),
+                        "monitor_height_weights": self.ui.monitorSectionsWidget.height_weights(),
+                        "ui_state": self._capture_ui_state() if self._ui_state_ready else self._saved_ui_state,
+                        "after_actions": dict(self.after_actions.saved),
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=4,
+                )
                 f.flush()
             temp_path.replace(config_path)
         except Exception as e:
@@ -2270,6 +3088,7 @@ class RuntimeWorker(QThread):
         minimize_window=False,
         controller_settings=None,
         program_settings=None,
+        completion_actions=None,
     ):
         super().__init__()
         self.runtime = runtime
@@ -2277,6 +3096,8 @@ class RuntimeWorker(QThread):
         self.minimize_window = minimize_window
         self.controller_settings = controller_settings
         self.program_settings = program_settings
+        self.completion_actions = completion_actions or {}
+        self.completion_target = None
         self.succeeded = False
         self.result_message = "작업을 시작하지 못했습니다."
 
@@ -2294,6 +3115,11 @@ class RuntimeWorker(QThread):
                 return
 
             self.log.emit(init_message)
+            if self.completion_actions.get("close_program"):
+                try:
+                    self.completion_target = capture_window_target(self.runtime._target_hwnd)
+                except (OSError, RuntimeError) as error:
+                    self.log.emit(f"완료 후 종료 대상 확인 실패: {error}")
             if self.isInterruptionRequested():
                 self.result_message = "작업 시작이 취소되었습니다."
                 return

@@ -1,6 +1,7 @@
 """Run with .venv/Scripts/python.exe -m unittest discover -s UnitTest -v."""
 
 import json
+from itertools import permutations
 import os
 import re
 from contextlib import ExitStack
@@ -12,11 +13,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import ANY, MagicMock, call, patch
 
+import numpy as np
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QPointF, QSize, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -27,8 +31,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QRadioButton,
+    QSizePolicy,
+    QSizePolicy,
     QStyle,
     QStyleOptionButton,
+    QStyleOptionComboBox,
+    QStyleOptionViewItem,
+    QTabWidget,
+    QToolButton,
+    QWidget,
 )
 from PySide6.QtSvg import QSvgRenderer
 from maa.define import MaaWin32ScreencapMethodEnum
@@ -128,6 +139,19 @@ class RuntimeLifecycleTests(unittest.TestCase):
         tasker.assert_not_called()
         self.assertIsNone(runtime.resource)
         self.assertIsNone(runtime.tasker)
+
+    def test_cached_preview_never_posts_capture_and_returns_owned_frame(self):
+        controller = MagicMock(connected=True)
+        original = np.zeros((20, 30, 3), dtype=np.uint8)
+        controller.cached_image = original
+        self.runtime.controller = controller
+        frame = self.runtime.capture_cached_frame()
+        original[:] = 255
+        self.assertEqual(frame.max(), 0)
+        controller.post_screencap.assert_not_called()
+        self.runtime.controller = None
+        with self.assertRaises(RuntimeError):
+            self.runtime.capture_cached_frame()
 
     def test_window_search_ignores_app_and_uses_controller_settings(self):
         windows = [
@@ -1505,6 +1529,10 @@ class UILifecycleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        # Windows offscreen does not enumerate system fonts. Verify real Hangul metrics.
+        font = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf"
+        if sys.platform == "win32" and font.is_file():
+            QFontDatabase.addApplicationFont(str(font))
 
     def setUp(self):
         temp_dir = tempfile.TemporaryDirectory()
@@ -1641,6 +1669,389 @@ class UILifecycleTests(unittest.TestCase):
         self.window.stop_worker = stop_worker
         return worker
 
+    def wait_for_monitor(self):
+        for _ in range(400):
+            QTest.qWait(5)
+            if not self.window.monitor.busy:
+                self.app.processEvents()
+                return
+        self.fail("모니터 백그라운드 요청이 종료되지 않았습니다.")
+
+    def test_connection_panels_share_discovery_and_connection_status(self):
+        from app.monitoring import ConnectionTarget
+        monitor = self.window.monitor
+        target = ConnectionTarget("10", "Example · PID 123", "Win32", hwnd=10)
+        with patch.object(monitor.service, "discover", return_value=[target]):
+            monitor.discover()
+            self.wait_for_monitor()
+        self.assertEqual(monitor.target_key, "10")
+        for panel in monitor.panels:
+            self.assertEqual(panel.target_combo.currentData(), "10")
+            self.assertTrue(panel.connect_button.isEnabled())
+        with patch.object(monitor.service, "connect", return_value=target):
+            monitor.connect_target()
+            self.wait_for_monitor()
+        self.assertEqual(monitor.panels[0].status.text(), monitor.panels[1].status.text())
+        self.assertIn("연결 성공", monitor.panels[0].status.text())
+
+    def test_monitor_serializes_requests_and_discards_stale_discovery(self):
+        from app.monitoring import ConnectionTarget
+        monitor = self.window.monitor
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocked_discovery(*args):
+            calls.append(args)
+            entered.set()
+            release.wait(2)
+            return [ConnectionTarget("old", "old", "Win32")]
+
+        with patch.object(monitor.service, "discover", side_effect=blocked_discovery):
+            try:
+                monitor.discover()
+                self.assertTrue(entered.wait(1))
+                monitor.discover()
+                monitor.select_preset("Win32FramePool")
+                self.assertTrue(monitor.busy)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(monitor.targets, [])
+        self.assertEqual(monitor.target_key, "")
+
+    def test_task_start_waits_for_preflight_controller_cleanup(self):
+        monitor = self.window.monitor
+        controller = MagicMock()
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+        monitor.service.controller = controller
+        worker = MagicMock()
+        with patch("app.winUI.RuntimeWorker", return_value=worker) as factory:
+            self.window.on_task_start()
+            factory.assert_not_called()
+            self.wait_for_monitor()
+            factory.assert_called_once()
+        controller.post_inactive.assert_called_once()
+        self.assertIsNone(monitor.service.controller)
+        self.assertTrue(self.window.isRunning)
+        self.assertFalse(monitor.panels[0].discover_button.isEnabled())
+        self.window.worker = None
+        self.window._finish_run_if_idle()
+
+    def test_failed_preflight_cleanup_cancels_pending_task_start(self):
+        monitor = self.window.monitor
+        monitor.service.controller = MagicMock()
+        monitor.service.controller.post_inactive.return_value.wait.return_value.succeeded = False
+        with patch("app.winUI.RuntimeWorker") as factory:
+            self.window.on_task_start()
+            self.wait_for_monitor()
+            factory.assert_not_called()
+        self.assertIsNone(monitor.pending_start)
+        self.assertIn("해제에 실패", monitor.panels[0].status.text())
+        monitor.service.controller = None
+
+    def test_close_waits_for_connection_diagnostic_and_cleanup(self):
+        monitor = self.window.monitor
+        entered, release = threading.Event(), threading.Event()
+        controller = MagicMock()
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+
+        def blocked_connect(*_args):
+            entered.set()
+            release.wait(2)
+            monitor.service.controller = controller
+            return SimpleNamespace(label="connected")
+
+        self.window.show()
+        with patch.object(monitor.service, "connect", side_effect=blocked_connect):
+            try:
+                monitor.connect_target()
+                self.assertTrue(entered.wait(1))
+                self.window.close()
+                self.assertTrue(self.window._close_pending)
+                self.assertTrue(self.window.isVisible())
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        controller.post_inactive.assert_called_once()
+        self.assertTrue(monitor.ready_to_close)
+        self.assertFalse(self.window.isVisible())
+
+    def test_connection_preferences_persist_without_changing_runtime_preset(self):
+        monitor = self.window.monitor
+        preset = self.window.settings_panel.controller_settings()
+        monitor.change_preferences({"adb_path": " C:/tools/adb.exe ", "address": " localhost:5555 "})
+        for panel in monitor.panels:
+            self.assertEqual(panel.address.text(), "localhost:5555")
+        saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["connection"], {"adb_path": "C:/tools/adb.exe", "address": "localhost:5555"})
+        self.assertEqual(self.window.settings_panel.controller_settings(), preset)
+
+    def show_screen_panel(self):
+        self.window.show()
+        sections = self.window.ui.monitorSectionsWidget.sections()
+        section = next(s for s in sections if s.property("monitorSectionKey") == "screen")
+        section.findChild(QToolButton, "monitorSectionToggle").setChecked(True)
+        self.app.processEvents()
+        return self.window.monitor.screen
+
+    def configure_screen_capture(self):
+        monitor = self.window.monitor
+        controller = MagicMock(connected=True)
+        controller.post_inactive.return_value.wait.return_value.succeeded = True
+        controller.post_screencap.return_value.wait.return_value.succeeded = True
+        image = np.zeros((90, 160, 3), dtype=np.uint8)
+        image[:, :, 2] = 255
+        controller.post_screencap.return_value.wait.return_value.get.return_value = image
+        monitor.service.controller = controller
+        monitor._sync()
+        self.addCleanup(lambda: setattr(monitor.service, "controller", None))
+        return controller
+
+    def test_single_screen_test_captures_once_and_owns_correct_color(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        controller.post_screencap.assert_called_once()
+        self.assertEqual(screen.preview.image.size(), QSize(160, 90))
+        self.assertEqual(screen.preview.image.pixelColor(0, 0).name(), "#ff0000")
+        self.assertIn("160 × 90", screen.status.text())
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        drawn = screen.preview.image_rect()
+        self.assertAlmostEqual(drawn.width() / drawn.height(), 160 / 90, delta=0.03)
+        self.assertTrue(screen.preview.rect().contains(drawn))
+
+    def test_running_screen_reads_only_runtime_cache(self):
+        self.show_screen_panel()
+        self.configure_screen_capture()
+        runtime = self.window.runtime
+        runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
+        self.window.isRunning = True
+        with patch.object(self.window.monitor.service, "capture") as capture:
+            self.window.monitor.toggle_capture()
+            self.wait_for_monitor()
+        capture.assert_not_called()
+        runtime.capture_cached_frame.assert_called_once()
+        self.assertIn("실행 캐시", self.window.monitor.screen.status.text())
+        self.window.isRunning = False
+
+    def test_continuous_preview_stops_on_collapse_and_retains_last_frame(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.assertTrue(self.window.monitor.preview_timer.isActive())
+        section = self.window.monitor.screen_content.parentWidget()
+        section.findChild(QToolButton, "monitorSectionToggle").setChecked(False)
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertFalse(screen.preview.image.isNull())
+
+    def test_page_change_stops_preview_and_screen_preferences_persist(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(5))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["monitor"], {"mode": "continuous", "fps": 5})
+        store = SettingsStore(self.window.runtime.user_dir / "config" / "maa_config.json")
+        self.assertEqual(store.load()["monitor"], saved["monitor"])
+
+    def test_preview_capture_error_stops_loop_and_allows_retry(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        controller.post_screencap.return_value.wait.return_value.succeeded = False
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.assertFalse(self.window.monitor.streaming)
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertIn("캡처에 실패", screen.status.text())
+        self.assertTrue(screen.capture_button.isEnabled())
+
+    def test_stopping_inflight_frame_discards_result_without_unsafe_termination(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_capture():
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                self.window.monitor.toggle_capture()
+                self.assertTrue(self.window.monitor.busy)
+                self.assertFalse(self.window.monitor.streaming)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertFalse(self.window.monitor.preview_timer.isActive())
+
+    def test_slow_continuous_preview_has_no_overlapping_requests(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def blocked_capture():
+            calls.append(1)
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                QTest.qWait(150)
+                self.window.monitor.capture_frame()
+                self.assertEqual(len(calls), 1)
+            finally:
+                self.window.monitor.stop_preview()
+                release.set()
+                self.wait_for_monitor()
+
+    def test_target_change_clears_previous_screenshot(self):
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.window.monitor.select_target("different")
+        self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertIsNone(self.window.monitor.service.controller)
+
+    def test_continuous_timer_delivers_next_frame_at_selected_rate(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        for _ in range(100):
+            QTest.qWait(5)
+            if controller.post_screencap.call_count >= 2:
+                break
+        self.assertGreaterEqual(controller.post_screencap.call_count, 2)
+        self.window.monitor.stop_preview()
+        self.wait_for_monitor()
+
+    def test_program_settings_change_invalidates_preflight_and_image(self):
+        self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.settings_panel.program_changed.emit({"executable_name": "Other.exe"})
+        self.wait_for_monitor()
+        self.assertEqual(self.window.monitor.targets, [])
+        self.assertEqual(self.window.monitor.target_key, "")
+        self.assertIsNone(self.window.monitor.service.controller)
+
+    def test_preview_sync_does_not_rebuild_unchanged_connection_combos(self):
+        self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        combo = self.window.monitor.panels[0].preset_combo
+        removed = MagicMock()
+        combo.model().rowsRemoved.connect(removed)
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        removed.assert_not_called()
+        controller.post_screencap.assert_called_once()
+
+    def test_continuous_frames_keep_status_controls_and_panel_geometry_stable(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        monitor = self.window.monitor
+        screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
+        screen.fps.setCurrentIndex(screen.fps.findData(10))
+        with patch.object(monitor, "_sync", wraps=monitor._sync) as sync:
+            try:
+                monitor.toggle_capture()
+                self.wait_for_monitor()
+                status = screen.status.text()
+                geometry = screen.geometry()
+                first_calls = controller.post_screencap.call_count
+                self.assertFalse(monitor.panels[0].discover_button.isEnabled())
+                for _ in range(100):
+                    QTest.qWait(5)
+                    if controller.post_screencap.call_count >= first_calls + 2 and not monitor.busy:
+                        break
+                self.assertGreaterEqual(controller.post_screencap.call_count, first_calls + 2)
+                self.assertEqual(screen.status.text(), status)
+                self.assertNotIn("가져오고", status)
+                self.assertEqual(screen.geometry(), geometry)
+                self.assertEqual(sync.call_count, 1)
+                self.assertTrue(screen.capture_button.isEnabled())
+            finally:
+                monitor.stop_preview()
+                self.wait_for_monitor()
+        self.assertTrue(monitor.panels[0].discover_button.isEnabled())
+
+    def test_new_frames_repaint_only_opaque_image_canvas(self):
+        class PaintCounter(QObject):
+            def __init__(self, parent):
+                super().__init__(parent)
+                self.paints = 0
+
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.Paint:
+                    self.paints += 1
+                return False
+
+        screen = self.show_screen_panel()
+        self.configure_screen_capture()
+        self.window.monitor.toggle_capture()
+        self.wait_for_monitor()
+        self.app.processEvents()
+        canvas_count = PaintCounter(screen.preview.canvas)
+        panel_count = PaintCounter(self.window.ui.monitorSectionsWidget)
+        screen.preview.canvas.installEventFilter(canvas_count)
+        self.window.ui.monitorSectionsWidget.installEventFilter(panel_count)
+        self.assertTrue(screen.preview.canvas.testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent))
+        for value in (30, 80, 150):
+            from app.monitorUI import owned_qimage
+            screen.preview.set_image(owned_qimage(np.full((90, 160, 3), value, dtype=np.uint8)))
+            self.app.processEvents()
+        self.assertGreaterEqual(canvas_count.paints, 3)
+        self.assertEqual(panel_count.paints, 0)
+
+    def test_preview_close_waits_for_inflight_capture_then_releases_connection(self):
+        screen = self.show_screen_panel()
+        controller = self.configure_screen_capture()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_capture():
+            entered.set()
+            release.wait(2)
+            return np.zeros((10, 20, 3), dtype=np.uint8)
+
+        with patch.object(self.window.monitor.service, "capture", side_effect=blocked_capture):
+            try:
+                self.window.monitor.toggle_capture()
+                self.assertTrue(entered.wait(1))
+                self.window.close()
+                self.assertTrue(self.window._close_pending)
+            finally:
+                release.set()
+                self.wait_for_monitor()
+        self.assertTrue(screen.preview.image.isNull())
+        self.assertIsNone(self.window.monitor.service.controller)
+        controller.post_inactive.assert_called_once()
+        self.assertFalse(self.window.isVisible())
+
     @staticmethod
     def find_task_item(window, task_name="Test"):
         task_list = window.option_list_widget
@@ -1705,6 +2116,68 @@ class UILifecycleTests(unittest.TestCase):
         )
         self.assertIsNotNone(option_title)
         self.assertEqual(option_title.styleSheet(), "")
+
+    def test_option_labels_and_fields_align_with_panel_heading(self):
+        self.window.show()
+        self.window.show_sub_cases(self.find_task_widget(self.window))
+        panel = self.window.centralWidget().findChild(QWidget, "_2_settingWidget")
+        heading = panel.findChild(QLabel, "workspaceSectionTitle")
+        content = self.window.ui.scrollSettingContents
+        group_titles = content.findChildren(QLabel, "optionGroupTitle")
+        labels = [*group_titles, *content.findChildren(QLabel, "optionInputLabel")]
+        fields = [
+            *content.findChildren(QComboBox, "optionSelect"),
+            *content.findChildren(QLineEdit, "optionInput"),
+        ]
+        self.assertTrue(group_titles[0].property("firstGroup"))
+        self.assertTrue(all(not title.property("firstGroup") for title in group_titles[1:]))
+        self.assertFalse(group_titles[0].text().startswith("["))
+        for theme in ("light", "dark"):
+            self.window.settings_panel.theme_combo.setCurrentIndex(
+                self.window.settings_panel.theme_combo.findData(theme)
+            )
+            for width in (1000, 1300):
+                self.window.resize(width, 750)
+                self.app.processEvents()
+                self.app.processEvents()
+                with self.subTest(theme=theme, width=width):
+                    title_x = heading.mapTo(panel, QPoint(0, 0)).x()
+                    for widget in (*labels, *fields):
+                        self.assertEqual(widget.mapTo(panel, QPoint(0, 0)).x(), title_x + 6)
+                    self.assertEqual(heading.font().pointSizeF(), 11)
+                    self.assertTrue(all(label.font().pointSizeF() == 10 for label in labels))
+                    first_y = group_titles[0].mapTo(panel, QPoint(0, 0)).y()
+                    self.assertGreaterEqual(first_y - heading.geometry().bottom(), 8)
+                    self.assertLessEqual(first_y - heading.geometry().bottom(), 16)
+                    self.assertEqual(content.layout().contentsMargins().left(), 6)
+                    self.assertEqual(content.layout().contentsMargins().right(), 4)
+
+    def test_option_groups_have_subtle_separators_and_select_text_is_centered(self):
+        self.window.show()
+        task = self.find_task_widget(self.window)
+        self.window.show_sub_cases(task)
+        content = self.window.ui.scrollSettingContents
+        separators = content.findChildren(QFrame, "optionGroupSeparator")
+        self.assertEqual(len(separators), len(task.task_options) - 1)
+        combo = content.findChild(QComboBox, "optionSelect")
+        for theme in ("light", "dark"):
+            self.window.settings_panel.theme_combo.setCurrentIndex(
+                self.window.settings_panel.theme_combo.findData(theme)
+            )
+            self.app.processEvents()
+            option = QStyleOptionComboBox()
+            combo.initStyleOption(option)
+            text_rect = combo.style().subControlRect(
+                QStyle.ComplexControl.CC_ComboBox, option,
+                QStyle.SubControl.SC_ComboBoxEditField, combo,
+            )
+            with self.subTest(theme=theme):
+                self.assertLessEqual(abs(text_rect.center().y() - combo.rect().center().y()), 1)
+                self.assertLessEqual(abs(text_rect.top() - (combo.height() - text_rect.bottom() - 1)), 1)
+                for separator in separators:
+                    self.assertEqual(separator.height(), 1)
+                    image = separator.grab().toImage()
+                    self.assertEqual(image.pixelColor(0, 0).name(), "#30415e" if theme == "dark" else "#e2e8f0")
 
     def test_dynamic_checkable_labels_are_vertically_centered(self):
         task_widget = self.find_task_widget(self.window)
@@ -2180,7 +2653,11 @@ class UILifecycleTests(unittest.TestCase):
         widgets = [task_list.itemWidget(task_list.item(i)) for i in range(1, 3)]
         self.assertEqual([w.is_checked() for w in widgets], [True, False])
         self.assertEqual(widgets[0].selected_options["Test_Mode"], ["A"])
-        self.assertEqual(self.window.ui.scrollSettingContents.layout().count(), 0)
+        self.assertEqual(self.window.ui.scrollSettingContents.layout().count(), 1)
+        self.assertIn(
+            "설정 버튼",
+            self.window.ui.scrollSettingContents.findChild(QLabel, "optionEmptyState").text(),
+        )
         path = self.window.runtime.user_dir / "config" / "user_config.json"
         saved = json.loads(path.read_text(encoding="utf-8"))["tasks"]
         self.assertEqual(
@@ -2236,16 +2713,12 @@ class UILifecycleTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     dark_stylesheet,
-                    r"(?s)QTabWidget::pane\s*\{.*?border:\s*1px solid #30415E;",
+                    r"(?s)QWidget#appHeader\s*\{.*?border-bottom:\s*1px solid #30415E;",
                 )
                 self.assertRegex(
                     dark_stylesheet,
-                    r"(?s)QTabWidget::pane\s*\{.*?"
-                    r"background-color:\s*#111A2B;",
-                )
-                self.assertRegex(
-                    dark_stylesheet,
-                    r"(?s)QTabBar::tab\s*\{.*?border:\s*1px solid #30415E;",
+                    r"(?s)QWidget#centralwidget,\s*QWidget#mainTab,\s*"
+                    r"QWidget#settingTab\s*\{.*?background-color:\s*#111A2B;",
                 )
                 self.assertRegex(
                     dark_stylesheet,
@@ -2282,16 +2755,14 @@ class UILifecycleTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     stylesheet,
-                    r"(?s)QTabWidget::pane\s*\{.*?"
-                    r"background-color:\s*#F4F7FB;.*?"
-                    r"border-bottom-left-radius:\s*8px;.*?"
-                    r"border-bottom-right-radius:\s*8px;",
+                    r"(?s)QWidget#centralwidget,\s*QWidget#mainTab,\s*"
+                    r"QWidget#settingTab\s*\{.*?background-color:\s*#F4F7FB;",
                 )
                 self.assertRegex(
                     stylesheet,
-                    r"(?s)QTabWidget#tabWidget > QStackedWidget,\s*"
-                    r"QWidget#mainTab,\s*QWidget#settingTab\s*\{.*?"
-                    r"background-color:\s*transparent;",
+                    r"(?s)QWidget#_1_settingStartWidget,\s*"
+                    r"QWidget#_2_settingWidget,\s*QWidget#_3_logPrintWidget\s*"
+                    r"\{.*?border-radius:\s*12px;",
                 )
                 self.assertRegex(
                     stylesheet,
@@ -2301,9 +2772,8 @@ class UILifecycleTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     stylesheet,
-                    r"(?s)QFrame#line_2,\s*QFrame#line_3\s*\{.*?"
-                    r"min-width:\s*1px;.*?max-width:\s*1px;.*?"
-                    r"background-color:\s*#E2E8F0;",
+                    r"(?s)QSplitter#workspaceSplitter::handle:horizontal\s*\{.*?"
+                    r"background-color:\s*transparent;",
                 )
                 self.assertRegex(
                     stylesheet,
@@ -2313,9 +2783,9 @@ class UILifecycleTests(unittest.TestCase):
                 self.assertEqual(
                     {
                         getattr(window.ui, name).frameShape()
-                        for name in ("line", "line_2", "line_3", "line_4")
+                        for name in ("line", "line_4")
                     },
-                    {QFrame.Shape.HLine, QFrame.Shape.VLine},
+                    {QFrame.Shape.HLine},
                 )
                 referenced_icons = re.findall(r'maabaicons:([^"\s)]+)', stylesheet)
                 self.assertTrue(referenced_icons)
@@ -2348,7 +2818,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_settings_scroll_highlights_topmost_visible_card(self):
         panel = self.window.settings_panel
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
         first, second = panel._sections[:2]
         for value, expected in (
@@ -2373,7 +2843,7 @@ class UILifecycleTests(unittest.TestCase):
         panel = self.window.settings_panel
         self.window.resize(1000, 600)
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
         panel.navigation.setCurrentRow(3)
         self.assertEqual(panel.navigation.currentRow(), 3)
@@ -2386,7 +2856,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_settings_tab_uses_navigation_and_single_scroll_area(self):
         panel = self.window.settings_panel
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
 
         self.assertEqual(panel.navigation.count(), 4)
@@ -2489,10 +2959,14 @@ class UILifecycleTests(unittest.TestCase):
                     (12, 12),
                 )
 
-    def test_start_page_has_equal_horizontal_gutters(self):
+    def test_start_page_uses_full_width_three_column_workspace(self):
         self.window.show()
         ui = self.window.ui
         page = ui.mainTab
+        columns = [
+            self.window.centralWidget().findChild(QWidget, name)
+            for name in ("_1_settingStartWidget", "_2_settingWidget", "_3_logPrintWidget")
+        ]
         for width in (1000, 1400):
             self.window.resize(width, 800)
             self.app.processEvents()
@@ -2504,15 +2978,306 @@ class UILifecycleTests(unittest.TestCase):
                 return left(widget) + widget.width()
 
             gaps = (
-                left(ui.taskListContainer),
-                left(ui.line_2) - end(ui.taskListContainer),
-                left(ui.scrollSettingWidget) - end(ui.line_2),
-                left(ui.line_3) - end(ui.scrollSettingWidget),
-                left(ui.logPrintText) - end(ui.line_3),
-                page.width() - end(ui.logPrintText),
+                left(columns[0]),
+                left(columns[1]) - end(columns[0]),
+                left(columns[2]) - end(columns[1]),
+                page.width() - end(columns[2]),
             )
             with self.subTest(width=width):
-                self.assertEqual(gaps, (16,) * 6)
+                self.assertEqual(gaps, (20, 14, 10, 20))
+                self.assertEqual(columns[0].width(), 312)
+                self.assertGreaterEqual(columns[1].width(), 300)
+                self.assertGreaterEqual(columns[2].width(), 309)
+
+    def test_workspace_navigation_and_monitor_accordion_keep_existing_controls(self):
+        self.window.show()
+        ui = self.window.ui
+        self.assertIsNone(self.window.centralWidget().findChild(QTabWidget))
+        self.assertIs(ui.mainPages.currentWidget(), ui.mainTab)
+        ui.settingsNavButton.click()
+        self.assertIs(ui.mainPages.currentWidget(), ui.settingTab)
+        self.assertTrue(ui.settingsNavButton.isChecked())
+        ui.dashboardNavButton.click()
+        self.assertIs(ui.mainPages.currentWidget(), ui.mainTab)
+
+        sections = ui.monitorSectionsWidget
+        self.assertEqual(sections.section_order(), ["connection", "screen", "log"])
+        section_by_key = {
+            section.property("monitorSectionKey"): section for section in sections.sections()
+        }
+        for key, expected_open in (("connection", False), ("screen", False), ("log", True)):
+            with self.subTest(section=key):
+                toggle = section_by_key[key].findChild(QToolButton, "monitorSectionToggle")
+                self.assertEqual(toggle.isChecked(), expected_open)
+        section_by_key["connection"].findChild(QToolButton, "monitorSectionToggle").click()
+        section_by_key["screen"].findChild(QToolButton, "monitorSectionToggle").click()
+        self.window.resize(1000, 500)
+        self.app.processEvents()
+        self.assertGreater(ui.monitorScrollArea.verticalScrollBar().maximum(), 0)
+        self.assertFalse(ui.logPrintText.isHidden())
+        self.window.append_log("아코디언을 열어도 로그는 유지됩니다.")
+        self.assertIn("아코디언을 열어도 로그는 유지됩니다.", ui.logPrintText.toPlainText())
+
+    def test_monitor_reorder_accepts_only_internal_handle_drag_and_persists(self):
+        self.window.show()
+        sections = self.window.ui.monitorSectionsWidget
+        connection = sections.sections()[0]
+        handle = connection.findChild(QLabel, "monitorDragHandle")
+        mime = QMimeData()
+        mime.setData(sections.DRAG_MIME, b"1")
+        event = MagicMock()
+        event.source.return_value = handle
+        event.mimeData.return_value = mime
+        event.position.return_value = QPointF(1, sections.height() - 1)
+
+        sections._dragged_section = connection
+        sections._drag_source = handle
+        self.assertTrue(sections._is_internal_drag(event))
+        event.source.return_value = object()
+        self.assertFalse(sections._is_internal_drag(event))
+        event.source.return_value = handle
+        external_mime = QMimeData()
+        event.mimeData.return_value = external_mime
+        self.assertFalse(sections._is_internal_drag(event))
+        event.mimeData.return_value = mime
+        connection.hide()
+        self.app.processEvents()
+        sections.dropEvent(event)
+        connection.show()
+        sections._dragged_section = None
+        sections._drag_source = None
+        self.assertEqual(sections.section_order(), ["screen", "log", "connection"])
+        config_path = self.window.runtime.user_dir / "config" / "user_config.json"
+        saved = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["monitor_order"], ["screen", "log", "connection"])
+        with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+            restored = MainWindow()
+        self.addCleanup(restored.deleteLater)
+        self.assertEqual(
+            restored.ui.monitorSectionsWidget.section_order(),
+            ["screen", "log", "connection"],
+        )
+
+    def test_monitor_drop_targets_do_not_paint_insertion_lines(self):
+        self.window.show()
+        sections = self.window.ui.monitorSectionsWidget
+        for dragged in sections.sections():
+            sections._dragged_section = dragged
+            dragged.hide()
+            self.app.processEvents()
+            visible = [section for section in sections.sections() if section is not dragged]
+            targets = [*visible, None]
+            before_image = sections.grab().toImage()
+            for target in targets:
+                with self.subTest(dragged=dragged.property("monitorSectionKey"), target=target):
+                    sections._update_drop_target(target.y() if target else sections.height())
+                    self.assertIs(sections._drop_before, target)
+                    self.assertEqual(sections.grab().toImage(), before_image)
+            sections._clear_drop_target()
+            dragged.show()
+            sections._dragged_section = None
+
+    def test_expanded_log_fills_available_height_and_collapsed_cards_stay_compact(self):
+        self.window.show()
+        ui = self.window.ui
+        heights = []
+        for height in (700, 1000):
+            self.window.resize(1100, height)
+            self.app.processEvents()
+            heights.append([section.height() for section in ui.monitorSectionsWidget.sections()])
+            self.assertGreater(ui.logPrintText.height(), 200)
+            self.assertEqual(ui.monitorScrollArea.verticalScrollBar().maximum(), 0)
+            log_bottom = ui.monitorLogSection.mapTo(ui.monitorSectionsWidget, QPoint()).y() + ui.monitorLogSection.height()
+            bottom_gap = ui.monitorSectionsWidget.height() - log_bottom
+            self.assertLessEqual(bottom_gap, 5)
+        self.assertEqual(heights[0][:2], heights[1][:2])
+        self.assertEqual(heights[1][2] - heights[0][2], 300)
+        ui.monitorLogSection.findChild(QToolButton, "monitorSectionToggle").click()
+        self.app.processEvents()
+        self.app.processEvents()
+        for section in ui.monitorSectionsWidget.sections():
+            self.assertLessEqual(section.height(), 40)
+        ui.monitorLogSection.findChild(QToolButton, "monitorSectionToggle").click()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(ui.monitorLogSection.height(), heights[1][2])
+        sections = ui.monitorSectionsWidget
+        sections.move_section(ui.monitorLogSection, sections.sections()[0])
+        self.app.processEvents()
+        self.assertEqual(ui.monitorLogSection.height(), heights[1][2])
+
+    def test_screen_and_log_expand_and_mouse_drag_resizes_without_growing_connection(self):
+        screen = self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        connection, screen_card, log_card = sections.sections()
+        before = (connection.height(), screen_card.height(), log_card.height())
+        for card in (screen_card, log_card):
+            self.assertEqual(card.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(screen.preview.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+        handle = sections.splitter.handle(2)
+        self.assertTrue(handle.isEnabled())
+        self.assertFalse(sections.splitter.handle(1).isEnabled())
+        center = handle.rect().center()
+        QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=center)
+        QTest.mouseMove(handle, center + QPoint(0, 80))
+        QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=center)
+        self.app.processEvents()
+        self.assertEqual(connection.height(), before[0])
+        self.assertGreater(screen_card.height(), before[1] + 50)
+        self.assertLess(log_card.height(), before[2] - 50)
+        self.assertEqual(screen_card.height() + log_card.height(), before[1] + before[2])
+        self.assertGreaterEqual(screen.preview.height(), 120)
+
+    def test_screen_only_fills_height_and_image_grows_proportionally(self):
+        from app.monitorUI import owned_qimage
+        screen = self.show_screen_panel()
+        ui = self.window.ui
+        ui.monitorLogSection.findChild(QToolButton, "monitorSectionToggle").setChecked(False)
+        screen.preview.set_image(owned_qimage(np.zeros((480, 160, 3), dtype=np.uint8)))
+        self.window.resize(1200, 700)
+        self.app.processEvents()
+        initial_height = screen.preview.height()
+        initial_image = screen.preview.image_rect()
+        self.window.resize(1200, 1000)
+        self.app.processEvents()
+        grown_image = screen.preview.image_rect()
+        self.assertEqual(screen.preview.height() - initial_height, 300)
+        self.assertGreater(grown_image.height(), initial_image.height())
+        self.assertAlmostEqual(grown_image.width() / grown_image.height(), 1 / 3, delta=0.01)
+        self.assertTrue(screen.preview.rect().contains(grown_image))
+        self.assertLessEqual(ui.monitorLogSection.height(), 40)
+        self.assertEqual(ui.monitorScrollArea.verticalScrollBar().maximum(), 0)
+        self.assertFalse(any(ui.monitorSectionsWidget.splitter.handle(i).isEnabled() for i in (1, 2)))
+
+    def test_vertical_resize_works_with_every_card_order_and_connection_content_height(self):
+        self.show_screen_panel()
+        sections = self.window.ui.monitorSectionsWidget
+        cards = {c.property("monitorSectionKey"): c for c in sections.sections()}
+        cards["connection"].findChild(QToolButton, "monitorSectionToggle").setChecked(True)
+        self.window.resize(1200, 1500)
+        self.app.processEvents()
+        connection_height = cards["connection"].height()
+        for order in permutations(cards):
+            with self.subTest(order=order):
+                for index, key in enumerate(order):
+                    sections.move_section(cards[key], sections.sections()[index])
+                self.app.processEvents()
+                self.assertEqual(sections.section_order(), list(order))
+                index = next(i for i in (1, 2) if sections.splitter.handle(i).isEnabled())
+                before = [cards[key].height() for key in ("screen", "log")]
+                sections.splitter.moveSplitter(sections.splitter.handle(index).y() + 20, index)
+                self.app.processEvents()
+                after = [cards[key].height() for key in ("screen", "log")]
+                self.assertNotEqual(before, after)
+                self.assertEqual(sum(before), sum(after))
+                self.assertEqual(cards["connection"].height(), connection_height)
+
+    def test_monitor_height_distribution_survives_collapse_reorder_and_reload(self):
+        self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        splitter = sections.splitter
+        splitter.moveSplitter(splitter.handle(2).y() + 60, 2)
+        self.app.processEvents()
+        weights = sections.height_weights()
+        screen_card = sections.sections()[1]
+        toggle = screen_card.findChild(QToolButton, "monitorSectionToggle")
+        toggle.setChecked(False)
+        self.app.processEvents()
+        self.assertLessEqual(screen_card.height(), 40)
+        toggle.setChecked(True)
+        self.app.processEvents()
+        self.assertEqual(sections.height_weights(), weights)
+        self.assertAlmostEqual(screen_card.height() / self.window.ui.monitorLogSection.height(),
+                               weights["screen"] / weights["log"], delta=0.03)
+        sections.move_section(screen_card, sections.sections()[0])
+        self.window.save_user_config()
+        saved = json.loads((self.window.runtime.user_dir / "config" / "user_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["monitor_height_weights"], weights)
+        with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+            restored = MainWindow()
+        self.addCleanup(restored.deleteLater)
+        self.assertEqual(restored.ui.monitorSectionsWidget.height_weights(), weights)
+        self.assertEqual(restored.ui.monitorSectionsWidget.section_order(), sections.section_order())
+
+    def test_invalid_monitor_height_preferences_are_ignored(self):
+        sections = self.window.ui.monitorSectionsWidget
+        for value in (None, [], {"screen": 0, "log": 1}, {"screen": True, "log": 1},
+                      {"screen": "large", "log": 1}, {"screen": 999999999, "log": 1}):
+            sections.restore_height_weights(value)
+            self.assertEqual(sections.height_weights(), {"screen": 1, "log": 1})
+
+    def test_vertical_resize_respects_minimums_and_never_collapses_expanded_panels(self):
+        self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        connection, screen, log = sections.sections()
+        connection_height = connection.height()
+        for position in (-10000, 10000):
+            sections.splitter.moveSplitter(position, 2)
+            self.app.processEvents()
+            self.assertGreaterEqual(screen.height(), screen.minimumHeight())
+            self.assertGreaterEqual(log.height(), log.minimumHeight())
+            self.assertGreater(screen.height(), 40)
+            self.assertGreater(log.height(), 40)
+            self.assertEqual(connection.height(), connection_height)
+        self.assertFalse(sections.splitter.childrenCollapsible())
+
+    def test_workspace_splitter_divider_is_rounded_and_hover_only(self):
+        self.window.show()
+        handle = self.window.ui.workspaceSplitter.handle(1)
+        for theme in ("light", "dark"):
+            self.window.settings_panel.theme_combo.setCurrentIndex(
+                self.window.settings_panel.theme_combo.findData(theme)
+            )
+            self.app.processEvents()
+            QApplication.sendEvent(handle, QEvent(QEvent.Type.Leave))
+            idle = handle.grab().toImage()
+            QApplication.sendEvent(handle, QEvent(QEvent.Type.Enter))
+            hovered_pixmap = handle.grab()
+            hovered = hovered_pixmap.toImage()
+            scale = hovered_pixmap.devicePixelRatio()
+            x = round(handle.width() / 2 * scale)
+            middle = round(handle.height() / 2 * scale)
+            corner = (round((handle.width() / 2 - 2) * scale), round(12 * scale))
+            with self.subTest(theme=theme):
+                self.assertNotEqual(hovered.pixelColor(x, middle), idle.pixelColor(x, middle))
+                self.assertEqual(hovered.pixelColor(x, middle).name(), "#30415e" if theme == "dark" else "#dfe7f0")
+                self.assertEqual(hovered.pixelColor(x, round(10 * scale)), idle.pixelColor(x, round(10 * scale)))
+                self.assertNotEqual(hovered.pixelColor(*corner), hovered.pixelColor(x, middle))
+                QApplication.sendEvent(handle, QEvent(QEvent.Type.Leave))
+                self.assertEqual(handle.grab().toImage(), idle)
+
+    def test_log_actions_fit_the_minimum_monitor_width(self):
+        self.window.show()
+        ui = self.window.ui
+        ui.workspaceSplitter.setSizes([700, 309])
+        ui.logMenuToggleButton.click()
+        for show_latest in (False, True):
+            ui.logLatestButton.setVisible(show_latest)
+            self.app.processEvents()
+            self.app.processEvents()
+            with self.subTest(show_latest=show_latest):
+                self.assertEqual(ui.monitorScrollArea.horizontalScrollBar().maximum(), 0)
+                self.assertFalse(ui.logSaveButton.isHidden())
+                self.assertGreaterEqual(ui.logTitleLabel.width(), ui.logTitleLabel.sizeHint().width())
+
+    def test_workspace_splitter_resizes_only_middle_and_right_panels(self):
+        self.window.show()
+        splitter = self.window.ui.workspaceSplitter
+        left = self.window.centralWidget().findChild(QWidget, "_1_settingStartWidget")
+        middle, right = splitter.widget(0), splitter.widget(1)
+        before = (middle.width(), right.width())
+        splitter.setSizes([600, 310])
+        self.app.processEvents()
+        self.assertEqual(left.width(), 312)
+        self.assertNotEqual((middle.width(), right.width()), before)
+        self.assertGreaterEqual(middle.width(), 300)
+        self.assertGreaterEqual(right.width(), 309)
 
     def test_start_page_scrollbars_follow_pointer_and_activity(self):
         self.window.show()
@@ -2684,7 +3449,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_settings_controls_align_in_both_themes(self):
         panel = self.window.settings_panel
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         for theme in ("light", "dark"):
             panel.theme_combo.setCurrentIndex(panel.theme_combo.findData(theme))
             for width in (1000, 1400):
@@ -2704,7 +3469,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_settings_without_overflow_highlights_first_card(self):
         self.window.resize(1400, 1600)
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
         panel = self.window.settings_panel
         self.assertEqual(panel.detail_scroll.verticalScrollBar().maximum(), 0)
@@ -2714,13 +3479,10 @@ class UILifecycleTests(unittest.TestCase):
     def test_dark_theme_applies_to_entire_window_and_is_saved(self):
         panel = self.window.settings_panel
         panel.theme_combo.setCurrentIndex(panel.theme_combo.findData("dark"))
-        self.window.update_tab_widths()
 
         self.assertEqual(self.window._effective_theme, TitleBarTheme.DARK)
         self.assertIn("#111A2B", self.window.styleSheet())
-        tab_bar_style = self.window.ui.tabWidget.tabBar().styleSheet()
-        self.assertNotIn("background-color", tab_bar_style)
-        self.assertNotIn("border", tab_bar_style)
+        self.assertIn("QPushButton#dashboardNavButton:checked", self.window.styleSheet())
         config_path = self.window.runtime.user_dir / "config" / "maa_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         self.assertEqual(config["appearance"]["theme"], "dark")
@@ -2732,7 +3494,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_program_path_can_be_confirmed_from_custom_directory(self):
         panel = self.window.settings_panel
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
         task_list = self.window.option_list_widget
         self.assertEqual(task_list.item(0).data(Qt.UserRole), PROGRAM_LAUNCH_TASK_NAME)
@@ -2778,7 +3540,7 @@ class UILifecycleTests(unittest.TestCase):
     def test_invalid_manual_path_switches_to_reset_and_collapses_smoothly(self):
         panel = self.window.settings_panel
         self.window.show()
-        self.window.ui.tabWidget.setCurrentWidget(self.window.ui.settingTab)
+        self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
         self.app.processEvents()
         automatic_path = self.window.runtime.user_dir / "AutoGame" / "BlueArchive.exe"
         with patch(
@@ -3083,6 +3845,54 @@ class UILifecycleTests(unittest.TestCase):
         self.assertEqual(task_widget.selected_options["Test_Dropdown"], ["Second"])
         override = self.window.build_execution_queue()[0][1]
         self.assertEqual(override["Dropdown_Node"]["next"], ["Second"])
+
+    def test_select_popup_rows_are_centered_highlighted_and_scroll_with_rounded_thumb(self):
+        self.window.show()
+        self.window.show_sub_cases(self.find_task_widget(self.window))
+        combo = self.window.ui.scrollSettingContents.findChild(QComboBox, "optionSelect")
+        for index in range(40):
+            combo.addItem(f"Option {index}", f"case-{index}")
+        popup = combo.view()
+        option = QStyleOptionViewItem()
+        combo.itemDelegate().initStyleOption(option, combo.model().index(0, 0))
+        self.assertTrue(option.displayAlignment & Qt.AlignmentFlag.AlignVCenter)
+        for theme in ("light", "dark"):
+            self.window.settings_panel.theme_combo.setCurrentIndex(
+                self.window.settings_panel.theme_combo.findData(theme)
+            )
+            combo.showPopup()
+            self.app.processEvents()
+            self.app.processEvents()
+            scroll_bar = popup.verticalScrollBar()
+            with self.subTest(theme=theme):
+                self.assertGreater(scroll_bar.maximum(), 0)
+                self.assertTrue(scroll_bar.isVisible())
+                self.assertLessEqual(popup.height(), 8 * 34 + 2)
+                paint_filter = scroll_bar._rounded_paint_filter
+                self.assertEqual(paint_filter._surface_color().name(), "#1e2d46" if theme == "dark" else "#ffffff")
+                self.assertTrue(popup.hasMouseTracking())
+                rect = popup.visualRect(combo.model().index(1, 0))
+                self.assertGreaterEqual(rect.height(), 34)
+                QTest.mouseMove(popup.viewport(), rect.center())
+                self.app.processEvents()
+                image = popup.viewport().grab().toImage()
+                scale = popup.viewport().devicePixelRatioF()
+                color = image.pixelColor(round(5 * scale), round(rect.center().y() * scale)).name()
+                self.assertIn(color, ("#e6f5fc", "#00aeef") if theme == "light" else ("#283a55", "#168fbe"))
+                scroll_bar.setValue(scroll_bar.maximum() // 2)
+                slider = paint_filter._slider_rect()
+                bar_image = scroll_bar.grab().toImage()
+                center = slider.center()
+                self.assertEqual(bar_image.pixelColor(round(center.x() * scale), round(center.y() * scale)), paint_filter._handle_color())
+                self.assertNotEqual(bar_image.pixelColor(round(slider.left() * scale), round(slider.top() * scale)), paint_filter._handle_color())
+            combo.hidePopup()
+
+        combo.showPopup()
+        self.app.processEvents()
+        QTest.keyClick(popup, Qt.Key.Key_End)
+        QTest.keyClick(popup, Qt.Key.Key_Return)
+        self.assertEqual(combo.currentData(), "case-39")
+        self.assertEqual(self.find_task_widget(self.window).selected_options["Test_Dropdown"], ["case-39"])
 
     def test_invalid_input_disables_start_and_displays_pattern_message(self):
         task_widget = self.find_task_widget(self.window)
