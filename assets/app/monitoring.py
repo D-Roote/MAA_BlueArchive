@@ -110,6 +110,32 @@ class MonitoringService:
         self._discovered_preset = None
         self._discovered_adb_path = ""
         self._initialized = False
+        self._user32 = None
+        self._original_window_placement = None
+        self._placement_hwnd = None
+
+    def _window_api(self):
+        if self._user32 is None:
+            from app.runtime import create_user32
+            self._user32 = create_user32()
+        return self._user32
+
+    @property
+    def needs_cleanup(self):
+        return self.controller is not None or self._original_window_placement is not None
+
+    def ensure_preview_available(self, target_key):
+        """Read-only check: idle preview must not unminimize a user's window."""
+        target = next((t for t in self.targets if t.key == target_key), None)
+        if target is None:
+            raise MonitoringDisconnected("화면 대상이 변경되거나 종료되었습니다. 다시 연결하세요.")
+        if target.kind != "Win32":
+            return
+        pid, path = window_process_info(target.hwnd)
+        if not pid or pid != target.pid or (target.process_path and path != target.process_path):
+            raise MonitoringDisconnected("대상 프로그램이 변경되거나 종료되었습니다. 다시 연결하세요.")
+        if self._window_api().IsIconic(target.hwnd):
+            raise PreviewNotReady("대상 창이 최소화되어 있습니다. 창 복구 후 화면 표시를 재개합니다.")
 
     def preset(self, name):
         for preset in self.presets:
@@ -219,8 +245,16 @@ class MonitoringService:
                 raise ValueError("ADB 기기를 선택하거나 실행 파일과 주소를 입력하세요.")
         self.close()
         self._init_toolkit()
-        self.controller = factory()
+        if target.kind == "Win32":
+            from app.runtime import WindowPlacement
+            placement = WindowPlacement()
+            placement.length = ctypes.sizeof(WindowPlacement)
+            if not self._window_api().GetWindowPlacement(target.hwnd, ctypes.byref(placement)):
+                raise RuntimeError("사전 연결 창의 원래 상태를 저장하지 못했습니다.")
+            self._original_window_placement = placement
+            self._placement_hwnd = target.hwnd
         try:
+            self.controller = factory()
             job = self.controller.post_connection().wait()
             if not job.succeeded or not self.controller.connected:
                 raise RuntimeError("연결 실패: 프로그램 실행 상태 또는 ADB 주소/승인을 확인하세요.")
@@ -243,6 +277,8 @@ class MonitoringService:
     def capture(self):
         if self.controller is None or not self.controller.connected:
             raise MonitoringDisconnected("캡처 연결이 해제되었습니다. 다시 연결 확인을 완료하세요.")
+        if self.connected_target is not None and self.connected_target.kind == "Win32":
+            self.ensure_preview_available(self.connected_target.key)
         job = self.controller.post_screencap().wait()
         if not job.succeeded:
             if not self.controller.connected:
@@ -251,8 +287,31 @@ class MonitoringService:
         return self.validate_frame(job.get())
 
     def close(self):
+        restore_placement = self._original_window_placement
+        if self.controller is not None and restore_placement is not None:
+            from app.runtime import GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT
+            api = self._window_api()
+            # Diagnostics change only pseudo-minimize, not geometry. Do not undo
+            # a user's later manual resize/restore/minimize or activate a normal window.
+            style = int(api.GetWindowLongPtrW(self._placement_hwnd, GWL_EXSTYLE))
+            color_key, alpha, flags = wintypes.DWORD(), ctypes.c_ubyte(255), wintypes.DWORD()
+            mask = WS_EX_LAYERED | WS_EX_TRANSPARENT
+            pseudo = (style & mask == mask and api.GetLayeredWindowAttributes(
+                self._placement_hwnd, ctypes.byref(color_key), ctypes.byref(alpha), ctypes.byref(flags)
+            ) and flags.value & LWA_ALPHA and alpha.value == 0)
+            if not pseudo:
+                restore_placement = None
         if self.controller is not None and self.controller.connected:
             if not self.controller.post_inactive().wait().succeeded:
                 raise RuntimeError("사전 연결 해제에 실패했습니다. 다시 해제한 후 실행하세요.")
         self.controller = None
         self.connected_target = None
+        self._original_window_placement = restore_placement
+        if self._original_window_placement is not None:
+            api = self._window_api()
+            if api.IsWindow(self._placement_hwnd) and not api.SetWindowPlacement(
+                self._placement_hwnd, ctypes.byref(self._original_window_placement)
+            ):
+                raise RuntimeError("사전 연결 창의 원래 상태를 복원하지 못했습니다. 다시 해제하세요.")
+            self._original_window_placement = None
+            self._placement_hwnd = None

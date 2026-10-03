@@ -541,7 +541,8 @@ class RuntimeLifecycleTests(unittest.TestCase):
             events,
             ["guard", "minimize", "guard", "minimize", "restore"],
         )
-        sleep.assert_called_once_with(PROGRAM_WINDOW_POLL_INTERVAL_SECONDS)
+        self.assertEqual(sleep.call_args_list[-1], call(PROGRAM_WINDOW_POLL_INTERVAL_SECONDS))
+        self.assertTrue(self.runtime._window_size_prepared)
 
     def test_program_launch_starts_configured_executable(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -879,7 +880,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(user32.GetForegroundWindow(), 123)
 
     def test_minimize_delivery_is_not_proof_of_minimized_background_state(self):
-        for iconic, foreground in ((False, 456), (True, 123), (True, None)):
+        for iconic, foreground in ((False, 456), (True, 123)):
             with self.subTest(iconic=iconic, foreground=foreground):
                 self.runtime._target_hwnd = 123
                 user32 = self.runtime._user32
@@ -1815,7 +1816,9 @@ class UILifecycleTests(unittest.TestCase):
         controller.post_screencap.assert_called_once()
         self.assertEqual(screen.preview.image.size(), QSize(160, 90))
         self.assertEqual(screen.preview.image.pixelColor(0, 0).name(), "#ff0000")
-        self.assertIn("화면 너비 160 높이 90", screen.status.text())
+        self.assertTrue(screen.status.text().startswith("테스트 캡처"))
+        self.assertNotIn("화면 너비", screen.status.text())
+        self.assertNotIn("높이", screen.status.text())
         self.assertFalse(self.window.monitor.preview_timer.isActive())
         drawn = screen.preview.image_rect()
         self.assertAlmostEqual(drawn.width() / drawn.height(), 160 / 90, delta=0.03)
@@ -1835,7 +1838,7 @@ class UILifecycleTests(unittest.TestCase):
         self.assertIn("실행 캐시", self.window.monitor.screen.status.text())
         self.window.isRunning = False
 
-    def test_continuous_preview_stops_on_collapse_and_retains_last_frame(self):
+    def test_continuous_preview_survives_collapse_and_retains_last_frame(self):
         screen = self.show_screen_panel()
         self.configure_screen_capture()
         screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
@@ -1844,11 +1847,13 @@ class UILifecycleTests(unittest.TestCase):
         self.assertTrue(self.window.monitor.preview_timer.isActive())
         section = self.window.monitor.screen_content.parentWidget()
         section.findChild(QToolButton, "monitorSectionToggle").setChecked(False)
-        self.assertFalse(self.window.monitor.streaming)
-        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertTrue(self.window.monitor.streaming)
+        self.assertTrue(self.window.monitor.preview_timer.isActive())
         self.assertFalse(screen.preview.image.isNull())
+        self.window.monitor.stop_preview()
+        self.wait_for_monitor()
 
-    def test_page_change_stops_preview_and_screen_preferences_persist(self):
+    def test_page_change_preserves_preview_and_screen_preferences(self):
         screen = self.show_screen_panel()
         self.configure_screen_capture()
         screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
@@ -1856,24 +1861,28 @@ class UILifecycleTests(unittest.TestCase):
         self.window.monitor.toggle_capture()
         self.wait_for_monitor()
         self.window.ui.mainPages.setCurrentWidget(self.window.ui.settingTab)
-        self.assertFalse(self.window.monitor.streaming)
-        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertTrue(self.window.monitor.streaming)
+        self.assertTrue(self.window.monitor.preview_timer.isActive())
         saved = json.loads((self.window.runtime.user_dir / "config" / "maa_config.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["monitor"], {"mode": "continuous", "fps": 5})
         store = SettingsStore(self.window.runtime.user_dir / "config" / "maa_config.json")
         self.assertEqual(store.load()["monitor"], saved["monitor"])
+        self.window.monitor.stop_preview()
+        self.wait_for_monitor()
 
-    def test_preview_capture_error_stops_loop_and_allows_retry(self):
+    def test_preview_capture_error_retries_without_stopping_loop(self):
         screen = self.show_screen_panel()
         controller = self.configure_screen_capture()
         screen.mode.setCurrentIndex(screen.mode.findData("continuous"))
         controller.post_screencap.return_value.wait.return_value.succeeded = False
         self.window.monitor.toggle_capture()
         self.wait_for_monitor()
-        self.assertFalse(self.window.monitor.streaming)
-        self.assertFalse(self.window.monitor.preview_timer.isActive())
+        self.assertTrue(self.window.monitor.streaming)
+        self.assertTrue(self.window.monitor.preview_timer.isActive())
         self.assertIn("캡처에 실패", screen.status.text())
         self.assertTrue(screen.capture_button.isEnabled())
+        self.window.monitor.stop_preview()
+        self.wait_for_monitor()
 
     def test_stopping_inflight_frame_discards_result_without_unsafe_termination(self):
         screen = self.show_screen_panel()

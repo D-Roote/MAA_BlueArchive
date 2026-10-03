@@ -35,6 +35,7 @@ WS_EX_LAYERED = 0x00080000
 LWA_ALPHA = 0x00000002
 PROGRAM_WINDOW_POLL_INTERVAL_SECONDS = 0.05
 SW_RESTORE = 9
+SW_SHOWNOACTIVATE = 4
 WM_SYSCOMMAND = 0x0112
 SC_MINIMIZE = 0xF020
 SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT = 0x0001 | 0x0002 | 0x0020
@@ -132,6 +133,7 @@ class AppRuntime:
 
         self._target_hwnd = None
         self._original_window_placement = None
+        self._window_size_prepared = False
         self._program_started_for_session = False
         self._startup_window_guard = None
 
@@ -288,6 +290,18 @@ class AppRuntime:
         return f"[화면 캡처: {screencap_name}{selection_suffix}]"
 
 
+    def _save_window_placement(self):
+        if self._original_window_placement is not None:
+            return True
+        if not self._target_hwnd or not self._user32.IsWindow(self._target_hwnd):
+            return False
+        placement = WindowPlacement()
+        placement.length = ctypes.sizeof(WindowPlacement)
+        if not self._user32.GetWindowPlacement(self._target_hwnd, ctypes.byref(placement)):
+            return False
+        self._original_window_placement = placement
+        return True
+
     def _resize_window_for_task(self, target_client_w=1280, target_client_h=720):
         if not self._target_hwnd or not self._user32.IsWindow(self._target_hwnd):
             return False
@@ -297,12 +311,13 @@ class AppRuntime:
         if not self._user32.GetWindowPlacement(self._target_hwnd, ctypes.byref(placement)):
             return False
 
-        if self._original_window_placement is None:
-            self._original_window_placement = placement
+        if not self._save_window_placement():
+            return False
 
         # 최소화 또는 최대화 상태에서는 먼저 일반 창으로 전환해야 client 크기를 맞출 수 있다.
         if self._user32.IsIconic(self._target_hwnd) or placement.show_cmd == 3:
-            self._user32.ShowWindow(self._target_hwnd, SW_RESTORE)
+            # SW_RESTORE activates the target and can undo SDK pseudo-minimize.
+            self._user32.ShowWindow(self._target_hwnd, SW_SHOWNOACTIVATE)
             time.sleep(0.1)
 
         window_rect = wintypes.RECT()
@@ -334,7 +349,7 @@ class AppRuntime:
         )
 
     def _minimize_window_for_task(self):
-        target_hwnd = self._target_hwnd
+        target_hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
         if not target_hwnd or not self._user32.IsWindow(target_hwnd):
             return False
 
@@ -355,7 +370,10 @@ class AppRuntime:
                 return False
             iconic = bool(self._user32.IsIconic(target_hwnd))
             foreground = self._user32.GetForegroundWindow()
-            if iconic and foreground and foreground != target_hwnd:
+            foreground = getattr(foreground, "value", foreground)
+            # No foreground window is valid during desktop/focus transitions;
+            # the SDK only reverts pseudo-minimize when this HWND is foreground.
+            if iconic and foreground != target_hwnd:
                 return True
             if attempt + 1 < WINDOW_MINIMIZE_CHECK_COUNT:
                 time.sleep(WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS)
@@ -470,6 +488,8 @@ class AppRuntime:
         cancellation_requested=None,
     ):
         self._target_hwnd = window.hwnd
+        if not self._save_window_placement():
+            return False, "자동 실행 창의 원래 상태를 저장하지 못했습니다."
         deadline = time.monotonic() + max(0, wait_timeout_seconds)
         while True:
             if cancellation_requested is not None and cancellation_requested():
@@ -481,6 +501,10 @@ class AppRuntime:
             if not self._apply_startup_window_guard(window.hwnd):
                 self._restore_startup_window_guard()
                 return False, "자동 실행 창의 입력 방지 상태를 유지하지 못했습니다."
+            if not self._window_size_prepared:
+                if not self._resize_window_for_task():
+                    return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
+                self._window_size_prepared = True
             if self._minimize_window_for_task():
                 if not self._restore_startup_window_guard():
                     return False, "최소화된 창의 원래 표시 상태를 복원하지 못했습니다."
@@ -600,6 +624,10 @@ class AppRuntime:
             except ValueError as error:
                 return False, str(error)
         self._target_hwnd = window.hwnd
+
+        # Connection's warm-up captures can change iconic/style/alpha state.
+        if not self._save_window_placement():
+            return False, "대상 창의 원래 상태를 저장하지 못했습니다."
 
         controller = Win32Controller(
             hWnd=window.hwnd,
@@ -782,6 +810,11 @@ class AppRuntime:
             if not created:
                 return False, create_message
 
+            if (pipeline_task_requested or execution_queue is None) and not self._window_size_prepared:
+                if not self._resize_window_for_task():
+                    return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
+                self._window_size_prepared = True
+
             executed, execute_message = self._execute_controller()
             if not executed:
                 return False, execute_message
@@ -852,7 +885,7 @@ class AppRuntime:
                 minimize_error += f" 작업 중지 요청에 실패했습니다: {error}"
 
         try:
-            if not self._resize_window_for_task(1280, 720):
+            if not self._window_size_prepared and not self._resize_window_for_task(1280, 720):
                 return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
 
             prepared_tasks = []
@@ -975,6 +1008,7 @@ class AppRuntime:
                 else:
                     self._target_hwnd = None
                 self._program_started_for_session = False
+                self._window_size_prepared = False
                 if cleanup_errors:
                     return False, " ".join(cleanup_errors)
                 return True, "Runtime 실행 상태를 정리했습니다."

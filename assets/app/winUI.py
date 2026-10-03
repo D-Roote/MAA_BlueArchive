@@ -1826,8 +1826,6 @@ class MainWindow(QMainWindow):
     def _sync_page_navigation(self, index):
         self.ui.dashboardNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.mainTab))
         self.ui.settingsNavButton.setChecked(index == self.ui.mainPages.indexOf(self.ui.settingTab))
-        if hasattr(self, "monitor") and index != self.ui.mainPages.indexOf(self.ui.mainTab):
-            self.monitor.stop_preview()
 
     def _setup_dashboard_layout(self):
         task_panel = self.ui.findChild(QWidget, "_1_settingStartWidget")
@@ -1859,6 +1857,7 @@ class MainWindow(QMainWindow):
         monitor_title.setObjectName("workspaceSectionTitle")
         log_layout.insertWidget(0, monitor_title)
         setup_rounded_vertical_scrollbar(self.ui.monitorScrollArea)
+        self.ui.monitorScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         sections = self.ui.monitorSectionsWidget
         section_layout = sections.layout()
@@ -1953,8 +1952,6 @@ class MainWindow(QMainWindow):
         button.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
-        if key == "screen" and not expanded and hasattr(self, "monitor"):
-            self.monitor.stop_preview()
         if key in ("screen", "log"):
             policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum
             section.setSizePolicy(QSizePolicy.Policy.Expanding, policy)

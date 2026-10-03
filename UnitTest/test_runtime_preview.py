@@ -1,12 +1,13 @@
 """Task-safe read-only previews: no second SDK window-state owner."""
 import ctypes
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import test_runtime_lifecycle as ui_fixtures
 from app.monitoring import ConnectionTarget, MonitoringDisconnected, PreviewNotReady
-from app.runtime import WindowPlacement
+from app.runtime import SW_SHOWNOACTIVATE, WindowPlacement
 
 
 class RuntimePreviewCacheTests(unittest.TestCase):
@@ -109,6 +110,97 @@ class RuntimePreviewCacheTests(unittest.TestCase):
         self.assertIs(self.runtime._original_window_placement, placement)
         self.assertEqual(self.runtime._target_hwnd, 42)
         self.assertTrue(self.runtime.release_session()[0])
+
+    def test_snapshot_precedes_sdk_constructor_and_connection_changes(self):
+        events = []
+        api = self.runtime._user32
+        def save(hwnd, ptr):
+            events.append("snapshot")
+            ptr._obj.show_cmd = 2
+            ptr._obj.normal_position.left = 120
+            return True
+        api.GetWindowPlacement.side_effect = save
+        controller = MagicMock(connected=True)
+        controller.post_connection.return_value = ui_fixtures.make_job()
+        def factory(**kwargs):
+            events.append("factory")
+            return controller
+        with patch("app.runtime.Win32Controller", side_effect=factory):
+            self.assertTrue(self.runtime._create_controller(window=SimpleNamespace(hwnd=42))[0])
+        controller.post_connection.side_effect = lambda: events.append("connection changes placement") or ui_fixtures.make_job()
+        self.assertTrue(self.runtime._execute_controller()[0])
+        restored = []
+        api.SetWindowPlacement.side_effect = lambda hwnd, ptr: restored.append(
+            (ptr._obj.show_cmd, ptr._obj.normal_position.left)) or True
+        self.assertTrue(self.runtime.release_session()[0])
+        self.assertEqual(events, ["snapshot", "factory", "connection changes placement"])
+        self.assertEqual(restored, [(2, 120)])
+
+    def test_resize_precedes_connection_and_is_not_repeated_under_sdk_helper(self):
+        events = []
+        self.runtime._toolkit_initialized = True
+        self.runtime.resource = MagicMock(loaded=True)
+        self.runtime._resource_loaded = True
+        controller = MagicMock(connected=True)
+        controller.post_connection.side_effect = lambda: events.append("connect") or ui_fixtures.make_job()
+        tasker = MagicMock(running=False, stopping=False, inited=True)
+        tasker.post_task.return_value = ui_fixtures.make_job()
+        def resize(*args):
+            self.assertEqual(controller.post_connection.call_count, 0)
+            events.append("resize")
+            return True
+        with patch("app.runtime.Win32Controller", return_value=controller), \
+                patch("app.runtime.Tasker", return_value=tasker), \
+                patch.object(self.runtime, "_find_target_window", return_value=(SimpleNamespace(hwnd=42), "found")), \
+                patch.object(self.runtime, "_resize_window_for_task", side_effect=resize):
+            self.assertTrue(self.runtime.initialize(execution_queue=[("Task", {})])[0])
+            self.assertTrue(self.runtime.run_task([("Task", {})])[0])
+        self.assertEqual(events, ["resize", "connect"])
+        self.assertFalse(self.runtime._window_size_prepared)
+
+    def test_resize_uses_nonactivating_restore_and_keeps_preconnection_snapshot(self):
+        self.runtime._target_hwnd = 42
+        api = self.runtime._user32
+        def save(hwnd, ptr):
+            ptr._obj.show_cmd = 2
+            return True
+        api.GetWindowPlacement.side_effect = save
+        api.IsIconic.return_value = True
+        self.assertTrue(self.runtime._save_window_placement())
+        original = self.runtime._original_window_placement
+        with patch("app.runtime.time.sleep"):
+            self.assertTrue(self.runtime._resize_window_for_task())
+        api.ShowWindow.assert_called_once_with(42, SW_SHOWNOACTIVATE)
+        api.SetForegroundWindow.assert_not_called()
+        self.assertIs(self.runtime._original_window_placement, original)
+
+    def test_pointer_handle_does_not_mistake_same_foreground_for_other_window(self):
+        self.runtime._target_hwnd = ctypes.c_void_p(42)
+        api = self.runtime._user32
+        api.IsIconic.return_value = True
+        api.GetForegroundWindow.return_value = 42
+        with patch("app.runtime.time.sleep"):
+            self.assertFalse(self.runtime._minimize_window_for_task())
+
+    def test_iconic_window_without_foreground_is_success_not_task_failure(self):
+        self.runtime._target_hwnd = 42
+        api = self.runtime._user32
+        api.IsIconic.return_value = True
+        api.GetForegroundWindow.return_value = None
+        self.assertTrue(self.runtime._minimize_window_for_task())
+        api.SendMessageTimeoutW.assert_called_once()
+        api.SetForegroundWindow.assert_not_called()
+
+    def test_startup_guard_saves_and_resizes_before_minimizing(self):
+        events = []
+        with patch.object(self.runtime, "_save_window_placement", side_effect=lambda: events.append("save") or True), \
+                patch.object(self.runtime, "_apply_startup_window_guard", side_effect=lambda hwnd: events.append("guard") or True), \
+                patch.object(self.runtime, "_resize_window_for_task", side_effect=lambda: events.append("resize") or True), \
+                patch.object(self.runtime, "_minimize_window_for_task", side_effect=lambda: events.append("minimize") or True), \
+                patch.object(self.runtime, "_restore_startup_window_guard", side_effect=lambda: events.append("unguard") or True):
+            self.assertTrue(self.runtime._prepare_started_window_for_minimized_connection(
+                SimpleNamespace(hwnd=42), 1)[0])
+        self.assertEqual(events, ["save", "guard", "resize", "minimize", "unguard"])
 
 
 class RuntimePreviewUITests(unittest.TestCase):

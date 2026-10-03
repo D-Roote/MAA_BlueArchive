@@ -24,6 +24,8 @@ class MonitoringServiceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.service = MonitoringService({"controller": [WIN32, ADB]}, {}, self.temp.name)
+        self.service._user32 = MagicMock()
+        self.service._user32.IsIconic.return_value = False
         self.toolkit = patch("app.monitoring.Toolkit").start()
         self.addCleanup(patch.stopall)
         self.toolkit.init_option.return_value = True
@@ -127,6 +129,16 @@ class MonitoringServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.connect("Android", "", {})
 
+    def test_manual_adb_capture_does_not_require_discovery_or_win32_window(self):
+        path = Path(self.temp.name) / "adb.exe"
+        path.touch()
+        controller = MagicMock(connected=True)
+        controller.post_screencap.return_value.wait.return_value.get.return_value = np.zeros((20, 40, 3), np.uint8)
+        with patch("app.monitoring.AdbController", return_value=controller):
+            self.service.connect("Android", "", {"adb_path": str(path), "address": "localhost:5555"})
+        self.assertEqual(self.service.capture().shape, (20, 40, 3))
+        self.service._user32.IsIconic.assert_not_called()
+
     def test_changed_adb_executable_does_not_reuse_old_device_configuration(self):
         old_path = Path(self.temp.name) / "old.exe"
         new_path = Path(self.temp.name) / "new.exe"
@@ -160,6 +172,74 @@ class MonitoringServiceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.service.close()
         self.assertIsNotNone(self.service.controller)
+
+    def test_preflight_restores_state_saved_before_sdk_pseudo_restore(self):
+        events = []
+        self.service.discover("Window")
+        api = self.service._user32
+        self.configure_pseudo_minimize()
+        def save(hwnd, ptr):
+            events.append("save")
+            ptr._obj.show_cmd = 2
+            return True
+        api.GetWindowPlacement.side_effect = save
+        controller = MagicMock(connected=True)
+        def factory(**kwargs):
+            events.append("factory")
+            return controller
+        controller.post_connection.side_effect = lambda: events.append("connect") or MagicMock()
+        controller.post_inactive.side_effect = lambda: events.append("inactive") or MagicMock()
+        api.SetWindowPlacement.side_effect = lambda hwnd, ptr: events.append(f"restore {ptr._obj.show_cmd}") or True
+        with patch("app.monitoring.Win32Controller", side_effect=factory):
+            self.service.connect("Window", "10")
+        self.service.close()
+        self.assertEqual(events, ["save", "factory", "connect", "inactive", "restore 2"])
+
+    def test_preflight_restore_failure_keeps_original_for_retry(self):
+        self.service.discover("Window")
+        self.configure_pseudo_minimize()
+        with patch("app.monitoring.Win32Controller", return_value=MagicMock(connected=True)):
+            self.service.connect("Window", "10")
+        placement = self.service._original_window_placement
+        self.service._user32.SetWindowPlacement.side_effect = [False, True]
+        with self.assertRaises(RuntimeError):
+            self.service.close()
+        self.assertIs(self.service._original_window_placement, placement)
+        self.service.close()
+        self.assertIsNone(self.service._original_window_placement)
+
+    def configure_pseudo_minimize(self):
+        api = self.service._user32
+        api.GetWindowLongPtrW.return_value = 0x00080000 | 0x20
+        def attributes(hwnd, color, alpha, flags):
+            alpha._obj.value = 0
+            flags._obj.value = 2
+            return True
+        api.GetLayeredWindowAttributes.side_effect = attributes
+
+    def test_idle_cleanup_does_not_undo_manual_geometry_or_minimize_without_sdk_mutation(self):
+        self.service.discover("Window")
+        controller = MagicMock(connected=True)
+        with patch("app.monitoring.Win32Controller", return_value=controller):
+            self.service.connect("Window", "10")
+        self.service._user32.GetWindowLongPtrW.return_value = 0
+        self.service.close()
+        self.service._user32.SetWindowPlacement.assert_not_called()
+        self.assertFalse(self.service.needs_cleanup)
+
+    def test_idle_minimized_preview_never_calls_sdk_capture(self):
+        self.service.discover("Window")
+        controller = self.service.controller = MagicMock(connected=True)
+        self.service.connected_target = self.service.targets[0]
+        self.service._user32.IsIconic.return_value = True
+        from app.monitoring import PreviewNotReady, MonitoringDisconnected
+        with self.assertRaises(PreviewNotReady):
+            self.service.capture()
+        controller.post_screencap.assert_not_called()
+        self.process.return_value = (0, "")
+        with self.assertRaises(MonitoringDisconnected):
+            self.service.capture()
+        controller.post_screencap.assert_not_called()
 
     def test_screen_preferences_do_not_accept_unsafe_rates(self):
         self.assertEqual(normalize_screen_preferences({"fps": 999, "mode": "anything"}), {"fps": 2, "mode": "single"})

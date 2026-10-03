@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
 
 from app.monitorFPS import DisplayFPS
 from app.monitoring import (
-    MonitoringDisconnected, MonitoringService, normalize_connection_preferences, normalize_screen_preferences,
+    ConnectionTarget, MonitoringDisconnected, MonitoringService, PreviewNotReady,
+    normalize_connection_preferences, normalize_screen_preferences,
 )
 
 
@@ -93,6 +94,7 @@ class ScreenPanel(QWidget):
 
     def __init__(self, preferences, parent=None):
         super().__init__(parent)
+        self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 4, 10, 10)
@@ -122,6 +124,10 @@ class ScreenPanel(QWidget):
         self.status = QLabel("단발 테스트는 요청할 때만 캡처합니다.")
         self.status.setObjectName("monitorStatus")
         self.status.setWordWrap(True)
+        self.status.setMinimumWidth(0)
+        status_policy = self.status.sizePolicy()
+        status_policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        self.status.setSizePolicy(status_policy)
         root.addWidget(self.status)
         self.mode.currentIndexChanged.connect(self._emit_preferences)
         self.fps.currentIndexChanged.connect(self._emit_preferences)
@@ -131,6 +137,7 @@ class ScreenPanel(QWidget):
         self.preferences_changed.emit({"mode": self.mode.currentData(), "fps": self.fps.currentData()})
 
     def sync(self, preferences, streaming, busy, available):
+        self.mode.setEnabled(not streaming)
         self.fps.setEnabled(preferences["mode"] == "continuous")
         self.capture_button.setText("모니터링 중지" if streaming else (
             "모니터링 시작" if preferences["mode"] == "continuous" else "스크린샷 테스트"
@@ -250,11 +257,13 @@ class MonitorOperation(QThread):
         super().__init__(parent)
         self.operation = operation
         self.outcome = None
+        self.error = None
 
     def run(self):
         try:
             self.outcome = (True, self.operation())
         except Exception as error:
+            self.error = error
             self.outcome = (False, str(error))
 
 
@@ -292,6 +301,10 @@ class MonitorCoordinator(QObject):
         screen_layout.setContentsMargins(0, 0, 0, 0)
         screen_layout.addWidget(self.screen)
         self.streaming = False
+        self._last_preview_error = ""
+        self._preview_retrying = False
+        self._resume_connection = None
+        self._runtime_resume_saved = False
         self.preview_generation = 0
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
@@ -332,7 +345,7 @@ class MonitorCoordinator(QObject):
 
     @property
     def ready_to_close(self):
-        return not self.busy and self.service.controller is None
+        return not self.busy and not self.service.needs_cleanup
 
     def _sync(self):
         status = "작업 실행 중 화면은 실행 캐시를 사용합니다. 대상 변경은 종료 후 가능합니다." if self.window.isRunning else self.status
@@ -340,6 +353,11 @@ class MonitorCoordinator(QObject):
             panel.sync(self.service.presets, self.preset_name, self.targets, self.target_key,
                        self.preferences, status, self.busy or self.streaming, self.window.isRunning,
                        self.service.controller is not None)
+            panel.disconnect_button.setEnabled(
+                not self.shutting_down and self.pending_start is None
+                and (self.service.needs_cleanup or self.streaming)
+                and (not self.busy or self.worker.kind == "frame")
+            )
         available = (not self.shutting_down and self.pending_start is None
                      and (self.window.isRunning or self.service.controller is not None))
         self.screen.sync(self.screen_preferences, self.streaming, self.busy, available)
@@ -351,25 +369,45 @@ class MonitorCoordinator(QObject):
     def _refresh_display_fps(self):
         if not self.streaming:
             return
+        self.display_fps.set_target(self.screen_preferences["fps"])
         if not self.screen.preview.canvas.isVisible():
             # Hidden previews cannot paint; do not report this as capture failure.
             self.display_fps.reset()
             return
-        if self.display_fps.sample() and self._frame_details is not None:
-            # Keep temporary connection/capture error messages until recovery.
-            if "재시도 중" not in self.screen.status.text():
-                self.screen.status.setText(self._continuous_status())
+        if self.display_fps.sample() and (self._frame_details is not None or self._preview_retrying):
+            self.screen.status.setText(self._continuous_status())
 
     def _continuous_status(self):
-        width, height, source = self._frame_details
-        return (f"화면 너비 {width} 높이 {height}  "
-                f"{self.display_fps.describe(self.screen_preferences['fps'])}  {source}")
+        source = "실행 캐시" if self.window.isRunning else "테스트 캡처"
+        if self._frame_details is not None:
+            _width, _height, source = self._frame_details
+        if self._preview_retrying:
+            source = f"{source}  {self._last_preview_error}  연속 모니터링 재시도 중"
+        return f"{source}  {self.display_fps.describe(self.screen_preferences['fps'])}"
 
     def change_screen_preferences(self, preferences):
-        self.stop_preview()
+        previous_fps = self.screen_preferences["fps"]
         self.screen_preferences = normalize_screen_preferences(preferences)
+        self.display_fps.set_target(self.screen_preferences["fps"])
+        if self.streaming:
+            # Mode selection is disabled while active; changing FPS is live.
+            self.screen_preferences["mode"] = "continuous"
+            if previous_fps != self.screen_preferences["fps"]:
+                self.display_fps.reset()
+                self.fps_timer.start()
+                if self._frame_details is not None or self._preview_retrying:
+                    self.screen.status.setText(self._continuous_status())
         self.window.settings_panel.save_monitor_preferences(screen=self.screen_preferences)
         self._sync()
+        if self.streaming and not self.busy:
+            self._schedule_preview()
+
+    def _schedule_preview(self, elapsed=0, *, retry=False):
+        if not self.streaming or self.shutting_down or self.pending_start is not None:
+            return False
+        interval = 0.25 if retry else 1 / self.screen_preferences["fps"]
+        self.preview_timer.start(max(1, round((interval - elapsed) * 1000)))
+        return True
 
     def stop_preview(self):
         was_active = self.streaming or (self.worker is not None and self.worker.kind == "frame")
@@ -378,6 +416,8 @@ class MonitorCoordinator(QObject):
         self.display_fps.reset()
         self._frame_details = None
         self.streaming = False
+        self._resume_connection = None
+        self._preview_retrying = False
         self.preview_generation += 1
         if was_active:
             self.screen.status.setText("화면 표시를 중지했습니다. 마지막 화면은 유지됩니다.")
@@ -391,19 +431,21 @@ class MonitorCoordinator(QObject):
         if self.busy or self.shutting_down or self.pending_start is not None or not self.screen_content.isVisible():
             return
         self.streaming = self.screen_preferences["mode"] == "continuous"
+        self.display_fps.set_target(self.screen_preferences["fps"])
         self.display_fps.reset()
         self._frame_details = None
         if self.streaming:
             self.fps_timer.start()
+        self._last_preview_error = ""
+        self._preview_retrying = False
         self._sync()
         self.capture_frame()
 
     def capture_frame(self):
-        if self.busy or self.shutting_down or not self.screen_content.isVisible():
-            self.stop_preview()
+        if self.busy or self.shutting_down or self.pending_start is not None:
             return
         running = self.window.isRunning
-        if not running and self.service.controller is None:
+        if not running and self.service.controller is None and not self.streaming:
             self.stop_preview()
             self.screen.status.setText("먼저 연결 확인을 완료하세요.")
             return
@@ -412,16 +454,34 @@ class MonitorCoordinator(QObject):
         def capture():
             started = monotonic()
             source = "테스트 캡처"
+            resume = None
             if running:
-                # Only read the task cache: SDK capture units own window state.
+                # Win32 capture units own pseudo-minimize styles, alpha and
+                # restore state even with input disabled. Never create a second
+                # controller, enqueue captures or inactive while a task owns it.
                 frame = self.window.runtime.capture_cached_frame()
                 source = "실행 캐시 작업 화면 갱신 주기에 따라 표시"
+                if not self._runtime_resume_saved:
+                    try:
+                        resume = self.window.runtime.preview_connection_target()
+                    except Exception:
+                        pass  # Metadata is optional; never interrupt cache display.
             else:
+                if self.service.controller is None and self.streaming:
+                    if self._resume_connection is None:
+                        raise PreviewNotReady("화면 캡처 연결이 준비되기를 기다리고 있습니다.")
+                    name, target, preferences = self._resume_connection
+                    if self.service.preset(name)["type"] == "Win32":
+                        self.service.ensure_preview_available(target)
+                    try:
+                        self.service.connect(name, target, preferences)
+                    except ValueError as error:
+                        raise MonitoringDisconnected(str(error)) from error
                 frame = self.service.capture()
             return {"image": owned_qimage(frame), "elapsed": monotonic() - started,
-                    "source": source, "epoch": epoch}
+                    "source": source, "epoch": epoch, "resume": resume}
 
-        if not self.streaming or self.screen.preview.image.isNull():
+        if not self.streaming or (self.screen.preview.image.isNull() and not self._last_preview_error):
             self.screen.status.setText("화면을 가져오고 있습니다…")
         self._request("frame", capture)
 
@@ -476,7 +536,7 @@ class MonitorCoordinator(QObject):
         self.status = "설정이 변경되었습니다. 연결을 다시 확인하세요."
         self.pending_reset = True
         if not self.busy:
-            if self.service.controller is not None:
+            if self.service.needs_cleanup:
                 self._request("disconnect", self.service.close)
             else:
                 self.pending_reset = False
@@ -503,24 +563,49 @@ class MonitorCoordinator(QObject):
         worker.deleteLater()
         if kind == "frame":
             if succeeded and result["epoch"] == self.preview_generation and generation == self.generation:
+                resume = result.get("resume")
+                if isinstance(resume, tuple) and len(resume) == 2 and isinstance(resume[1], ConnectionTarget):
+                    name, target = resume
+                    if any(p["name"] == name and p["type"] == "Win32" for p in self.service.presets):
+                        # Save identity only. No second controller until isRunning
+                        # becomes false, AFTER both runtime callbacks/cleanup.
+                        self.service.targets = [target]
+                        self.service._discovered_preset = name
+                        self._resume_connection = (name, target.key, dict(self.preferences))
+                        self._runtime_resume_saved = True
                 image = result["image"]
                 self.screen.preview.set_image(image)
+                self._preview_retrying = False
                 self._frame_details = (image.width(), image.height(), result["source"])
                 status = (self._continuous_status()
                           if self.streaming else
-                          f"화면 너비 {image.width()} 높이 {image.height()}  캡처 {result['elapsed'] * 1000:.0f} ms  {result['source']}")
+                          f"{result['source']}  캡처 {result['elapsed'] * 1000:.0f} ms")
                 if self.screen.status.text() != status:
                     self.screen.status.setText(status)
-                if self.streaming and not self.shutting_down and self.pending_start is None:
-                    interval = 1 / self.screen_preferences["fps"]
-                    self.preview_timer.start(max(1, round((interval - result["elapsed"]) * 1000)))
+                if self._schedule_preview(result["elapsed"]):
                     # Continuous capture is one UI session, not a busy/idle toggle per frame.
                     return
             elif (not succeeded and generation == self.generation
                   and worker.preview_generation == self.preview_generation):
-                self.stop_preview()
-                self.screen.status.setText(str(result))
-                self.window.append_log(f"화면 확인: {result}")
+                if self.streaming and not isinstance(worker.error, MonitoringDisconnected):
+                    message = str(result)
+                    self._last_preview_error = message
+                    self._preview_retrying = True
+                    status = self._continuous_status()
+                    if self.screen.status.text() != status:
+                        self.screen.status.setText(status)
+                    if self._schedule_preview(retry=True):
+                        return
+                else:
+                    disconnected = isinstance(worker.error, MonitoringDisconnected)
+                    was_streaming = self.streaming
+                    self.stop_preview()
+                    self.screen.status.setText(str(result))
+                    if not was_streaming:
+                        self.window.append_log(f"화면 확인: {result}")
+                    if disconnected:
+                        self.status = str(result)
+                        self.pending_reset = True
         elif generation == self.generation or (kind == "disconnect" and not succeeded):
             if not succeeded:
                 self.status = str(result)
@@ -537,7 +622,7 @@ class MonitorCoordinator(QObject):
             self.pending_start = None
             self.pending_reset = False
         elif self.pending_reset or self.pending_start is not None or self.shutting_down:
-            if self.service.controller is not None:
+            if self.service.needs_cleanup:
                 self._request("disconnect", self.service.close)
                 return
             self.pending_reset = False
@@ -547,6 +632,12 @@ class MonitorCoordinator(QObject):
                 callback = self.pending_start
                 self.pending_start = None
                 QTimer.singleShot(0, callback)
+                self._sync()
+                self.busy_changed.emit()
+                return
+        if kind == "frame" and self._schedule_preview():
+            # A stale result from a task-state handoff must not end the session.
+            return
         self._sync()
         self.busy_changed.emit()
 
@@ -569,26 +660,39 @@ class MonitorCoordinator(QObject):
         self._request("connect", lambda: self.service.connect(name, target, preferences))
 
     def disconnect_target(self):
-        if not self.window.isRunning:
-            self.stop_preview()
-            self.screen.preview.set_image(QImage())
-            if self.busy:
-                self.generation += 1
-                self.pending_reset = True
-            else:
-                self._request("disconnect", self.service.close)
-
-    def task_state_changed(self):
         self.stop_preview()
         self.screen.preview.set_image(QImage())
-        self.screen.status.setText("실행 중에는 SDK의 마지막 캐시 화면을 표시합니다." if self.window.isRunning
-                                   else "실행이 끝났습니다. 연결 확인 후 다시 테스트하세요.")
+        if self.busy:
+            self.generation += 1
+            self.pending_reset = True
+        else:
+            self._request("disconnect", self.service.close)
+
+    def task_state_changed(self):
+        self.preview_timer.stop()
+        self.preview_generation += 1
+        if self.window.isRunning:
+            self._runtime_resume_saved = False
+        if self.service.connected_target is not None:
+            self.status = f"연결 성공 · {self.service.connected_target.label}"
+        if self.streaming:
+            self.display_fps.reset()
+            self.fps_timer.start()
+            self.screen.status.setText(self._continuous_status())
+            if not self.busy:
+                self._schedule_preview()
+        else:
+            self.screen.status.setText("작업 중에는 실행 캐시로 화면을 표시합니다." if self.window.isRunning
+                                       else "실행이 끝났습니다. 화면 연결 상태를 확인하세요.")
         self._sync()
 
     def prepare_task_start(self, callback):
-        self.stop_preview()
-        if not self.busy and self.service.controller is None:
+        if not self.busy and not self.service.needs_cleanup:
             return False
+        self.preview_timer.stop()
+        self.preview_generation += 1
+        if self.streaming and self.service.connected_target is not None:
+            self._resume_connection = (self.preset_name, self.target_key, dict(self.preferences))
         self.generation += 1
         self.pending_start = callback
         if not self.busy:
@@ -600,5 +704,5 @@ class MonitorCoordinator(QObject):
         self.stop_preview()
         self.shutting_down = True
         self.generation += 1
-        if not self.busy and self.service.controller is not None:
+        if not self.busy and self.service.needs_cleanup:
             self._request("disconnect", self.service.close)
