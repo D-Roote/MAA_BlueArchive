@@ -1,5 +1,26 @@
 # 연결·화면 모니터 구현 기록
 
+## 2026-10-04 — 캡처 컨트롤러 간섭 및 FPS 경고 수정
+
+- 실행 중 별도 SDK 컨트롤러를 제거하고 작업 캐시 읽기만 수행한다. PrintWindow/FramePool의 PseudoMinimizeHelper는 입력과 무관하게 창 스타일/투명도/복원을 관리하므로 같은 HWND의 동시 제어는 안전하지 않다. [공식 구현](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaWin32ControlUnit/Screencap/PseudoMinimizeHelper.cpp).
+- Null(0)은 SDK make_input에서 오류 로그를 발생시키므로 유휴 진단 연결은 지원되는 PostMessage를 사용한다. 실제 입력은 보내지 않고 작업 프리셋은 유지한다.
+- 작업/중지 완료 후 SDK inactive/컨트롤러 파괴가 끝나면 원래 위치·크기·상태를 복원한다. 시작 전 이미 최소화 상태였다면 그대로 복원하고 실패 시 원본을 보존한다.
+- 경고 문구는 기호/퍼센트 없이 목표/출력 FPS를 표시한다. 목표 1~15 FPS는 출력 0/미달/초과에도 경고하지 않는다. 목표 15 초과에서 FPS 절댓값 차이 기준 max(1, ceil(목표/4))를 적용한다. 실행 중 새 이미지 갱신은 작업 캐시 주기에 종속된다.
+- wait_freezes의 pre_image=true 오류는 비교용 첫 캡처가 빈 상황이며, 동시 컨트롤러 간섭 제거 후에도 재현되면 해당 노드/캡처 방식의 실제 게임 검증이 필요하다. 파이프라인 JSON은 수정하지 않는다.
+
+## 2026-10-04 — 연속 모니터링 유지 및 실행 중 캡처 개선 설계
+
+아래는 최초 설계·검증의 이력이다. 별도 Win32 컨트롤러/Null 입력/10% 경고 정책은 위 수정으로 폐기되었다.
+
+- 원인: 실행 중 미리보기는 `AppRuntime.capture_cached_frame()`만 사용한다. 캐시는 작업의 인식/액션/지연 주기에서만 갱신되므로 표시 FPS를 올려도 새 화면 수가 늘지 않는다. FPS 변경, 작업 시작/완료, 접기/페이지 이동, 일시적 캡처 오류도 현재 스트림을 중지한다.
+- 연속 모니터링의 사용자 실행 의도와 일시적인 작업/연결 전환 대기를 분리한다. FPS 변경은 다음 예약 간격에 반영하고, 작업 시작/완료 및 숨겨진 화면에서도 실행 의도를 유지한다. 사용자의 중지, 실제 연결 해제/대상 변경, 프로그램 종료 시만 해제한다. 일시적 오류는 마지막 이미지를 유지하고 제한된 주기로 재시도하며 같은 오류 로그를 반복하지 않는다.
+- 실행 컨트롤러에는 추가 `post_screencap()` 요청을 보내지 않는다. 실제 작업의 HWND/캡처 프리셋 스냅샷으로 별도의 Win32 캡처 전용 컨트롤러를 연결한다. 입력 방법은 공식 `MaaWin32InputMethodEnum.Null`로 비활성화하고, 작업의 클릭/입력/캡처 큐와 분리한다. 초기화/정리 중에는 준비 대기, 일시적 독립 연결 실패에는 실행 캐시를 보조 경로로 사용한다. 목표 FPS는 상한이며 SDK/OS/CPU 성능에 따른 실효 FPS를 보장하지 않는다.
+- 근거: [v5.12.3 Python Controller](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/binding/Python/maa/controller.py), [ControllerAgent 큐](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaFramework/Controller/ControllerAgent.cpp), [Win32 입력/캡처 정의](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/include/MaaFramework/MaaDef.h).
+- 검증: 상태 변경/FPS 변경/접기/페이지 이동/작업 시작·완료/준비 지연/일시적 오류/수동 중지/연결 끊김/창 닫기, 요청 직렬화, 오래된 결과 무시, 작업 큐 무간섭, 입력 없는 별도 컨트롤러 및 이미지 소유권을 회귀 테스트한다. 실게임 FPS 측정은 별도의 사용자 검증이 필요하다.
+- Git: 현재 `feature/Codex`는 `feature/TaskJSON`의 조상이다(0 ahead/4 behind). Codex를 현재 TaskJSON까지 FF → 기능별 Codex 커밋 → TaskJSON을 Codex까지 FF 후 원래 브랜치로 복귀한다. 파이프라인 미커밋 수정/미추적 파일은 해시를 비교해 보존하며 이번 코드 커밋에 포함하지 않는다. 원격은 수정하지 않는다.
+- 진행 1 완료: 실제 HWND/프리셋 스냅샷과 입력 없는 독립 Win32 캡처 큐 구현. 연결은 한 세션에서 재사용하고 실패 시 1초 간격으로 재시도하며 실행 캐시로 보조한다. QImage 소유권은 유지하면서 불필요한 검증용 이미지 복사 1회를 제거했다. 신규 회귀 10개 및 전체 UnitTest 231개 통과; 연속 유지 로직은 다음 기능 단위에서 진행한다.
+- 직전 Fix amend: 화면 하단에 목표 FPS와 실제 출력 FPS를 함께 표시한다. 새 이미지가 실제 `paintEvent`에서 그려진 횟수를 monotonic 경과 시간으로 나누고, 1초마다 표시를 갱신한다. 일반 재노출/크기 변경 repaint 및 그리기 전에 합쳐진 프레임은 중복 계산하지 않는다. 초기 측정 중에는 경고하지 않고, 목표 대비 절대 편차가 10% 이상이면 하락 시 `성능 미달`, 초과 시 `FPS 편차` 경고를 표시한다. 화면이 숨겨져 그리지 못하는 상태는 성능 실패로 계산하지 않으며 중지 시 측정 타이머도 종료한다. 신규 회귀 11개 통과. [Qt paintEvent](https://doc.qt.io/qt-6/qwidget.html#paintEvent), [QTimer 정확도](https://doc.qt.io/qt-6/qtimer.html#accuracy-and-timer-resolution) 기준.
+
 ## 작업 완료 후 동작 — 구현 완료
 
 ### 직전 커밋 추가 수정 — 광학 정렬 및 컨트롤러별 UI

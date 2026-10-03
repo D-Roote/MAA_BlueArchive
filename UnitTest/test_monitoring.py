@@ -65,6 +65,9 @@ class MonitoringServiceTests(unittest.TestCase):
         with patch("app.monitoring.Win32Controller", return_value=controller) as factory:
             self.assertEqual(self.service.connect("Window", "10").key, "10")
             self.assertEqual(factory.call_args.kwargs["hWnd"], 10)
+            from maa.define import MaaWin32InputMethodEnum
+            self.assertEqual(factory.call_args.kwargs["mouse_method"], MaaWin32InputMethodEnum.PostMessage)
+            self.assertEqual(factory.call_args.kwargs["keyboard_method"], MaaWin32InputMethodEnum.PostMessage)
         controller.post_click.assert_not_called()
         self.service.close()
         controller.post_inactive.assert_called_once()

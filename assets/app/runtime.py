@@ -132,7 +132,6 @@ class AppRuntime:
 
         self._target_hwnd = None
         self._original_window_placement = None
-        self._preserve_minimized_window = False
         self._program_started_for_session = False
         self._startup_window_guard = None
 
@@ -842,7 +841,6 @@ class AppRuntime:
                 return
             try:
                 if self._minimize_window_for_task():
-                    self._preserve_minimized_window = True
                     return
                 minimize_error = "대상 창의 최소화 또는 전경 전환을 완료하지 못했습니다."
             except Exception as error:
@@ -916,12 +914,32 @@ class AppRuntime:
 
     def capture_cached_frame(self):
         """Read only: preview must never enqueue extra captures during a task."""
-        from app.monitoring import MonitoringService
+        from app.monitoring import MonitoringDisconnected, MonitoringService, PreviewNotReady
         with self._task_post_lock:
             controller = self.controller
-            if controller is None or not controller.connected:
-                raise RuntimeError("실행 컨트롤러가 아직 준비되지 않았습니다.")
+            if controller is None:
+                raise PreviewNotReady("실행 컨트롤러가 아직 준비되지 않았습니다.")
+            if not controller.connected:
+                hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
+                if hwnd and not self._user32.IsWindow(hwnd):
+                    raise MonitoringDisconnected("작업 대상 창이 종료되어 연결이 해제되었습니다.")
+                raise PreviewNotReady("실행 컨트롤러가 아직 준비되지 않았습니다.")
             return MonitoringService.validate_frame(controller.cached_image)
+
+    def preview_connection_target(self):
+        """Read-only identity for reconnecting diagnostics AFTER task cleanup."""
+        from app.monitoring import ConnectionTarget, PreviewNotReady, window_process_info
+        with self._task_post_lock:
+            hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
+            if self.controller is None or not self.controller.connected or not hwnd:
+                raise PreviewNotReady("작업 대상 정보가 아직 준비되지 않았습니다.")
+            pid, path = window_process_info(int(hwnd))
+            if not pid:
+                raise PreviewNotReady("작업 대상 정보를 확인할 수 없습니다.")
+            name = self.controller_config["name"]
+            target = ConnectionTarget(str(hwnd), f"{name} PID {pid}", "Win32", int(hwnd),
+                                      process_path=path, pid=pid)
+            return name, target
 
     def release_session(self):
         """정지 완료 후 Tasker, 컨트롤러, 창 상태 순서로 실행 상태를 정리한다."""
@@ -951,12 +969,7 @@ class AppRuntime:
                 if not self._restore_startup_window_guard():
                     cleanup_errors.append("자동 실행 창의 입력 방지 상태를 해제하지 못했습니다.")
 
-                if self._preserve_minimized_window:
-                    # 사용자가 요청한 최소화 상태는 세션 정리 후에도 유지한다.
-                    self._original_window_placement = None
-                    self._target_hwnd = None
-                    self._preserve_minimized_window = False
-                elif self._original_window_placement is not None:
+                if self._original_window_placement is not None:
                     if not self._restore_window():
                         cleanup_errors.append("창을 원래 상태로 복원하지 못했습니다.")
                 else:

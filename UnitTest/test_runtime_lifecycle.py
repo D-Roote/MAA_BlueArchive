@@ -928,7 +928,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         user32.SendMessageTimeoutW.side_effect = delivered
         self.assertTrue(self.runtime._minimize_window_for_task())
 
-    def test_minimized_run_does_not_restore_window_during_session_release(self):
+    def test_minimized_run_restores_original_window_during_session_release(self):
         tasker = MagicMock(running=False, stopping=False)
         job = tasker.post_task.return_value = make_job()
         def user_restores_window():
@@ -951,10 +951,9 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(succeeded)
         self.runtime._user32.SendMessageTimeoutW.assert_called_once()
         self.runtime._user32.ShowWindow.assert_not_called()
-        self.runtime._user32.SetWindowPlacement.assert_not_called()
+        self.runtime._user32.SetWindowPlacement.assert_called_once()
         self.assertIsNone(self.runtime._target_hwnd)
         self.assertIsNone(self.runtime._original_window_placement)
-        self.assertFalse(self.runtime._preserve_minimized_window)
 
     def test_launch_guard_finishes_before_tasker_and_minimize_at_first_action(self):
         for newly_started in (True, False):
@@ -1816,7 +1815,7 @@ class UILifecycleTests(unittest.TestCase):
         controller.post_screencap.assert_called_once()
         self.assertEqual(screen.preview.image.size(), QSize(160, 90))
         self.assertEqual(screen.preview.image.pixelColor(0, 0).name(), "#ff0000")
-        self.assertIn("160 × 90", screen.status.text())
+        self.assertIn("화면 너비 160 높이 90", screen.status.text())
         self.assertFalse(self.window.monitor.preview_timer.isActive())
         drawn = screen.preview.image_rect()
         self.assertAlmostEqual(drawn.width() / drawn.height(), 160 / 90, delta=0.03)

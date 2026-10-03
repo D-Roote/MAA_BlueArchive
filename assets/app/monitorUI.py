@@ -8,24 +8,28 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from app.monitorFPS import DisplayFPS
 from app.monitoring import (
-    MonitoringService, normalize_connection_preferences, normalize_screen_preferences,
+    MonitoringDisconnected, MonitoringService, normalize_connection_preferences, normalize_screen_preferences,
 )
 
 
 def owned_qimage(frame):
     """SDK BGR buffers must not outlive their owner through a borrowed QImage."""
-    frame = MonitoringService.validate_frame(frame)
+    frame = MonitoringService.validate_frame(frame, copy=False)
     height, width, _ = frame.shape
     return QImage(frame.data, width, height, frame.strides[0], QImage.Format.Format_BGR888).copy()
 
 
 class ScreenImageCanvas(QWidget):
     """Opaque frame surface: invalidate pixels here, not the surrounding cards."""
+    frame_presented = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.image = QImage()
+        self.frame_pending = False
 
     def event(self, event):
         handled = super().event(event)
@@ -51,6 +55,10 @@ class ScreenImageCanvas(QWidget):
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "연결 확인 후 화면을 테스트하세요")
         else:
             painter.drawImage(self.image_rect(), self.image)
+        painter.end()
+        if self.frame_pending and not self.image.isNull():
+            self.frame_pending = False
+            self.frame_presented.emit()
 
 
 class ScreenPreview(QFrame):
@@ -72,6 +80,7 @@ class ScreenPreview(QFrame):
 
     def set_image(self, image):
         self.canvas.image = image
+        self.canvas.frame_pending = not image.isNull()
         self.canvas.update()
 
     def image_rect(self):
@@ -286,7 +295,15 @@ class MonitorCoordinator(QObject):
         self.preview_generation = 0
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
+        self.preview_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.preview_timer.timeout.connect(self.capture_frame)
+        self.display_fps = DisplayFPS()
+        self._frame_details = None
+        self.fps_timer = QTimer(self)
+        self.fps_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.fps_timer.setInterval(1000)
+        self.fps_timer.timeout.connect(self._refresh_display_fps)
+        self.screen.preview.canvas.frame_presented.connect(self._frame_presented)
         self.screen.preferences_changed.connect(self.change_screen_preferences)
         self.screen.capture_requested.connect(self.toggle_capture)
         self.panels = [ConnectionPanel(section_content), ConnectionPanel(window.settings_panel)]
@@ -318,7 +335,7 @@ class MonitorCoordinator(QObject):
         return not self.busy and self.service.controller is None
 
     def _sync(self):
-        status = "작업 실행 중 · 작업 컨트롤러 사용, 사전 재연결은 종료 후 가능합니다." if self.window.isRunning else self.status
+        status = "작업 실행 중 화면은 실행 캐시를 사용합니다. 대상 변경은 종료 후 가능합니다." if self.window.isRunning else self.status
         for panel in self.panels:
             panel.sync(self.service.presets, self.preset_name, self.targets, self.target_key,
                        self.preferences, status, self.busy or self.streaming, self.window.isRunning,
@@ -326,6 +343,27 @@ class MonitorCoordinator(QObject):
         available = (not self.shutting_down and self.pending_start is None
                      and (self.window.isRunning or self.service.controller is not None))
         self.screen.sync(self.screen_preferences, self.streaming, self.busy, available)
+
+    def _frame_presented(self):
+        if self.streaming:
+            self.display_fps.presented()
+
+    def _refresh_display_fps(self):
+        if not self.streaming:
+            return
+        if not self.screen.preview.canvas.isVisible():
+            # Hidden previews cannot paint; do not report this as capture failure.
+            self.display_fps.reset()
+            return
+        if self.display_fps.sample() and self._frame_details is not None:
+            # Keep temporary connection/capture error messages until recovery.
+            if "재시도 중" not in self.screen.status.text():
+                self.screen.status.setText(self._continuous_status())
+
+    def _continuous_status(self):
+        width, height, source = self._frame_details
+        return (f"화면 너비 {width} 높이 {height}  "
+                f"{self.display_fps.describe(self.screen_preferences['fps'])}  {source}")
 
     def change_screen_preferences(self, preferences):
         self.stop_preview()
@@ -336,6 +374,9 @@ class MonitorCoordinator(QObject):
     def stop_preview(self):
         was_active = self.streaming or (self.worker is not None and self.worker.kind == "frame")
         self.preview_timer.stop()
+        self.fps_timer.stop()
+        self.display_fps.reset()
+        self._frame_details = None
         self.streaming = False
         self.preview_generation += 1
         if was_active:
@@ -350,6 +391,10 @@ class MonitorCoordinator(QObject):
         if self.busy or self.shutting_down or self.pending_start is not None or not self.screen_content.isVisible():
             return
         self.streaming = self.screen_preferences["mode"] == "continuous"
+        self.display_fps.reset()
+        self._frame_details = None
+        if self.streaming:
+            self.fps_timer.start()
         self._sync()
         self.capture_frame()
 
@@ -366,9 +411,15 @@ class MonitorCoordinator(QObject):
 
         def capture():
             started = monotonic()
-            frame = self.window.runtime.capture_cached_frame() if running else self.service.capture()
+            source = "테스트 캡처"
+            if running:
+                # Only read the task cache: SDK capture units own window state.
+                frame = self.window.runtime.capture_cached_frame()
+                source = "실행 캐시 작업 화면 갱신 주기에 따라 표시"
+            else:
+                frame = self.service.capture()
             return {"image": owned_qimage(frame), "elapsed": monotonic() - started,
-                    "source": "실행 캐시" if running else "테스트 캡처", "epoch": epoch}
+                    "source": source, "epoch": epoch}
 
         if not self.streaming or self.screen.preview.image.isNull():
             self.screen.status.setText("화면을 가져오고 있습니다…")
@@ -454,9 +505,10 @@ class MonitorCoordinator(QObject):
             if succeeded and result["epoch"] == self.preview_generation and generation == self.generation:
                 image = result["image"]
                 self.screen.preview.set_image(image)
-                status = (f"{image.width()} × {image.height()} · {self.screen_preferences['fps']} FPS · {result['source']}"
+                self._frame_details = (image.width(), image.height(), result["source"])
+                status = (self._continuous_status()
                           if self.streaming else
-                          f"{image.width()} × {image.height()} · {result['elapsed'] * 1000:.0f} ms · {result['source']}")
+                          f"화면 너비 {image.width()} 높이 {image.height()}  캡처 {result['elapsed'] * 1000:.0f} ms  {result['source']}")
                 if self.screen.status.text() != status:
                     self.screen.status.setText(status)
                 if self.streaming and not self.shutting_down and self.pending_start is None:

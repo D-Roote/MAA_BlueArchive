@@ -1,4 +1,4 @@
-"""Isolated, input-free controller diagnostics; no Tasker or resource loading."""
+"""Idle-only controller diagnostics; no input actions, Tasker or resources."""
 
 from copy import deepcopy
 import ctypes
@@ -90,6 +90,16 @@ class ConnectionTarget:
     pid: int = 0
 
 
+class MonitoringDisconnected(RuntimeError):
+    """The selected capture connection has actually been lost."""
+
+
+class PreviewNotReady(RuntimeError):
+    """A runtime handoff is still initializing; it is safe to retry."""
+
+
+
+
 class MonitoringService:
     def __init__(self, interface, resource_config, user_dir):
         self.presets = supported_presets(interface, resource_config)
@@ -179,8 +189,10 @@ class MonitoringService:
             config = preset["win32"]
             methods = {
                 "screencap_method": MaaWin32ScreencapMethodEnum[config.get("screencap", "Background")],
-                "mouse_method": MaaWin32InputMethodEnum[config.get("mouse", "PostMessageWithWindowPos")],
-                "keyboard_method": MaaWin32InputMethodEnum[config.get("keyboard", "PostMessage")],
+                # A supported, guard-free method; diagnostics never post input.
+                # Null (0) logs Unknown input method in MaaFramework 5.12.3.
+                "mouse_method": MaaWin32InputMethodEnum.PostMessage,
+                "keyboard_method": MaaWin32InputMethodEnum.PostMessage,
             }
             factory = lambda: Win32Controller(hWnd=target.hwnd, **methods)
         else:
@@ -219,18 +231,22 @@ class MonitoringService:
             raise
 
     @staticmethod
-    def validate_frame(image):
+    def validate_frame(image, *, copy=True):
         if not isinstance(image, np.ndarray) or image.dtype != np.uint8:
             raise ValueError("캡처 이미지 형식이 올바르지 않습니다.")
         if image.ndim != 3 or image.shape[2] != 3 or not image.size:
             raise ValueError("캡처 이미지가 비어 있거나 BGR 형식이 아닙니다.")
-        return np.ascontiguousarray(image).copy()
+        contiguous = np.ascontiguousarray(image)
+        return contiguous.copy() if copy else contiguous
+
 
     def capture(self):
         if self.controller is None or not self.controller.connected:
-            raise RuntimeError("먼저 연결 확인을 완료하세요.")
+            raise MonitoringDisconnected("캡처 연결이 해제되었습니다. 다시 연결 확인을 완료하세요.")
         job = self.controller.post_screencap().wait()
         if not job.succeeded:
+            if not self.controller.connected:
+                raise MonitoringDisconnected("캡처 중 연결이 해제되었습니다.")
             raise RuntimeError("스크린샷 캡처에 실패했습니다.")
         return self.validate_frame(job.get())
 
