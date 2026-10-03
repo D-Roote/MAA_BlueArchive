@@ -59,8 +59,8 @@ class ScreenPreview(QFrame):
         self.setObjectName("screenPreview")
         self.setAccessibleName("스크린샷 미리보기")
         self.setMinimumWidth(0)
-        self.setFixedHeight(180)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(120)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         self.canvas = ScreenImageCanvas(self)
@@ -84,6 +84,7 @@ class ScreenPanel(QWidget):
 
     def __init__(self, preferences, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 4, 10, 10)
         root.setSpacing(6)
@@ -105,7 +106,7 @@ class ScreenPanel(QWidget):
         self.fps.setCurrentIndex(self.fps.findData(preferences["fps"]))
         root.addLayout(options)
         self.preview = ScreenPreview()
-        root.addWidget(self.preview)
+        root.addWidget(self.preview, 1)
         self.capture_button = QPushButton("스크린샷 테스트")
         self.capture_button.setObjectName("monitorActionButton")
         root.addWidget(self.capture_button)

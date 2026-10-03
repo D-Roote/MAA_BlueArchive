@@ -17,7 +17,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QFrame, QListWidget, QListWidgetItem, QSizePolicy,
-                               QToolButton, QWidget,
+                               QToolButton, QWidget, QSplitter, QSplitterHandle,
                                QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
                                QListView, QStyledItemDelegate,
                                QFileDialog, QPushButton, QRadioButton, QStyle,
@@ -1238,11 +1238,46 @@ class MonitorDragHandle(QLabel):
         super().mouseReleaseEvent(event)
 
 
+class MonitorVerticalHandle(QSplitterHandle):
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self._hovered = False
+        self.setAccessibleName("화면과 로그 높이 조절")
+        self.setToolTip("드래그하여 펼쳐진 화면과 로그의 높이를 조절합니다")
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if not self.isEnabled():
+            return
+        dark = getattr(self.window(), "_effective_theme", None) == TitleBarTheme.DARK
+        color = "#00AEEF" if self._hovered else ("#405474" if dark else "#CBD5E0")
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPoint(self.width() // 2 - 20, self.height() // 2),
+                         QPoint(self.width() // 2 + 20, self.height() // 2))
+
+
+class MonitorVerticalSplitter(QSplitter):
+    def createHandle(self):
+        return MonitorVerticalHandle(self.orientation(), self)
+
+
 class MonitorSectionsWidget(QWidget):
     """작업 목록과 동일하게 내부 이동만 허용하는 세로 섹션 목록."""
 
     DRAG_MIME = "application/x-maaba-monitor-section"
     order_changed = Signal()
+    sizes_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1250,8 +1285,15 @@ class MonitorSectionsWidget(QWidget):
         self._dragged_section = None
         self._drag_source = None
         self._drop_before = None
+        self.splitter = None
+        self._height_weights = {"screen": 1, "log": 1}
+        self._constraint_timer = QTimer(self)
+        self._constraint_timer.setSingleShot(True)
+        self._constraint_timer.timeout.connect(self.sync_section_layout)
 
     def sections(self):
+        if self.splitter is not None:
+            return [self.splitter.widget(index) for index in range(self.splitter.count())]
         layout = self.layout()
         if layout is None:
             return []
@@ -1264,6 +1306,48 @@ class MonitorSectionsWidget(QWidget):
 
     def section_order(self):
         return [section.property("monitorSectionKey") for section in self.sections()]
+
+    def enable_resizing(self):
+        cards = self.sections()
+        layout = self.layout()
+        for card in cards:
+            layout.removeWidget(card)
+        self.splitter = MonitorVerticalSplitter(Qt.Orientation.Vertical, self)
+        self.splitter.setObjectName("monitorVerticalSplitter")
+        self.splitter.setHandleWidth(8)
+        self.splitter.setChildrenCollapsible(False)
+        for card in cards:
+            self.splitter.addWidget(card)
+            card.installEventFilter(self)
+        layout.addWidget(self.splitter)
+        self.splitter.splitterMoved.connect(self._remember_sizes)
+        self.sync_section_layout()
+
+    def eventFilter(self, obj, event):
+        # Connection status can wrap to more lines; it remains content-sized.
+        if obj.property("monitorSectionKey") == "connection" and event.type() == QEvent.Type.LayoutRequest:
+            self._constraint_timer.start(0)
+        return super().eventFilter(obj, event)
+
+    def height_weights(self):
+        return dict(self._height_weights)
+
+    def restore_height_weights(self, value):
+        if (isinstance(value, dict) and all(type(value.get(key)) is int and 0 < value[key] <= 100000
+                                          for key in self._height_weights)):
+            self._height_weights = {key: value[key] for key in self._height_weights}
+            self.sync_section_layout()
+
+    @staticmethod
+    def _is_expanding(card):
+        return (card.property("monitorSectionKey") in ("screen", "log")
+                and card.property("monitorExpanded") and not card.isHidden())
+
+    def _remember_sizes(self, _position, _index):
+        expanding = [card for card in self.sections() if self._is_expanding(card)]
+        if len(expanding) == 2:
+            self._height_weights = {card.property("monitorSectionKey"): card.height() for card in expanding}
+            self.sizes_changed.emit()
 
     def start_section_drag(self, section, source):
         if section not in self.sections():
@@ -1351,7 +1435,7 @@ class MonitorSectionsWidget(QWidget):
             if section is not self._dragged_section and not section.isHidden()
         ]
         for section in visible:
-            if y < section.y() + section.height() // 2:
+            if y < section.mapTo(self, QPoint()).y() + section.height() // 2:
                 self._drop_before = section
                 return
         self._drop_before = None
@@ -1360,6 +1444,39 @@ class MonitorSectionsWidget(QWidget):
         self._drop_before = None
 
     def sync_section_layout(self):
+        if self.splitter is not None:
+            cards = self.sections()
+            expanding = [card for card in cards if self._is_expanding(card)]
+            fixed = {}
+            for index, card in enumerate(cards):
+                grows = card in expanding
+                if grows:
+                    card.setMaximumHeight(16777215)
+                    card.setMinimumHeight(max(0, card.minimumSizeHint().height()))
+                else:
+                    height = max(0, card.sizeHint().height())
+                    card.setFixedHeight(height)
+                    fixed[index] = 0 if card.isHidden() else height
+                self.splitter.setStretchFactor(index, 1 if grows else 0)
+            for index in range(1, len(cards)):
+                enabled = any(card in expanding for card in cards[:index]) and any(card in expanding for card in cards[index:])
+                handle = self.splitter.handle(index)
+                handle.setEnabled(enabled)
+                handle.setCursor(Qt.CursorShape.SplitVCursor if enabled else Qt.CursorShape.ArrowCursor)
+                handle.update()
+            self.layout().setAlignment(Qt.AlignmentFlag(0) if expanding else Qt.AlignmentFlag.AlignTop)
+            self.splitter.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Expanding if expanding else QSizePolicy.Policy.Maximum)
+            self.splitter.setMaximumHeight(16777215 if expanding else sum(fixed.values()) + 8 * (len(cards) - 1))
+            if expanding:
+                available = max(sum(card.minimumHeight() for card in expanding),
+                                self.splitter.height() - sum(fixed.values()) - 8 * (len(cards) - 1))
+                total = sum(self._height_weights[card.property("monitorSectionKey")] for card in expanding)
+                sizes = [round(available * self._height_weights[card.property("monitorSectionKey")] / total)
+                         if card in expanding else fixed[index] for index, card in enumerate(cards)]
+                self.splitter.setSizes(sizes)
+            self.updateGeometry()
+            return
         has_expanding_section = any(
             not section.isHidden()
             and section.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
@@ -1375,6 +1492,12 @@ class MonitorSectionsWidget(QWidget):
             return False
         if before_section is section:
             return False
+        if self.splitter is not None:
+            remaining = [card for card in before_order if card is not section]
+            destination = remaining.index(before_section) if before_section is not None else len(remaining)
+            self.splitter.insertWidget(destination, section)
+            self.sync_section_layout()
+            return self.sections() != before_order
         layout = self.layout()
         layout.removeWidget(section)
         destination = layout.indexOf(before_section) if before_section is not None else layout.count()
@@ -1563,9 +1686,10 @@ class MainWindow(QMainWindow):
         self.ui.monitorLogContent.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        sections.sync_section_layout()
+        sections.enable_resizing()
         self.ui.logPrintText.setAcceptDrops(False)
         sections.order_changed.connect(self.save_user_config)
+        sections.sizes_changed.connect(self.save_user_config)
 
     def _create_future_monitor_section(self, key, title, description):
         section = QFrame(self.ui.monitorSectionsWidget)
@@ -1590,6 +1714,7 @@ class MainWindow(QMainWindow):
         content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         section.setProperty("monitorSectionKey", key)
         section.setProperty("monitorSectionTitle", title)
+        section.setProperty("monitorExpanded", expanded)
         header = QWidget(section)
         header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         header.setObjectName("monitorSectionHeader")
@@ -1618,27 +1743,35 @@ class MainWindow(QMainWindow):
         content.setVisible(expanded)
 
     def _set_monitor_section_expanded(self, content, button, key, expanded):
+        section = content.parentWidget()
+        section.setProperty("monitorExpanded", expanded)
+        section.setMinimumHeight(0)
+        section.setMaximumHeight(16777215)
         content.setVisible(expanded)
         button.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
         if key == "screen" and not expanded and hasattr(self, "monitor"):
             self.monitor.stop_preview()
+        if key in ("screen", "log"):
+            policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum
+            section.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            content.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
+            section.layout().setStretch(section.layout().indexOf(content), 1 if expanded else 0)
+        self.ui.monitorSectionsWidget.sync_section_layout()
         if key == "log":
             self._log_section_expanded = expanded
-            policy = QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum
-            self.ui.monitorLogSection.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
-            content.setSizePolicy(QSizePolicy.Policy.Expanding, policy)
-            self.ui.monitorSectionsWidget.sync_section_layout()
             self._update_log_follow_button()
 
     def _restore_monitor_order(self):
         config_path = self.runtime.user_dir / "config" / "user_config.json"
         try:
-            saved_order = json.loads(config_path.read_text(encoding="utf-8")).get("monitor_order")
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            saved_order = saved.get("monitor_order")
         except (OSError, ValueError, AttributeError):
             return
         sections = self.ui.monitorSectionsWidget
+        sections.restore_height_weights(saved.get("monitor_height_weights"))
         if (
             not isinstance(saved_order, list)
             or len(saved_order) != 3
@@ -1649,11 +1782,9 @@ class MainWindow(QMainWindow):
         section_by_key = {
             section.property("monitorSectionKey"): section for section in sections.sections()
         }
-        layout = sections.layout()
         for index, key in enumerate(saved_order):
             section = section_by_key[key]
-            layout.removeWidget(section)
-            layout.insertWidget(index, section)
+            sections.move_section(section, sections.sections()[index])
 
     def setup_settings_ui(self):
         config_dir = self.runtime.user_dir / "config"
@@ -1742,6 +1873,11 @@ class MainWindow(QMainWindow):
                 if content
             )
         self.setStyleSheet(style_sheet)
+        if hasattr(self.ui, "monitorSectionsWidget"):
+            sections = self.ui.monitorSectionsWidget
+            for child in sections.findChildren(QWidget):
+                child.ensurePolished()
+            sections.sync_section_layout()
         return apply_windows_title_bar_theme(
             int(self.winId()),
             self._title_bar_theme,
@@ -2686,6 +2822,7 @@ class MainWindow(QMainWindow):
                     {
                         "tasks": tasks_data,
                         "monitor_order": self.ui.monitorSectionsWidget.section_order(),
+                        "monitor_height_weights": self.ui.monitorSectionsWidget.height_weights(),
                     },
                     f,
                     ensure_ascii=False,

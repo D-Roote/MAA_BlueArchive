@@ -1,6 +1,7 @@
 """Run with .venv/Scripts/python.exe -m unittest discover -s UnitTest -v."""
 
 import json
+from itertools import permutations
 import os
 import re
 from contextlib import ExitStack
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QRadioButton,
+    QSizePolicy,
+    QSizePolicy,
     QStyle,
     QStyleOptionButton,
     QStyleOptionComboBox,
@@ -3084,7 +3087,8 @@ class UILifecycleTests(unittest.TestCase):
             heights.append([section.height() for section in ui.monitorSectionsWidget.sections()])
             self.assertGreater(ui.logPrintText.height(), 200)
             self.assertEqual(ui.monitorScrollArea.verticalScrollBar().maximum(), 0)
-            bottom_gap = ui.monitorSectionsWidget.height() - ui.monitorLogSection.geometry().bottom() - 1
+            log_bottom = ui.monitorLogSection.mapTo(ui.monitorSectionsWidget, QPoint()).y() + ui.monitorLogSection.height()
+            bottom_gap = ui.monitorSectionsWidget.height() - log_bottom
             self.assertLessEqual(bottom_gap, 5)
         self.assertEqual(heights[0][:2], heights[1][:2])
         self.assertEqual(heights[1][2] - heights[0][2], 300)
@@ -3101,6 +3105,127 @@ class UILifecycleTests(unittest.TestCase):
         sections.move_section(ui.monitorLogSection, sections.sections()[0])
         self.app.processEvents()
         self.assertEqual(ui.monitorLogSection.height(), heights[1][2])
+
+    def test_screen_and_log_expand_and_mouse_drag_resizes_without_growing_connection(self):
+        screen = self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        connection, screen_card, log_card = sections.sections()
+        before = (connection.height(), screen_card.height(), log_card.height())
+        for card in (screen_card, log_card):
+            self.assertEqual(card.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(screen.preview.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+        handle = sections.splitter.handle(2)
+        self.assertTrue(handle.isEnabled())
+        self.assertFalse(sections.splitter.handle(1).isEnabled())
+        center = handle.rect().center()
+        QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=center)
+        QTest.mouseMove(handle, center + QPoint(0, 80))
+        QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=center)
+        self.app.processEvents()
+        self.assertEqual(connection.height(), before[0])
+        self.assertGreater(screen_card.height(), before[1] + 50)
+        self.assertLess(log_card.height(), before[2] - 50)
+        self.assertEqual(screen_card.height() + log_card.height(), before[1] + before[2])
+        self.assertGreaterEqual(screen.preview.height(), 120)
+
+    def test_screen_only_fills_height_and_image_grows_proportionally(self):
+        from app.monitorUI import owned_qimage
+        screen = self.show_screen_panel()
+        ui = self.window.ui
+        ui.monitorLogSection.findChild(QToolButton, "monitorSectionToggle").setChecked(False)
+        screen.preview.set_image(owned_qimage(np.zeros((480, 160, 3), dtype=np.uint8)))
+        self.window.resize(1200, 700)
+        self.app.processEvents()
+        initial_height = screen.preview.height()
+        initial_image = screen.preview.image_rect()
+        self.window.resize(1200, 1000)
+        self.app.processEvents()
+        grown_image = screen.preview.image_rect()
+        self.assertEqual(screen.preview.height() - initial_height, 300)
+        self.assertGreater(grown_image.height(), initial_image.height())
+        self.assertAlmostEqual(grown_image.width() / grown_image.height(), 1 / 3, delta=0.01)
+        self.assertTrue(screen.preview.rect().contains(grown_image))
+        self.assertLessEqual(ui.monitorLogSection.height(), 40)
+        self.assertEqual(ui.monitorScrollArea.verticalScrollBar().maximum(), 0)
+        self.assertFalse(any(ui.monitorSectionsWidget.splitter.handle(i).isEnabled() for i in (1, 2)))
+
+    def test_vertical_resize_works_with_every_card_order_and_connection_content_height(self):
+        self.show_screen_panel()
+        sections = self.window.ui.monitorSectionsWidget
+        cards = {c.property("monitorSectionKey"): c for c in sections.sections()}
+        cards["connection"].findChild(QToolButton, "monitorSectionToggle").setChecked(True)
+        self.window.resize(1200, 1500)
+        self.app.processEvents()
+        connection_height = cards["connection"].height()
+        for order in permutations(cards):
+            with self.subTest(order=order):
+                for index, key in enumerate(order):
+                    sections.move_section(cards[key], sections.sections()[index])
+                self.app.processEvents()
+                self.assertEqual(sections.section_order(), list(order))
+                index = next(i for i in (1, 2) if sections.splitter.handle(i).isEnabled())
+                before = [cards[key].height() for key in ("screen", "log")]
+                sections.splitter.moveSplitter(sections.splitter.handle(index).y() + 20, index)
+                self.app.processEvents()
+                after = [cards[key].height() for key in ("screen", "log")]
+                self.assertNotEqual(before, after)
+                self.assertEqual(sum(before), sum(after))
+                self.assertEqual(cards["connection"].height(), connection_height)
+
+    def test_monitor_height_distribution_survives_collapse_reorder_and_reload(self):
+        self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        splitter = sections.splitter
+        splitter.moveSplitter(splitter.handle(2).y() + 60, 2)
+        self.app.processEvents()
+        weights = sections.height_weights()
+        screen_card = sections.sections()[1]
+        toggle = screen_card.findChild(QToolButton, "monitorSectionToggle")
+        toggle.setChecked(False)
+        self.app.processEvents()
+        self.assertLessEqual(screen_card.height(), 40)
+        toggle.setChecked(True)
+        self.app.processEvents()
+        self.assertEqual(sections.height_weights(), weights)
+        self.assertAlmostEqual(screen_card.height() / self.window.ui.monitorLogSection.height(),
+                               weights["screen"] / weights["log"], delta=0.03)
+        sections.move_section(screen_card, sections.sections()[0])
+        self.window.save_user_config()
+        saved = json.loads((self.window.runtime.user_dir / "config" / "user_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["monitor_height_weights"], weights)
+        with patch("app.winUI.AppRuntime", return_value=self.window.runtime):
+            restored = MainWindow()
+        self.addCleanup(restored.deleteLater)
+        self.assertEqual(restored.ui.monitorSectionsWidget.height_weights(), weights)
+        self.assertEqual(restored.ui.monitorSectionsWidget.section_order(), sections.section_order())
+
+    def test_invalid_monitor_height_preferences_are_ignored(self):
+        sections = self.window.ui.monitorSectionsWidget
+        for value in (None, [], {"screen": 0, "log": 1}, {"screen": True, "log": 1},
+                      {"screen": "large", "log": 1}, {"screen": 999999999, "log": 1}):
+            sections.restore_height_weights(value)
+            self.assertEqual(sections.height_weights(), {"screen": 1, "log": 1})
+
+    def test_vertical_resize_respects_minimums_and_never_collapses_expanded_panels(self):
+        self.show_screen_panel()
+        self.window.resize(1200, 1100)
+        self.app.processEvents()
+        sections = self.window.ui.monitorSectionsWidget
+        connection, screen, log = sections.sections()
+        connection_height = connection.height()
+        for position in (-10000, 10000):
+            sections.splitter.moveSplitter(position, 2)
+            self.app.processEvents()
+            self.assertGreaterEqual(screen.height(), screen.minimumHeight())
+            self.assertGreaterEqual(log.height(), log.minimumHeight())
+            self.assertGreater(screen.height(), 40)
+            self.assertGreater(log.height(), 40)
+            self.assertEqual(connection.height(), connection_height)
+        self.assertFalse(sections.splitter.childrenCollapsible())
 
     def test_workspace_splitter_divider_is_rounded_and_hover_only(self):
         self.window.show()
