@@ -64,6 +64,32 @@ PROGRAM_LAUNCH_TASK = {
 }
 
 
+RESULT_ERROR_PREFIXES = (
+    "Runtime에서 예기치 않은 오류가 발생했습니다: ",
+    "Runtime 초기화 중 오류가 발생했습니다: ",
+    "Runtime 정리 중 오류가 발생했습니다: ",
+    "작업 중지 중 오류가 발생했습니다: ",
+    "정리 중 ",
+)
+
+
+def distinct_result_message(message, seen=None):
+    """Only final diagnostics: never discard repeated pipeline/progress logs."""
+    seen = set() if seen is None else seen
+    lines = []
+    for line in message.splitlines():
+        key = line.strip()
+        while True:
+            prefix = next((p for p in RESULT_ERROR_PREFIXES if key.startswith(p)), None)
+            if prefix is None:
+                break
+            key = key[len(prefix):].strip()
+        if key and key not in seen:
+            seen.add(key)
+            lines.append(line)
+    return "\n".join(lines)
+
+
 class TitleBarTheme(str, Enum):
     """애플리케이션 전체와 제목 표시줄에 적용하는 색상 모드."""
 
@@ -2123,6 +2149,13 @@ class MainWindow(QMainWindow):
             scroll_bar.setValue(previous_scroll_value)
             self._update_log_follow_button()
 
+    def _append_run_result(self, message, prefix=""):
+        if not hasattr(self, "_run_result_keys"):
+            self._run_result_keys = set()
+        unique = distinct_result_message(message, self._run_result_keys)
+        if unique:
+            self.append_log(f"{prefix}{unique}\n")
+
     def _update_log_follow_button(self, _value=None):
         scroll_bar = self.ui.logPrintText.verticalScrollBar()
         is_at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 1
@@ -2182,6 +2215,8 @@ class MainWindow(QMainWindow):
         self._run_stop_requested = False
         self._run_completion_target = None
 
+        self._run_result_keys = set()
+
         minimize_window = False
         if hasattr(self.ui, 'minimizeEnableBtn'):
             minimize_window = self.ui.minimizeEnableBtn.isChecked()
@@ -2235,9 +2270,9 @@ class MainWindow(QMainWindow):
     def on_stop_worker_finished(self):
         if self.stop_worker is not None:
             if self.stop_worker.succeeded:
-                self.append_log(self.stop_worker.result_message)
+                self._append_run_result(self.stop_worker.result_message)
             elif self.stop_worker.result_message != "실행 중인 Tasker가 없습니다.":
-                self.append_log(self.stop_worker.result_message)
+                self._append_run_result(self.stop_worker.result_message)
             self.stop_worker.deleteLater()
         self.stop_worker = None
         self._finish_run_if_idle()
@@ -2249,8 +2284,9 @@ class MainWindow(QMainWindow):
         if worker is not None:
             self._run_succeeded = bool(worker.succeeded)
             self._run_completion_target = getattr(worker, "completion_target", None)
-            prefix = "▶" if worker.succeeded else "⚠"
-            self.append_log(f"{prefix} {worker.result_message}\n")
+            """따옴표 내부에 기호(이모티콘) 추가/수정 가능"""
+            prefix = "▶ " if worker.succeeded else ""
+            self._append_run_result(worker.result_message, prefix)
             worker.deleteLater()
         self.worker = None
         self.ui.workStartBtn.setEnabled(False)
@@ -3072,7 +3108,11 @@ class StopWorker(QThread):
         self.result_message = ""
 
     def run(self):
-        self.succeeded, self.result_message = self.runtime.stop_task()
+        try:
+            self.succeeded, self.result_message = self.runtime.stop_task()
+        except Exception as error:
+            self.succeeded = False
+            self.result_message = f"작업 중지 중 오류가 발생했습니다: {error}"
 
 # Tasker 스레드
 class RuntimeWorker(QThread):
@@ -3134,7 +3174,13 @@ class RuntimeWorker(QThread):
             self.succeeded = False
             self.result_message = f"Runtime에서 예기치 않은 오류가 발생했습니다: {error}"
         finally:
-            released, release_message = self.runtime.release_session()
+            try:
+                released, release_message = self.runtime.release_session()
+            except Exception as error:
+                released = False
+                release_message = f"Runtime 정리 중 오류가 발생했습니다: {error}"
             if not released:
                 self.succeeded = False
-                self.result_message += f"\n{release_message}"
+                self.result_message = distinct_result_message(
+                    f"{self.result_message}\n{release_message}"
+                )
