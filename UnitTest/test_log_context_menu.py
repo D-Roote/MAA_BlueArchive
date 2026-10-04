@@ -78,6 +78,16 @@ class LogContextMenuTests(unittest.TestCase):
         select.trigger()
         self.assertEqual(self.log.textCursor().selectedText().replace("\u2029", "\n"), self.log.toPlainText())
 
+    def test_unavailable_keyboard_shortcut_hints_are_not_advertised(self):
+        menu = self.menu()
+        for action in menu.actions():
+            with self.subTest(action=action.objectName()):
+                self.assertNotIn("\t", action.text())
+                self.assertNotIn("Ctrl+", action.text())
+                self.assertTrue(action.shortcut().isEmpty())
+        names = {action.objectName() for action in menu.actions()}
+        self.assertTrue({"edit-copy", "select-all"}.issubset(names))
+
     def test_hover_highlight_is_painted_in_the_selected_app_theme(self):
         self.log.selectAll()
         for theme, color in ((TitleBarTheme.LIGHT, "#E6F5FC"), (TitleBarTheme.DARK, "#243954")):

@@ -2184,6 +2184,9 @@ class MainWindow(QMainWindow):
         # Native standard icons follow the system palette, not our forced theme.
         for action in menu.actions():
             action.setIcon(QIcon())
+            # Qt embeds keyboard hints in the label even when the log's
+            # interaction mode does not provide those keyboard operations.
+            action.setText(action.text().split("\t", 1)[0])
         return menu
 
     def show_log_context_menu(self, position):
