@@ -19,12 +19,13 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QAbstractItemView,
                                QHBoxLayout, QVBoxLayout,
                                QFrame, QListWidget, QListWidgetItem, QSizePolicy,
                                QToolButton, QWidget, QSplitter, QSplitterHandle,
-                               QButtonGroup, QCheckBox, QComboBox, QLabel, QLineEdit,
+                               QButtonGroup, QCheckBox, QLabel, QLineEdit,
                                QListView, QStyledItemDelegate,
                                QFileDialog, QPushButton, QRadioButton, QStyle,
                                QStyleOptionSlider)
 
 from app.runtime import AppRuntime, PROGRAM_LAUNCH_ENTRY
+from app.controls import PopupOnlyWheelComboBox
 from app.settingsUI import AssociatedControlLabel, SettingsPanel
 from app.monitorUI import MonitorCoordinator
 from app.afterActions import AfterActionPreferences, WindowsAfterActionBackend, capture_window_target
@@ -2748,7 +2749,7 @@ class MainWindow(QMainWindow):
                 layout.addWidget(select_container)
 
             elif opt_type == "select":
-                combo_box = QComboBox(container_widget)
+                combo_box = PopupOnlyWheelComboBox(container_widget)
                 combo_box.setObjectName("optionSelect")
                 combo_box.setProperty("optionName", opt_name)
                 combo_box.setAccessibleName(opt.get("label", opt_name))

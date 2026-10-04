@@ -5,7 +5,6 @@ from pathlib import Path
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFrame,
     QGraphicsOpacityEffect,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.runtime import WIN32_METHOD_DEFAULTS, WIN32_METHOD_PRIORITY
+from app.controls import PopupOnlyWheelComboBox
 from app.monitoring import normalize_connection_preferences, normalize_screen_preferences
 from app.pg_init import (
     DEFAULT_PROGRAM_CONFIG,
@@ -356,7 +356,7 @@ class SettingsPanel(QWidget):
         controller, controller_layout = self._create_section(
             "컨트롤러", "실행에 사용할 컨트롤러를 선택합니다."
         )
-        self.controller_combo = QComboBox()
+        self.controller_combo = PopupOnlyWheelComboBox()
         self.controller_combo.setObjectName("settingsComboBox")
         self.controller_combo.setMinimumWidth(240)
         if self.controllers:
@@ -382,7 +382,7 @@ class SettingsPanel(QWidget):
         appearance, appearance_layout = self._create_section(
             "외관", "애플리케이션의 표시 방식을 설정합니다."
         )
-        self.theme_combo = QComboBox()
+        self.theme_combo = PopupOnlyWheelComboBox()
         self.theme_combo.setObjectName("settingsComboBox")
         self.theme_combo.setMinimumWidth(180)
         for label, value in (

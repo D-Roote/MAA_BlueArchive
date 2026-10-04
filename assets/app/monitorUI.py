@@ -4,11 +4,12 @@ from time import monotonic
 from PySide6.QtCore import QEvent, QObject, QRect, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from app.monitorFPS import DisplayFPS
+from app.controls import PopupOnlyWheelComboBox
 from app.monitoring import (
     ConnectionTarget, MonitoringDisconnected, MonitoringService, PreviewNotReady,
     normalize_connection_preferences, normalize_screen_preferences,
@@ -101,11 +102,11 @@ class ScreenPanel(QWidget):
         root.setSpacing(6)
         options = QHBoxLayout()
         options.setSpacing(4)
-        self.mode = QComboBox()
+        self.mode = PopupOnlyWheelComboBox()
         self.mode.setAccessibleName("화면 표시 방식")
         self.mode.addItem("단발 테스트", "single")
         self.mode.addItem("연속 모니터링", "continuous")
-        self.fps = QComboBox()
+        self.fps = PopupOnlyWheelComboBox()
         self.fps.setAccessibleName("화면 표시 FPS")
         for fps in (1, 2, 5, 10, 15, 30, 45, 60):
             self.fps.addItem(f"{fps} FPS", fps)
@@ -159,8 +160,8 @@ class ConnectionPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 4, 10, 10)
         root.setSpacing(6)
-        self.preset_combo = QComboBox()
-        self.target_combo = QComboBox()
+        self.preset_combo = PopupOnlyWheelComboBox()
+        self.target_combo = PopupOnlyWheelComboBox()
         for combo, name in ((self.preset_combo, "사전 확인 컨트롤러"), (self.target_combo, "연결 대상")):
             combo.setObjectName("monitorComboBox")
             combo.setAccessibleName(name)
