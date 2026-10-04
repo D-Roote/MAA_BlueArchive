@@ -1829,6 +1829,8 @@ class MainWindow(QMainWindow):
         self.ui.logPrintText.verticalScrollBar().valueChanged.connect(
             self._update_log_follow_button
         )
+        self.ui.logPrintText.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.ui.logPrintText.customContextMenuRequested.connect(self.show_log_context_menu)
 
         if hasattr(self.ui, 'minimizeEnableBtn'):
             self.ui.minimizeEnableBtn.toggled.connect(
@@ -2173,6 +2175,23 @@ class MainWindow(QMainWindow):
         cursor = log_view.textCursor()
         text = cursor.selectedText().replace("\u2029", "\n")
         QApplication.clipboard().setText(text if cursor.hasSelection() else log_view.toPlainText())
+
+    def _create_log_context_menu(self):
+        # Keep Qt's selection/clipboard actions, but not the OS dark popup skin.
+        menu = self.ui.logPrintText.createStandardContextMenu()
+        menu.setObjectName("logContextMenu")
+        menu.setStyleSheet(self.styleSheet())
+        # Native standard icons follow the system palette, not our forced theme.
+        for action in menu.actions():
+            action.setIcon(QIcon())
+        return menu
+
+    def show_log_context_menu(self, position):
+        menu = self._create_log_context_menu()
+        try:
+            menu.exec(self.ui.logPrintText.viewport().mapToGlobal(position))
+        finally:
+            menu.deleteLater()
 
     def clear_log(self):
         self.ui.logPrintText.clear()

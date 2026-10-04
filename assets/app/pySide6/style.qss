@@ -618,6 +618,35 @@ QTextEdit#logPrintText {
     padding-right: 1px;
 }
 
+QMenu#logContextMenu {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu#logContextMenu::item {
+    background-color: transparent;
+    color: #334155;
+    padding: 7px 22px;
+}
+
+QMenu#logContextMenu::item:selected:enabled {
+    background-color: #E6F5FC;
+    color: #006E94;
+}
+
+QMenu#logContextMenu::item:disabled {
+    color: #94A3B8;
+}
+
+QMenu#logContextMenu::separator {
+    background-color: #E2E8F0;
+    height: 1px;
+    margin: 4px 8px;
+}
+
 QLabel#logTitleLabel {
     color: #64748B;
     font-size: 9pt;

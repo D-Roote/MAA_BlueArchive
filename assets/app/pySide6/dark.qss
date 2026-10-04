@@ -10,6 +10,29 @@ QStatusBar {
     background-color: #111A2B;
 }
 
+QMenu#logContextMenu {
+    background-color: #172238;
+    color: #DCE6F2;
+    border-color: #30415E;
+}
+
+QMenu#logContextMenu::item {
+    color: #DCE6F2;
+}
+
+QMenu#logContextMenu::item:selected:enabled {
+    background-color: #243954;
+    color: #F0F6FD;
+}
+
+QMenu#logContextMenu::item:disabled {
+    color: #7389A7;
+}
+
+QMenu#logContextMenu::separator {
+    background-color: #30415E;
+}
+
 QWidget#centralwidget,
 QWidget#mainTab,
 QWidget#settingTab {

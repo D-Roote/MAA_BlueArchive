@@ -1,5 +1,12 @@
 # 연결·화면 모니터 구현 기록
 
+## 2026-10-04 — 로그 우클릭 메뉴의 앱 테마 적용
+
+- 원인: 로그 QTextEdit의 기본 컨텍스트 메뉴는 메뉴 표면색/항목 색상을 정의하지 않아 시스템 다크 메뉴와 앱 라이트 텍스트 색상이 혼재할 수 있었다.
+- 변경: Qt 표준 로그 메뉴의 Copy/Select All/단축키·선택 영역 복사 동작을 유지하고 `logContextMenu` 전용 QSS를 앱의 현재 유효 테마로 적용한다. 라이트/다크 표면·텍스트·비활성 항목·호버·구분선을 명시한다. 시스템 팔레트를 따르는 기본 아이콘은 제거해 반대 테마에서의 아이콘 대비 문제도 피한다. 메뉴는 닫힘/예외 시 deleteLater로 정리하며 다른 창/편집기의 메뉴나 OS 테마를 바꾸지 않는다.
+- 검증: 시스템 다크 팔레트+강제 라이트에서 실제 메뉴 렌더 표면 및 글자 팔레트, 강제 다크·시스템 추종·다시 열 때 테마 전환, 호버 렌더, 선택 복사/전체 선택·비활성 복사, 우클릭 시 viewport 위치와 메뉴 해제를 테스트한다. [QTextEdit.createStandardContextMenu](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QTextEdit.html#PySide6.QtWidgets.QTextEdit.createStandardContextMenu), [Qt QMenu style sheet](https://doc.qt.io/qt-6/stylesheet-reference.html#qmenu-widget).
+- 결과: 로그 중복 회귀 **13개**, 메뉴 테마/동작 회귀 **6개**, 전체 UnitTest **305개**, py_compile 및 diff --check 통과. 리소스 JSON SHA256은 작업 전과 동일하다. 기존 winUI.py 사용자 변경은 로그 수정 커밋에 amend했으며 메뉴 수정은 별도 커밋이다.
+
 ## 2026-10-04 — 실행 결과 오류 중복 제거
 
 - 원인: initialize/run_task 내부 정리 실패가 반환값 또는 예외에 포함되고, RuntimeWorker의 finally 정리 재시도에서 같은 원인을 다시 추가했다. StopWorker/RuntimeWorker의 종료 콜백 순서에 따라서도 같은 중지 실패가 두 번 출력될 수 있었다.
