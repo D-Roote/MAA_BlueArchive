@@ -124,6 +124,24 @@ class RuntimeResultUITests(unittest.TestCase):
         self.window.append_log(FAILURE)
         self.assertEqual(self.window.ui.logPrintText.toPlainText().count(FAILURE), 2)
 
+    def test_stop_results_do_not_insert_blank_lines_between_entries(self):
+        self.window.clear_log()
+        self.window._append_run_result("작업 중지 중입니다...")
+        self.window._append_run_result("작업이 중지되었습니다.")
+        lines = self.window.ui.logPrintText.toPlainText().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].endswith("작업 중지 중입니다..."))
+        self.assertTrue(lines[1].endswith("작업이 중지되었습니다."))
+
+    def test_multiline_error_and_next_result_have_no_extra_empty_paragraph(self):
+        self.window.clear_log()
+        self.window._append_run_result("첫 오류\n별도 오류\n첫 오류")
+        self.window._append_run_result("모든 작업을 완료했습니다.", "▶ ")
+        lines = self.window.ui.logPrintText.toPlainText().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[1], "별도 오류")
+        self.assertTrue(lines[2].endswith("▶ 모든 작업을 완료했습니다."))
+
     def test_new_run_resets_terminal_dedup_even_when_log_history_is_kept(self):
         self.window.settings_panel.clear_log_checkbox.setChecked(False)
         self.window._append_run_result(FAILURE)

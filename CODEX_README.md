@@ -1,5 +1,11 @@
 # 연결·화면 모니터 구현 기록
 
+## 2026-10-04 — 결과 로그의 불필요한 빈 줄 제거
+
+- 원인: 결과 중복 제거를 도입한 `_append_run_result`와 기존 `append_log`가 각각 줄바꿈을 추가하여 중지/완료/오류 결과마다 빈 문단이 생겼다.
+- 변경: 결과 전달 시 추가 줄바꿈을 제거하고 기존 로그 출력 함수가 줄바꿈을 한 번만 담당한다. 내부 다중행 오류·성공 표시 기호·기존 반복 로그·실행별 중복 제거는 유지한다.
+- 검증: 연속 중지 결과 및 다중행 오류 후 성공 결과에 빈 문단이 없는지 실제 QTextEdit 문서로 확인했다. 결과 로그 회귀 **15개**, py_compile, 변경 파일 diff --check 통과. 기존 push 이력은 철회하지 않고 별도 Fix 커밋으로 작성한다. 사용자 확인 전 push하지 않는다.
+
 ## 2026-10-04 — 빠른 중지 시 컨트롤러 정리 경합
 
 - 실제 로그에서 Tasker 중지 완료 직후 SDK 내부 요청 1회와 앱의 `post_inactive` 2회가 아직 중지 중인 컨트롤러에 거절되었다. Tasker 중지 Job 완료는 진행 중인 네이티브 캡처/입력 완료를 보장하지 않는다. [ControllerAgent](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaFramework/Controller/ControllerAgent.cpp), [AsyncRunner](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaFramework/Base/AsyncRunner.hpp), 설치된 5.12.3 바인딩과 실제 로그로 확인했다.

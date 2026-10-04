@@ -2156,7 +2156,7 @@ class MainWindow(QMainWindow):
             self._run_result_keys = set()
         unique = distinct_result_message(message, self._run_result_keys)
         if unique:
-            self.append_log(f"{prefix}{unique}\n")
+            self.append_log(f"{prefix}{unique}")
 
     def _update_log_follow_button(self, _value=None):
         scroll_bar = self.ui.logPrintText.verticalScrollBar()
