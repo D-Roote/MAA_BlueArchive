@@ -1,5 +1,13 @@
 # 연결·화면 모니터 구현 기록
 
+## 2026-10-04 — 빠른 중지 시 컨트롤러 정리 경합
+
+- 실제 로그에서 Tasker 중지 완료 직후 SDK 내부 요청 1회와 앱의 `post_inactive` 2회가 아직 중지 중인 컨트롤러에 거절되었다. Tasker 중지 Job 완료는 진행 중인 네이티브 캡처/입력 완료를 보장하지 않는다. [ControllerAgent](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaFramework/Controller/ControllerAgent.cpp), [AsyncRunner](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaFramework/Base/AsyncRunner.hpp), 설치된 5.12.3 바인딩과 실제 로그로 확인했다.
+- 설치된 Python/C 공개 API에는 controller.running/stop/wait_idle이 없다. 생성 직후 `ControllerEventSink`를 등록해 시작된 동작의 성공/실패 완료를 추적한다. Tasker 정리 후 진행 동작 및 짧은 완료 이벤트 안정화 구간을 기다린 다음 비활성화한다. 콜백 안에서는 SDK 호출/대기를 하지 않는다. 실제 비활성화 성공 이후에만 sink 제거·컨트롤러 해제·원본 창 복원을 수행한다.
+- `MaaInvalidId`인 요청 거절만 최대 5초 내 점증 간격으로 재시도하고 invalid Job에는 wait하지 않는다. 실제 실행된 비활성화 실패는 재시도로 숨기지 않는다. 완료/요청 대기 시간 초과는 오류를 보고하고 컨트롤러·원본 창 상태를 보존해 다음 정리에서 재시도한다. 받아들여진 SDK Job의 wait 자체는 기존과 동일한 네이티브 대기다.
+- 실제 SDK의 Tasker 내부 자동 비활성화 요청은 앱의 완료 대기보다 먼저 발생할 수 있어 `stopping, ignore new post` 1회가 남을 수 있다. 이를 숨기거나 SDK DLL/버전을 임의 수정하지 않는다. 앱 정리 실패/반복 거절과는 구분한다.
+- 검증: 회귀 9개 및 별도 `UnitTest/native_controller_stop_probe.py`로 실제 SDK의 진행 중 캡처 3회·클릭 3회를 빠르게 중지했다. 6회 모두 동작 완료 이후 비활성화·참조 해제가 성공했다. 게임/창 입력 없이 CustomController만 사용한다. 전체 UnitTest **314개**, py_compile, 변경 파일 diff --check 통과. 기존 원격 이력은 유지하며 feature/Codex에 새 커밋을 작성하고 사용자 확인 전 push하지 않는다.
+
 ## 2026-10-04 — 로그 우클릭 메뉴의 앱 테마 적용
 
 - 원인: 로그 QTextEdit의 기본 컨텍스트 메뉴는 메뉴 표면색/항목 색상을 정의하지 않아 시스템 다크 메뉴와 앱 라이트 텍스트 색상이 혼재할 수 있었다.

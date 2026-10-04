@@ -11,7 +11,7 @@ import ctypes
 from ctypes import wintypes
 
 from maa.context import ContextEventSink
-from maa.controller import Win32Controller
+from maa.controller import ControllerEventSink, Win32Controller
 from maa.define import MaaWin32InputMethodEnum, MaaWin32ScreencapMethodEnum
 from maa.resource import Resource
 from maa.tasker import Tasker
@@ -43,6 +43,49 @@ SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT = 0x0001 | 0x0002 | 0x0020
 WINDOW_MINIMIZE_MESSAGE_TIMEOUT_MS = 1500
 WINDOW_MINIMIZE_CHECK_COUNT = 10
 WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS = 0.1
+CONTROLLER_DRAIN_TIMEOUT_SECONDS = 5.0
+CONTROLLER_DRAIN_QUIET_SECONDS = 0.02
+
+
+class ControllerActivitySink(ControllerEventSink):
+    """Track native actions without posting or waiting inside SDK callbacks."""
+
+    def __init__(self):
+        super().__init__()
+        self._condition = threading.Condition()
+        self._active = set()
+        self._changed_at = None
+
+    def on_raw_notification(self, controller, msg, details):
+        if not msg.startswith("Controller.Action."):
+            return
+        ctrl_id = details.get("ctrl_id")
+        if ctrl_id is None:
+            return
+        with self._condition:
+            if msg.endswith(".Starting"):
+                self._active.add(ctrl_id)
+            elif msg.endswith((".Succeeded", ".Failed")):
+                self._active.discard(ctrl_id)
+            else:
+                return
+            self._changed_at = time.monotonic()
+            self._condition.notify_all()
+
+    def wait_quiet(self, deadline):
+        # Terminal notifications precede AsyncRunner's idle transition. A short
+        # quiet period reduces that race; an invalid post is still handled below.
+        with self._condition:
+            while True:
+                now = time.monotonic()
+                quiet_remaining = (0 if self._changed_at is None else
+                                   CONTROLLER_DRAIN_QUIET_SECONDS - (now - self._changed_at))
+                if not self._active and quiet_remaining <= 0:
+                    return True
+                remaining = deadline - now
+                if remaining <= 0:
+                    return False
+                self._condition.wait(min(remaining, quiet_remaining) if not self._active else remaining)
 
 
 class WindowPlacement(ctypes.Structure):
@@ -129,6 +172,8 @@ class AppRuntime:
         self.controller = None
         self.log_sink = LogSinkFocus()
         self._context_sink_id = None
+        self._controller_sink_id = None
+        self._controller_activity = ControllerActivitySink()
         self._toolkit_initialized = False
         self._resource_loaded = False
         self._task_post_lock = threading.Lock()
@@ -687,6 +732,10 @@ class AppRuntime:
         )
 
         self.controller = controller
+        self._controller_activity = ControllerActivitySink()
+        self._controller_sink_id = controller.add_sink(self._controller_activity)
+        if self._controller_sink_id is None:
+            return False, "컨트롤러 완료 콜백 연결에 실패했습니다."
 
         return True, "컨트롤러를 생성했습니다."
 
@@ -1025,6 +1074,27 @@ class AppRuntime:
                                       process_path=path, pid=pid)
             return name, target
 
+    def _deactivate_controller(self):
+        deadline = time.monotonic() + CONTROLLER_DRAIN_TIMEOUT_SECONDS
+        retry_delay = 0.05
+        while True:
+            if self._controller_sink_id is not None:
+                if not self._controller_activity.wait_quiet(deadline):
+                    return False, "정리 중 컨트롤러 동작 완료를 기다리는 시간이 초과되었습니다."
+            job = self.controller.post_inactive()
+            # MaaInvalidId (0) means the post was rejected, NOT an inactive
+            # action that executed and failed. Stop can finish before a native
+            # capture/input finishes; never wait on a rejected job or destroy it.
+            if job.job_id != 0:
+                if job.wait().succeeded:
+                    return True, ""
+                return False, "정리 중 컨트롤러 비활성화에 실패했습니다."
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, "정리 중 컨트롤러 중지 상태 해제를 기다리는 시간이 초과되었습니다."
+            time.sleep(min(retry_delay, remaining))
+            retry_delay = min(retry_delay * 2, 0.5)
+
     def release_session(self):
         """정지 완료 후 Tasker, 컨트롤러, 창 상태 순서로 실행 상태를 정리한다."""
         self.log_sink.set_first_action_callback(None)
@@ -1044,10 +1114,14 @@ class AppRuntime:
                 self.tasker = None
                 if self.controller is not None and self.controller.connected:
                     try:
-                        if not self.controller.post_inactive().wait().succeeded:
-                            return False, "정리 중 컨트롤러 비활성화에 실패했습니다."
+                        deactivated, message = self._deactivate_controller()
+                        if not deactivated:
+                            return False, message
                     except Exception as error:
                         return False, f"컨트롤러 비활성화에 실패했습니다: {error}"
+                if self.controller is not None and self._controller_sink_id is not None:
+                    self.controller.remove_sink(self._controller_sink_id)
+                self._controller_sink_id = None
                 self.controller = None
 
                 if not self._restore_startup_window_guard():
