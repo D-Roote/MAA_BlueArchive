@@ -309,8 +309,14 @@ class MonitoringService:
         self._original_window_placement = restore_placement
         if self._original_window_placement is not None:
             api = self._window_api()
+            from app.runtime import SW_SHOWNOACTIVATE, SW_SHOWMINNOACTIVE, WindowPlacement
+            restore = WindowPlacement.from_buffer_copy(self._original_window_placement)
+            if restore.show_cmd == 1:
+                restore.show_cmd = SW_SHOWNOACTIVATE
+            elif restore.show_cmd == 2:
+                restore.show_cmd = SW_SHOWMINNOACTIVE
             if api.IsWindow(self._placement_hwnd) and not api.SetWindowPlacement(
-                self._placement_hwnd, ctypes.byref(self._original_window_placement)
+                self._placement_hwnd, ctypes.byref(restore)
             ):
                 raise RuntimeError("사전 연결 창의 원래 상태를 복원하지 못했습니다. 다시 해제하세요.")
             self._original_window_placement = None

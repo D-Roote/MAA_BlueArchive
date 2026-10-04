@@ -36,6 +36,7 @@ LWA_ALPHA = 0x00000002
 PROGRAM_WINDOW_POLL_INTERVAL_SECONDS = 0.05
 SW_RESTORE = 9
 SW_SHOWNOACTIVATE = 4
+SW_SHOWMINNOACTIVE = 7
 WM_SYSCOMMAND = 0x0112
 SC_MINIMIZE = 0xF020
 SMTO_BLOCK_ABORTIFHUNG_ERRORONEXIT = 0x0001 | 0x0002 | 0x0020
@@ -83,6 +84,8 @@ def create_user32():
     user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
     user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
     user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -134,6 +137,7 @@ class AppRuntime:
         self._target_hwnd = None
         self._original_window_placement = None
         self._window_size_prepared = False
+        self._minimize_focus_prepared = False
         self._program_started_for_session = False
         self._startup_window_guard = None
 
@@ -348,12 +352,46 @@ class AppRuntime:
             )
         )
 
+    def _prepare_minimize_focus(self, cancellation_requested=None):
+        """Activate once BEFORE SDK connection, not inside its action callback.
+
+        A nonactivating automatic restore does not refresh the game's activation
+        state. SDK background WM_ACTIVATE messages can subsequently foreground
+        that restored window and make PseudoMinimizeHelper show it again.
+        Do not fake clicks, attach input queues, or repeatedly steal focus.
+        """
+        if self._minimize_focus_prepared:
+            return True
+        target_hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
+        if not target_hwnd or not self._user32.IsWindow(target_hwnd):
+            return False
+        if cancellation_requested is not None and cancellation_requested():
+            return False
+        if self._user32.IsIconic(target_hwnd):
+            self._user32.ShowWindow(target_hwnd, SW_SHOWNOACTIVATE)
+        foreground = self._user32.GetForegroundWindow()
+        if getattr(foreground, "value", foreground) != target_hwnd:
+            if not self._user32.SetForegroundWindow(target_hwnd):
+                return False
+        for attempt in range(WINDOW_MINIMIZE_CHECK_COUNT):
+            if cancellation_requested is not None and cancellation_requested():
+                return False
+            if not self._user32.IsWindow(target_hwnd):
+                return False
+            foreground = self._user32.GetForegroundWindow()
+            if getattr(foreground, "value", foreground) == target_hwnd:
+                self._minimize_focus_prepared = True
+                return True
+            if attempt + 1 < WINDOW_MINIMIZE_CHECK_COUNT:
+                time.sleep(WINDOW_MINIMIZE_CHECK_INTERVAL_SECONDS)
+        return False
+
     def _minimize_window_for_task(self):
         target_hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
         if not target_hwnd or not self._user32.IsWindow(target_hwnd):
             return False
 
-        # 외부 스레드에서 ShowWindow/SetForegroundWindow를 조합하지 않는다.
+        # 실제 포커스 준비는 SDK 연결 전에 끝낸다. 콜백에서는 포커스를 변경하지 않는다.
         # 시스템 메뉴의 최소화 요청을 게임의 창 프로시저가 처리하게 한다.
         # SendMessageTimeout의 반환값은 전달 성공, message_result는 WndProc 결과다.
         message_result = ctypes.c_size_t()
@@ -386,8 +424,13 @@ class AppRuntime:
         if not target_hwnd or placement is None:
             return False
         # 창이 닫혔다면 복원할 대상이 없고, API 실패 시에는 재시도할 원본을 남긴다.
+        restore = WindowPlacement.from_buffer_copy(placement)
+        if restore.show_cmd == 1:
+            restore.show_cmd = SW_SHOWNOACTIVATE
+        elif restore.show_cmd == 2:
+            restore.show_cmd = SW_SHOWMINNOACTIVE
         if self._user32.IsWindow(target_hwnd) and not self._user32.SetWindowPlacement(
-            target_hwnd, ctypes.byref(placement)
+            target_hwnd, ctypes.byref(restore)
         ):
             return False
 
@@ -505,6 +548,9 @@ class AppRuntime:
                 if not self._resize_window_for_task():
                     return False, "대상 창의 내부 영역을 1280x720으로 조정하지 못했습니다."
                 self._window_size_prepared = True
+            if not self._prepare_minimize_focus(cancellation_requested):
+                self._restore_startup_window_guard()
+                return False, "자동 최소화를 위한 창 포커스를 준비하지 못했습니다. 대상 창을 한 번 선택한 뒤 다시 시작하세요."
             if self._minimize_window_for_task():
                 if not self._restore_startup_window_guard():
                     return False, "최소화된 창의 원래 표시 상태를 복원하지 못했습니다."
@@ -606,6 +652,7 @@ class AppRuntime:
         stable_window_seconds: float = 0,
         window=None,
         cancellation_requested: Callable[[], bool] | None = None,
+        prepare_minimize: bool = False,
     ):
         if window is None:
             window, message = self._find_target_window(
@@ -628,6 +675,9 @@ class AppRuntime:
         # Connection's warm-up captures can change iconic/style/alpha state.
         if not self._save_window_placement():
             return False, "대상 창의 원래 상태를 저장하지 못했습니다."
+
+        if prepare_minimize and not self._prepare_minimize_focus(cancellation_requested):
+            return False, "자동 최소화를 위한 창 포커스를 준비하지 못했습니다. 대상 창을 한 번 선택한 뒤 다시 시작하세요."
 
         controller = Win32Controller(
             hWnd=window.hwnd,
@@ -806,6 +856,7 @@ class AppRuntime:
                 stable_window_seconds=stable_window_seconds,
                 window=prepared_window,
                 cancellation_requested=cancellation_requested,
+                prepare_minimize=minimize_window and (pipeline_task_requested or execution_queue is None),
             )
             if not created:
                 return False, create_message
@@ -989,14 +1040,14 @@ class AppRuntime:
 
                 cleanup_errors = []
 
-                # Tasker가 보유하는 controller 참조부터 해제한다.
+                # SDK binding owns native disposal; do not invalidate live Job handles.
                 self.tasker = None
                 if self.controller is not None and self.controller.connected:
                     try:
                         if not self.controller.post_inactive().wait().succeeded:
-                            cleanup_errors.append("정리 중 컨트롤러 비활성화에 실패했습니다.")
+                            return False, "정리 중 컨트롤러 비활성화에 실패했습니다."
                     except Exception as error:
-                        cleanup_errors.append(f"컨트롤러 비활성화에 실패했습니다: {error}")
+                        return False, f"컨트롤러 비활성화에 실패했습니다: {error}"
                 self.controller = None
 
                 if not self._restore_startup_window_guard():
@@ -1009,6 +1060,7 @@ class AppRuntime:
                     self._target_hwnd = None
                 self._program_started_for_session = False
                 self._window_size_prepared = False
+                self._minimize_focus_prepared = False
                 if cleanup_errors:
                     return False, " ".join(cleanup_errors)
                 return True, "Runtime 실행 상태를 정리했습니다."

@@ -193,7 +193,7 @@ class MonitoringServiceTests(unittest.TestCase):
         with patch("app.monitoring.Win32Controller", side_effect=factory):
             self.service.connect("Window", "10")
         self.service.close()
-        self.assertEqual(events, ["save", "factory", "connect", "inactive", "restore 2"])
+        self.assertEqual(events, ["save", "factory", "connect", "inactive", "restore 7"])
 
     def test_preflight_restore_failure_keeps_original_for_retry(self):
         self.service.discover("Window")

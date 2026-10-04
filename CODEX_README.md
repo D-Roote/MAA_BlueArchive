@@ -1,5 +1,16 @@
 # 연결·화면 모니터 구현 기록
 
+## 2026-10-04 — 자동 복원 후 재실행의 실제 포커스 보정
+
+- 사용자 재현: 자동 최소화 작업 종료 후 복원된 게임을 클릭하지 않고 재실행하면 최소화 직후 복구된다. 게임에 한 번 실제 포커스를 주면 발생하지 않는다. 홀짝 횟수가 아닌 복원 후 활성화 상태를 기준으로 수정한다. 기존 실제 로그에서도 이전 Tasker/Controller 파괴는 다음 연결 전에 끝났으므로 종료 순서를 근본 원인으로 취급하지 않는다.
+- 분석: 5.12.3 `PseudoMinimizeHelper`는 대상이 실제 전경 창이 되면 투명한 pseudo-minimize를 해제한다. `InputUtils.send_activate_message`는 SDK 입력 전에 `WM_ACTIVATE / WA_ACTIVE`를 보내며, 이는 실제 Windows 전경 전환과 다르다. 자동 비활성 복원 이후 게임의 활성화/포커스 처리와 이 메시지가 결합되는 경로가 사용자 재현 조건에 부합한다. 게임 내부에서 전경으로 바뀌는 정확한 함수까지 확정한 것은 아니다. [PseudoMinimizeHelper](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaWin32ControlUnit/Screencap/PseudoMinimizeHelper.cpp), [InputUtils](https://github.com/MaaXYZ/MaaFramework/blob/v5.12.3/source/MaaWin32ControlUnit/Input/InputUtils.h), [WM_ACTIVATE](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate).
+- 원복: `maaLifecycle.py`와 강제 Destroy 테스트를 제거하고 일반 SDK Tasker/Win32Controller 및 SDK 자체 소유권 관리로 돌아간다. 바인딩 private handle/own을 변경하거나 살아 있는 Job이 참조하는 native 핸들을 강제로 파괴하지 않는다. 정지 완료·sink 제거·controller inactive·원본 복원 흐름을 유지하며 inactive 실패 시 재시도할 객체/원본은 보존한다.
+- 구현: 자동 최소화 파이프라인 실행에만 원본 WindowPlacement 저장 → 실제 포커스 준비 → SDK 컨트롤러 생성/연결 → 첫 Action에서 한 번 시스템 최소화 요청을 적용한다. 실제 포커스는 `SetForegroundWindow` 한 번과 최대 0.9초의 `GetForegroundWindow` 확인으로 준비하며 세션 종료 시 준비 플래그를 초기화한다. 이미 최소화된 창은 원본을 보존한 채 비활성 일반 표시 후 준비한다. 새 프로그램 실행은 입력 방지 보호막 안에서 준비한다. 일반 실행·프로그램 실행만 있는 큐·연결 진단·작업 중 노드/캡처에는 포커스를 가져오지 않는다.
+- 제한: Windows가 전경 전환을 거부하거나 실제 전경 상태가 확인되지 않으면 SDK 연결/작업 제출 전 실패로 안내한다. `AttachThreadInput`, 가짜 클릭, ALT 주입, 작업 중 반복 포커스 강제, 강제 재최소화는 사용하지 않는다. 시작 시 대상이 잠시 전경으로 전환될 수 있다. 작업 중 사용자가 직접 복구하는 동작은 계속 허용한다. [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow).
+- 유지: 종료 후 일반 창은 `SW_SHOWNOACTIVATE`, 최소화 원본은 `SW_SHOWMINNOACTIVE`로 위치/크기/상태를 복원한다. 최대화 원본도 보존한다. 이는 다음 실행의 실제 포커스 준비를 대체하지 않는다.
+- 검증: 전체 UnitTest **286개** 통과. 새 포커스 회귀 10개는 6회 자동 복원/무클릭 재실행, 생성 전 준비, 세션 플래그 초기화, 포인터 HWND, 지연·실패·취소, 일반 실행/실행 전용 큐 제외를 검사한다. 별도 실제 Windows/SDK 창에서 정상 완료 **6회**·수동 중지 **6회**, `PostMessageWithWindowPos`의 실제 SDK 클릭 전후 최소화 및 종료 후 원본 위치/크기/상태 복원을 확인했다. 시작 창만 활성화하여 실제 MAA 시작 버튼의 전경 권한을 모델링하며 대상 창에 수동 클릭/포커스를 주지 않는다. 기존 검증과 달리 SDK 입력 활성화 메시지를 실제로 거친다. 이는 실게임 내부 포커스 처리의 완전한 재현을 의미하지 않는다.
+- Git: 사용자의 winUI.py 로그 변경 및 리소스 JSON은 보존하고 직전 Fix에 amend한다. 두 브랜치의 공통 HEAD를 유지하며 원격 push는 하지 않는다.
+
 ## 2026-10-04 — 최소화 재분석 및 모니터링 문구 설계
 
 - 재확인한 5.12.3 SDK는 PrintWindow/FramePool 연결 중 테스트 캡처로 실제 최소화를 투명한 일반 창으로 바꾼다. `inactive`는 스타일만 되돌리며 실제 최소화 복원과는 다르다. 기존 실행 경로는 연결 이후에 WindowPlacement를 저장·크기 조절하여 SDK가 바꾼 상태를 원본으로 저장하거나 `SW_RESTORE`로 전경 활성화했다. 로그에서도 클릭 전 지연 중 pseudo-minimize가 해제되는 사례가 확인되어 입력 방식만 원인으로 단정하지 않는다.

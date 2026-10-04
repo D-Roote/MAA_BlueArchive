@@ -82,7 +82,7 @@ class RuntimePreviewCacheTests(unittest.TestCase):
         self.runtime._user32.IsWindow.return_value = True
         self.runtime._user32.SetWindowPlacement.side_effect = lambda hwnd, ptr: restored.append(ptr._obj.show_cmd) or True
         self.assertTrue(self.runtime.release_session()[0])
-        self.assertEqual(restored, [2])
+        self.assertEqual(restored, [7])
 
     def test_manual_stop_finishes_before_capture_release_and_restore(self):
         events = []
@@ -134,7 +134,7 @@ class RuntimePreviewCacheTests(unittest.TestCase):
             (ptr._obj.show_cmd, ptr._obj.normal_position.left)) or True
         self.assertTrue(self.runtime.release_session()[0])
         self.assertEqual(events, ["snapshot", "factory", "connection changes placement"])
-        self.assertEqual(restored, [(2, 120)])
+        self.assertEqual(restored, [(7, 120)])
 
     def test_resize_precedes_connection_and_is_not_repeated_under_sdk_helper(self):
         events = []
@@ -196,11 +196,12 @@ class RuntimePreviewCacheTests(unittest.TestCase):
         with patch.object(self.runtime, "_save_window_placement", side_effect=lambda: events.append("save") or True), \
                 patch.object(self.runtime, "_apply_startup_window_guard", side_effect=lambda hwnd: events.append("guard") or True), \
                 patch.object(self.runtime, "_resize_window_for_task", side_effect=lambda: events.append("resize") or True), \
+                patch.object(self.runtime, "_prepare_minimize_focus", side_effect=lambda *args: events.append("focus") or True), \
                 patch.object(self.runtime, "_minimize_window_for_task", side_effect=lambda: events.append("minimize") or True), \
                 patch.object(self.runtime, "_restore_startup_window_guard", side_effect=lambda: events.append("unguard") or True):
             self.assertTrue(self.runtime._prepare_started_window_for_minimized_connection(
                 SimpleNamespace(hwnd=42), 1)[0])
-        self.assertEqual(events, ["save", "guard", "resize", "minimize", "unguard"])
+        self.assertEqual(events, ["save", "guard", "resize", "focus", "minimize", "unguard"])
 
 
 class RuntimePreviewUITests(unittest.TestCase):

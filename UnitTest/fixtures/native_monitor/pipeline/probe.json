@@ -1,0 +1,14 @@
+{
+    "Native_Run": {
+        "recognition": { "type": "DirectHit" },
+        "action": { "type": "DoNothing" },
+        "post_delay": 100,
+        "next": ["Native_Wait"]
+    },
+    "Native_Wait": {
+        "recognition": { "type": "DirectHit" },
+        "action": { "type": "Click", "param": { "target": [20, 20, 1, 1] } },
+        "pre_delay": 600,
+        "post_delay": 800
+    }
+}

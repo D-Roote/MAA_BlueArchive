@@ -514,6 +514,7 @@ class RuntimeLifecycleTests(unittest.TestCase):
         window = SimpleNamespace(hwnd=333, window_name="Blue Archive")
         self.runtime._user32.IsWindow.return_value = True
         events = []
+        self.runtime._minimize_focus_prepared = True  # Focus is covered separately.
         with patch.object(
             self.runtime,
             "_apply_startup_window_guard",
@@ -1261,16 +1262,20 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(self.runtime.release_session()[0])
         self.assertIsNone(self.runtime._original_window_placement)
 
-    def test_deactivation_failure_still_restores_window_and_allows_retry(self):
+    def test_deactivation_failure_retains_window_and_controller_until_retry_succeeds(self):
         controller = self.runtime.controller = MagicMock(connected=True)
         controller.post_inactive.return_value = make_job(False)
         self.runtime._original_window_placement = WindowPlacement()
         self.runtime._target_hwnd = 123
         self.assertFalse(self.runtime.release_session()[0])
+        self.runtime._user32.SetWindowPlacement.assert_not_called()
+        self.assertIs(self.runtime.controller, controller)
+        self.assertEqual(self.runtime._target_hwnd, 123)
+        controller.post_inactive.return_value = make_job(True)
+        self.assertTrue(self.runtime.release_session()[0])
         self.runtime._user32.SetWindowPlacement.assert_called_once()
         self.assertIsNone(self.runtime.controller)
         self.assertIsNone(self.runtime._target_hwnd)
-        self.assertTrue(self.runtime.release_session()[0])
 
 
 class TitleBarThemeTests(unittest.TestCase):
