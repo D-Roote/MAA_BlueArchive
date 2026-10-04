@@ -39,6 +39,28 @@ class RuntimeResultTests(unittest.TestCase):
         self.assertEqual(worker.result_message, FAILURE)
         runtime.run_task.assert_not_called()
 
+    def test_manual_startup_cancel_adds_stop_result_without_discarding_reason(self):
+        runtime = self.runtime()
+        runtime.initialize.return_value = (False, "자동 실행 후 대기가 취소되었습니다.")
+        worker = RuntimeWorker(runtime, [("Task", {})])
+        with patch.object(worker, "isInterruptionRequested", return_value=True):
+            worker.run()
+        self.assertEqual(worker.result_message.splitlines(), [
+            "자동 실행 후 대기가 취소되었습니다.", "작업이 중지되었습니다."])
+        self.assertFalse(worker.succeeded)
+        runtime.run_task.assert_not_called()
+        runtime.release_session.assert_called_once()
+
+    def test_manual_startup_cancel_keeps_cleanup_failure_and_stop_only_once(self):
+        runtime = self.runtime()
+        runtime.initialize.return_value = (False, "자동 실행 후 대기가 취소되었습니다.")
+        runtime.release_session.return_value = (False, FAILURE)
+        worker = RuntimeWorker(runtime, [("Task", {})])
+        with patch.object(worker, "isInterruptionRequested", return_value=True):
+            worker.run()
+        self.assertEqual(worker.result_message.splitlines(), [
+            "자동 실행 후 대기가 취소되었습니다.", "작업이 중지되었습니다.", FAILURE])
+
     def test_failed_task_result_and_same_cleanup_failure_are_not_repeated(self):
         runtime = self.runtime()
         runtime.run_task.return_value = (False, FAILURE)
@@ -132,6 +154,25 @@ class RuntimeResultUITests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertTrue(lines[0].endswith("작업 중지 중입니다..."))
         self.assertTrue(lines[1].endswith("작업이 중지되었습니다."))
+
+    def test_startup_cancel_callbacks_show_reason_and_stop_without_blank_lines(self):
+        for stop_first in (True, False):
+            with self.subTest(stop_first=stop_first):
+                self.window.clear_log()
+                self.window._run_result_keys = set()
+                self.window.worker = MagicMock(succeeded=False, result_message=
+                    "자동 실행 후 대기가 취소되었습니다.\n작업이 중지되었습니다.")
+                self.window.stop_worker = MagicMock(succeeded=False,
+                    result_message="실행 중인 Tasker가 없습니다.")
+                callbacks = [self.window.on_stop_worker_finished, self.window.on_task_finished]
+                if not stop_first:
+                    callbacks.reverse()
+                for callback in callbacks:
+                    callback()
+                lines = self.window.ui.logPrintText.toPlainText().splitlines()
+                self.assertEqual(len(lines), 2)
+                self.assertTrue(lines[0].endswith("자동 실행 후 대기가 취소되었습니다."))
+                self.assertTrue(lines[1].endswith("작업이 중지되었습니다."))
 
     def test_multiline_error_and_next_result_have_no_extra_empty_paragraph(self):
         self.window.clear_log()

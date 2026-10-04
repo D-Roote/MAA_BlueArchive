@@ -110,6 +110,10 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.runtime._user32.GetForegroundWindow.return_value = 456
 
     def configure_initialization(self):
+        self.contexts.enter_context(patch.object(
+            self.runtime, "_wait_for_started_program_ready", return_value=(True, "ready")))
+        self.contexts.enter_context(patch.object(
+            self.runtime, "_find_target_window", return_value=(SimpleNamespace(hwnd=123), "found")))
         resource = MagicMock(loaded=True)
         self.runtime.resource = resource
         self.runtime._resource_loaded = True
@@ -715,12 +719,12 @@ class RuntimeLifecycleTests(unittest.TestCase):
         self.assertTrue(succeeded)
         prepare.assert_not_called()
         create_call = self.runtime._create_controller.call_args
-        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 25)
+        self.assertEqual(create_call.kwargs["wait_timeout_seconds"], 0)
         self.assertEqual(
             create_call.kwargs["stable_window_seconds"],
-            PROGRAM_WINDOW_STABLE_SECONDS,
+            0,
         )
-        self.assertIsNone(create_call.kwargs["window"])
+        self.assertIsNotNone(create_call.kwargs["window"])
 
     def test_launch_task_binds_immediately_when_program_is_already_running(self):
         self.configure_initialization()

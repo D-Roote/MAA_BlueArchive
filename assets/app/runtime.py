@@ -28,6 +28,7 @@ WIN32_METHOD_DEFAULTS = {
 }
 PROGRAM_LAUNCH_ENTRY = "__LaunchProgram"
 PROGRAM_WINDOW_STABLE_SECONDS = 5.0
+PROGRAM_POST_WINDOW_WAIT_SECONDS = 20.0
 GWL_STYLE = -16
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x00000020
@@ -809,6 +810,20 @@ class AppRuntime:
 
         return True, "컨트롤러를 연결했습니다."
 
+    def _wait_for_started_program_ready(self, cancellation_requested=None):
+        """Allow a newly launched app to load after its target window is found."""
+        deadline = time.monotonic() + PROGRAM_POST_WINDOW_WAIT_SECONDS
+        self.log_sink._emit("다음 작업 시작까지 대기합니다.")
+        while True:
+            if cancellation_requested is not None and cancellation_requested():
+                return False, "자동 실행 후 대기가 취소되었습니다."
+            if not self._target_hwnd or not self._user32.IsWindow(self._target_hwnd):
+                return False, "자동 실행 후 대기 중 대상 프로그램 창이 종료되었습니다."
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True, "자동 실행 후 대기를 완료했습니다."
+            time.sleep(min(PROGRAM_WINDOW_POLL_INTERVAL_SECONDS, remaining))
+
     def _bind_tasker(self):
         if self.controller is None or self.resource is None:
             return False, "리소스 또는 컨트롤러가 생성되지 않았습니다."
@@ -869,11 +884,10 @@ class AppRuntime:
                 if not started:
                     return False, start_message
                 wait_timeout_seconds = float(program_settings.get("startup_wait_seconds", 60))
-                if self._program_started_for_session:
+                if self._program_started_for_session and not pipeline_task_requested:
                     stable_window_seconds = PROGRAM_WINDOW_STABLE_SECONDS
                 if (
                     self._program_started_for_session
-                    and minimize_window
                     and pipeline_task_requested
                 ):
                     prepared_window, window_message = self._find_target_window(
@@ -884,15 +898,18 @@ class AppRuntime:
                     )
                     if prepared_window is None:
                         return False, window_message
-                    prepared, prepare_message = (
-                        self._prepare_started_window_for_minimized_connection(
-                            prepared_window,
-                            wait_timeout_seconds,
-                            cancellation_requested,
+                    # The following 20-second load wait replaces the rolling
+                    # five-second geometry/style stability wait for both modes.
+                    if minimize_window:
+                        prepared, prepare_message = (
+                            self._prepare_started_window_for_minimized_connection(
+                                prepared_window,
+                                wait_timeout_seconds,
+                                cancellation_requested,
+                            )
                         )
-                    )
-                    if not prepared:
-                        return False, prepare_message
+                        if not prepared:
+                            return False, prepare_message
                     wait_timeout_seconds = 0
                     stable_window_seconds = 0
 
@@ -911,6 +928,11 @@ class AppRuntime:
             )
             if not created:
                 return False, create_message
+
+            if self._program_started_for_session and pipeline_task_requested:
+                ready, ready_message = self._wait_for_started_program_ready(cancellation_requested)
+                if not ready:
+                    return False, ready_message
 
             if (pipeline_task_requested or execution_queue is None) and not self._window_size_prepared:
                 if not self._resize_window_for_task():

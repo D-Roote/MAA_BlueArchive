@@ -3171,6 +3171,10 @@ class RuntimeWorker(QThread):
             )
             if not initialized:
                 self.result_message = init_message
+                if self.isInterruptionRequested():
+                    self.result_message = distinct_result_message(
+                        f"{init_message}\n작업이 중지되었습니다."
+                    )
                 return
 
             self.log.emit(init_message)
