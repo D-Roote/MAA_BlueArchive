@@ -348,7 +348,7 @@ class MonitorCoordinator(QObject):
         return not self.busy and not self.service.needs_cleanup
 
     def _sync(self):
-        status = "작업 실행 중 화면은 실행 캐시를 사용합니다. 대상 변경은 종료 후 가능합니다." if self.window.isRunning else self.status
+        status = "작업 실행 중 화면은 실행 컨트롤러로 캡처합니다. 대상 변경은 종료 후 가능합니다." if self.window.isRunning else self.status
         for panel in self.panels:
             panel.sync(self.service.presets, self.preset_name, self.targets, self.target_key,
                        self.preferences, status, self.busy or self.streaming, self.window.isRunning,
@@ -378,7 +378,7 @@ class MonitorCoordinator(QObject):
             self.screen.status.setText(self._continuous_status())
 
     def _continuous_status(self):
-        source = "실행 캐시" if self.window.isRunning else "테스트 캡처"
+        source = "실행 캡처" if self.window.isRunning else "테스트 캡처"
         if self._frame_details is not None:
             _width, _height, source = self._frame_details
         if self._preview_retrying:
@@ -456,16 +456,15 @@ class MonitorCoordinator(QObject):
             source = "테스트 캡처"
             resume = None
             if running:
-                # Win32 capture units own pseudo-minimize styles, alpha and
-                # restore state even with input disabled. Never create a second
-                # controller, enqueue captures or inactive while a task owns it.
-                frame = self.window.runtime.capture_cached_frame()
-                source = "실행 캐시 작업 화면 갱신 주기에 따라 표시"
+                # Reuse the sole SDK window-state owner. A second controller
+                # can restore pseudo-minimize styles/alpha during the task.
+                frame = self.window.runtime.capture_preview_frame()
+                source = "실행 캡처"
                 if not self._runtime_resume_saved:
                     try:
                         resume = self.window.runtime.preview_connection_target()
                     except Exception:
-                        pass  # Metadata is optional; never interrupt cache display.
+                        pass  # Metadata is optional; never interrupt display.
             else:
                 if self.service.controller is None and self.streaming:
                     if self._resume_connection is None:
@@ -682,7 +681,7 @@ class MonitorCoordinator(QObject):
             if not self.busy:
                 self._schedule_preview()
         else:
-            self.screen.status.setText("작업 중에는 실행 캐시로 화면을 표시합니다." if self.window.isRunning
+            self.screen.status.setText("작업 중에는 실행 컨트롤러로 화면을 캡처합니다." if self.window.isRunning
                                        else "실행이 끝났습니다. 화면 연결 상태를 확인하세요.")
         self._sync()
 

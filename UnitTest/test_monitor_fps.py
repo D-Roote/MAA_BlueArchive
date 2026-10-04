@@ -38,7 +38,7 @@ class DisplayFPSTests(unittest.TestCase):
         self.assertEqual(self.stats.below_target_samples, 9)
         self.sample(45)
         self.assertEqual(self.stats.describe(60),
-                         "목표 60 FPS  출력 45.0 FPS\n출력 프레임이 낮습니다. (45.0 FPS) 목표 프레임을 낮추세요.")
+                         "목표 60 FPS  출력 45.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.")
 
     def test_smaller_absolute_gap_and_above_target_do_not_count(self):
         for _ in range(12):
@@ -50,7 +50,7 @@ class DisplayFPSTests(unittest.TestCase):
     def test_stalled_display_reports_zero_after_ten_samples(self):
         for _ in range(10):
             self.sample(0)
-        self.assertIn("출력 0.0 FPS\n출력 프레임이 낮습니다. (0.0 FPS)", self.stats.describe(60))
+        self.assertIn("출력 0.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.", self.stats.describe(60))
 
     def test_targets_one_to_fifteen_never_warn(self):
         for target in range(1, 16):
@@ -78,7 +78,7 @@ class DisplayFPSTests(unittest.TestCase):
         for _ in range(10):
             self.sample(20)
         self.sample(60)
-        self.assertIn("출력 60.0 FPS\n출력 프레임이 낮습니다. (20.0 FPS)", self.stats.describe(60))
+        self.assertIn("출력 60.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.", self.stats.describe(60))
         self.stats.reset()
         self.assertIsNone(self.stats.actual)
         self.assertIn("낮습니다", self.stats.describe(60))

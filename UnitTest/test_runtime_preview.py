@@ -1,5 +1,6 @@
-"""Task-safe read-only previews: no second SDK window-state owner."""
+"""Task-safe previews: one SDK window-state owner, serialized lifecycle."""
 import ctypes
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -204,6 +205,200 @@ class RuntimePreviewCacheTests(unittest.TestCase):
         self.assertEqual(events, ["save", "guard", "resize", "focus", "minimize", "unguard"])
 
 
+class RuntimeLivePreviewTests(unittest.TestCase):
+    def setUp(self):
+        fixture = ui_fixtures.RuntimeLifecycleTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        self.runtime = fixture.runtime
+        self.runtime.controller = self.controller = MagicMock(connected=True)
+        self.runtime.tasker = self.tasker = MagicMock(running=True, stopping=False)
+        self.runtime._target_hwnd = 42
+        self.job = ui_fixtures.make_job()
+        self.job.job_id = 123
+        self.frame = np.full((10, 20, 3), 90, np.uint8)
+        self.job.get.return_value = self.frame
+        self.controller.post_screencap.return_value = self.job
+
+    def start_thread(self, operation):
+        outcomes, errors = [], []
+        def run():
+            try:
+                outcomes.append(operation())
+            except Exception as error:
+                errors.append(error)
+        thread = threading.Thread(target=run)
+        thread.start()
+        return thread, outcomes, errors
+
+    def test_capture_refreshes_on_same_controller_and_returns_owned_frame(self):
+        self.controller.cached_image = np.zeros_like(self.frame)
+        with patch("app.runtime.Win32Controller") as factory:
+            result = self.runtime.capture_preview_frame()
+        factory.assert_not_called()
+        self.controller.post_screencap.assert_called_once()
+        self.job.wait.assert_called_once()
+        self.job.get.assert_called_once()
+        self.frame[:] = 255
+        self.assertEqual(result[0, 0, 0], 90)
+        self.assertTrue(self.runtime._preview_capture_idle.is_set())
+        for method in (self.controller.post_click, self.controller.post_inactive):
+            method.assert_not_called()
+        for method in (self.runtime._user32.ShowWindow, self.runtime._user32.SetWindowPlacement,
+                       self.runtime._user32.SetWindowLongPtrW, self.runtime._user32.SetForegroundWindow):
+            method.assert_not_called()
+
+    def test_starting_stopping_or_completed_task_never_posts(self):
+        for tasker in (None, MagicMock(running=False, stopping=False),
+                       MagicMock(running=True, stopping=True)):
+            with self.subTest(tasker=tasker):
+                self.runtime.tasker = tasker
+                with self.assertRaises(PreviewNotReady):
+                    self.runtime.capture_preview_frame()
+                self.assertTrue(self.runtime._preview_capture_idle.is_set())
+        self.controller.post_screencap.assert_not_called()
+
+    def test_not_connected_retries_but_closed_window_disconnects(self):
+        self.controller.connected = False
+        self.runtime._user32.IsWindow.return_value = True
+        with self.assertRaises(PreviewNotReady):
+            self.runtime.capture_preview_frame()
+        self.runtime._user32.IsWindow.return_value = False
+        with self.assertRaises(MonitoringDisconnected):
+            self.runtime.capture_preview_frame()
+        self.controller.post_screencap.assert_not_called()
+
+    def test_only_one_pending_preview_even_with_concurrent_callers(self):
+        entered, finish = threading.Event(), threading.Event()
+        def wait():
+            entered.set()
+            self.assertTrue(finish.wait(2))
+            return self.job
+        self.job.wait.side_effect = wait
+        thread, outcomes, errors = self.start_thread(self.runtime.capture_preview_frame)
+        try:
+            self.assertTrue(entered.wait(1))
+            with self.assertRaises(PreviewNotReady):
+                self.runtime.capture_preview_frame()
+            self.controller.post_screencap.assert_called_once()
+        finally:
+            finish.set()
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors)
+        self.assertEqual(len(outcomes), 1)
+        self.assertTrue(self.runtime._preview_capture_idle.is_set())
+
+    def test_stop_can_cancel_preview_while_native_job_waits(self):
+        entered, finish = threading.Event(), threading.Event()
+        def wait():
+            entered.set()
+            self.assertTrue(finish.wait(2))
+            return self.job
+        self.job.wait.side_effect = wait
+        def stop():
+            self.tasker.running = False
+            self.job.succeeded = False
+            finish.set()
+            return ui_fixtures.make_job()
+        self.tasker.post_stop.side_effect = stop
+        thread, outcomes, errors = self.start_thread(self.runtime.capture_preview_frame)
+        try:
+            self.assertTrue(entered.wait(1))
+            stop_thread, stopped, stop_errors = self.start_thread(self.runtime.stop_task)
+            stop_thread.join(1)
+            self.assertFalse(stop_thread.is_alive(), "Preview wait must not block Stop")
+            self.assertFalse(stop_errors)
+            self.assertTrue(stopped[0][0])
+        finally:
+            finish.set()
+            thread.join(2)
+        self.assertFalse(outcomes)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], PreviewNotReady)
+        self.assertTrue(self.runtime._preview_capture_idle.is_set())
+
+    def test_cleanup_waits_for_preview_before_inactive_and_restore(self):
+        events = []
+        entered, finish, cleanup_waiting = threading.Event(), threading.Event(), threading.Event()
+        def wait():
+            entered.set()
+            self.assertTrue(finish.wait(2))
+            events.append("capture finished")
+            return self.job
+        self.job.wait.side_effect = wait
+        self.controller.post_inactive.side_effect = lambda: events.append("inactive") or ui_fixtures.make_job()
+        self.runtime._original_window_placement = WindowPlacement()
+        self.runtime._user32.SetWindowPlacement.side_effect = lambda *args: events.append("restore") or True
+        def stop():
+            self.tasker.running = False
+            events.append("stop")
+            return ui_fixtures.make_job()
+        self.tasker.post_stop.side_effect = stop
+        preview_thread, frames, errors = self.start_thread(self.runtime.capture_preview_frame)
+        real_wait = self.runtime._preview_capture_idle.wait
+        def wait_idle(timeout):
+            cleanup_waiting.set()
+            return real_wait(timeout)
+        cleanup_thread = None
+        try:
+            self.assertTrue(entered.wait(1))
+            with patch.object(self.runtime._preview_capture_idle, "wait", side_effect=wait_idle):
+                cleanup_thread, cleaned, cleanup_errors = self.start_thread(self.runtime.release_session)
+                self.assertTrue(cleanup_waiting.wait(1))
+                self.assertEqual(events, ["stop"])
+                self.assertIs(self.runtime.controller, self.controller)
+                finish.set()
+                cleanup_thread.join(2)
+            self.assertFalse(cleanup_thread.is_alive())
+            self.assertFalse(cleanup_errors)
+            self.assertTrue(cleaned[0][0])
+        finally:
+            finish.set()
+            preview_thread.join(2)
+            if cleanup_thread is not None:
+                cleanup_thread.join(2)
+        self.assertFalse(errors)
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(events, ["stop", "capture finished", "inactive", "restore"])
+        self.assertIsNone(self.runtime.controller)
+
+    def test_cleanup_timeout_keeps_controller_and_original_window_state(self):
+        self.runtime._original_window_placement = WindowPlacement()
+        original = self.runtime._original_window_placement
+        self.tasker.running = False
+        with patch.object(self.runtime._preview_capture_idle, "wait", return_value=False):
+            result = self.runtime.release_session()
+        self.assertFalse(result[0])
+        self.assertIn("화면 캡처 완료", result[1])
+        self.assertIs(self.runtime.controller, self.controller)
+        self.assertIs(self.runtime.tasker, self.tasker)
+        self.assertIs(self.runtime._original_window_placement, original)
+        self.controller.post_inactive.assert_not_called()
+        self.runtime._user32.SetWindowPlacement.assert_not_called()
+
+    def test_rejected_post_never_waits_on_invalid_job_and_releases_gate(self):
+        self.job.job_id = 0
+        with self.assertRaises(PreviewNotReady):
+            self.runtime.capture_preview_frame()
+        self.job.wait.assert_not_called()
+        self.job.get.assert_not_called()
+        self.assertTrue(self.runtime._preview_capture_idle.is_set())
+
+    def test_post_wait_and_empty_frame_errors_release_gate_for_retry(self):
+        for method in (self.controller.post_screencap, self.job.wait, self.job.get):
+            with self.subTest(method=method):
+                method.side_effect = RuntimeError("capture error")
+                with self.assertRaises(RuntimeError):
+                    self.runtime.capture_preview_frame()
+                method.side_effect = None
+                self.assertTrue(self.runtime._preview_capture_idle.is_set())
+        self.job.get.return_value = None
+        with self.assertRaises(ValueError):
+            self.runtime.capture_preview_frame()
+        self.assertTrue(self.runtime._preview_capture_idle.is_set())
+
+
 class RuntimePreviewUITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -219,9 +414,9 @@ class RuntimePreviewUITests(unittest.TestCase):
         self.window.isRunning = True
         self.addCleanup(lambda: setattr(self.window, "isRunning", False))
 
-    def test_running_display_reads_cache_without_creating_native_controller(self):
+    def test_running_display_refreshes_without_creating_native_controller(self):
         runtime = self.window.runtime
-        runtime.capture_cached_frame.side_effect = [
+        runtime.capture_preview_frame.side_effect = [
             np.full((10, 20, 3), 30, np.uint8), np.full((10, 20, 3), 90, np.uint8)]
         with patch("app.monitoring.Win32Controller") as factory:
             for value in (30, 90):
@@ -229,20 +424,21 @@ class RuntimePreviewUITests(unittest.TestCase):
                 self.fixture.wait_for_monitor()
                 self.assertEqual(self.screen.preview.image.pixelColor(0, 0).red(), value)
         factory.assert_not_called()
-        self.assertEqual(runtime.capture_cached_frame.call_count, 2)
+        self.assertEqual(runtime.capture_preview_frame.call_count, 2)
+        runtime.capture_cached_frame.assert_not_called()
         runtime.controller.post_screencap.assert_not_called()
         runtime.controller.post_inactive.assert_not_called()
         self.controller.post_screencap.assert_not_called()
-        self.assertIn("실행 캐시", self.screen.status.text())
+        self.assertIn("실행 캡처", self.screen.status.text())
 
     def test_metadata_is_optional_and_not_a_second_capture_path(self):
-        self.window.runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), np.uint8)
+        self.window.runtime.capture_preview_frame.return_value = np.zeros((10, 20, 3), np.uint8)
         self.window.runtime.preview_connection_target.side_effect = PreviewNotReady("connecting")
         self.window.monitor.toggle_capture()
         self.fixture.wait_for_monitor()
-        self.window.runtime.capture_cached_frame.assert_called_once()
+        self.window.runtime.capture_preview_frame.assert_called_once()
         self.controller.post_screencap.assert_not_called()
-        self.assertIn("실행 캐시", self.screen.status.text())
+        self.assertIn("실행 캡처", self.screen.status.text())
 
     def test_qimage_owns_frame_without_an_extra_validation_copy(self):
         from app.monitorUI import owned_qimage

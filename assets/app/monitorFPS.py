@@ -47,6 +47,5 @@ class DisplayFPS:
         text = (f"목표 {target} FPS  출력 측정 중" if self.actual is None
                 else f"목표 {target} FPS  출력 {self.actual:.1f} FPS")
         if target > 15 and target == self.target and self.warning_fps is not None:
-            text += (f"\n출력 프레임이 낮습니다. ({self.warning_fps:.1f} FPS) "
-                     "목표 프레임을 낮추세요.")
+            text += "\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요."
         return text

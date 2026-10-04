@@ -177,6 +177,8 @@ class AppRuntime:
         self._toolkit_initialized = False
         self._resource_loaded = False
         self._task_post_lock = threading.Lock()
+        self._preview_capture_idle = threading.Event()
+        self._preview_capture_idle.set()
         self._user32 = create_user32()
 
         self._target_hwnd = None
@@ -1046,7 +1048,7 @@ class AppRuntime:
                 raise RuntimeError(release_message)
 
     def capture_cached_frame(self):
-        """Read only: preview must never enqueue extra captures during a task."""
+        """Read an owned cache snapshot without requesting a new capture."""
         from app.monitoring import MonitoringDisconnected, MonitoringService, PreviewNotReady
         with self._task_post_lock:
             controller = self.controller
@@ -1058,6 +1060,44 @@ class AppRuntime:
                     raise MonitoringDisconnected("작업 대상 창이 종료되어 연결이 해제되었습니다.")
                 raise PreviewNotReady("실행 컨트롤러가 아직 준비되지 않았습니다.")
             return MonitoringService.validate_frame(controller.cached_image)
+
+    def capture_preview_frame(self):
+        """Refresh through the sole window-state owner, with one preview in flight."""
+        from app.monitoring import MonitoringDisconnected, MonitoringService, PreviewNotReady
+        controller = job = None
+        owns_capture = False
+        try:
+            with self._task_post_lock:
+                controller = self.controller
+                if controller is None:
+                    raise PreviewNotReady("실행 컨트롤러가 아직 준비되지 않았습니다.")
+                if not controller.connected:
+                    hwnd = getattr(self._target_hwnd, "value", self._target_hwnd)
+                    if hwnd and not self._user32.IsWindow(hwnd):
+                        raise MonitoringDisconnected("작업 대상 창이 종료되어 연결이 해제되었습니다.")
+                    raise PreviewNotReady("실행 컨트롤러가 아직 준비되지 않았습니다.")
+                if self.tasker is None or self.tasker.stopping or not self.tasker.running:
+                    raise PreviewNotReady("실행 화면 캡처를 준비하거나 정리하고 있습니다.")
+                if not self._preview_capture_idle.is_set():
+                    raise PreviewNotReady("이전 화면 캡처가 완료되지 않았습니다.")
+                self._preview_capture_idle.clear()
+                owns_capture = True
+                job = controller.post_screencap()
+
+            # Never hold the submission lock while waiting: Stop must be able
+            # to cancel queued native work, including this screenshot request.
+            if job.job_id == 0:
+                raise PreviewNotReady("실행 컨트롤러가 화면 캡처 요청을 받지 못했습니다.")
+            job.wait()
+            if not job.succeeded:
+                raise PreviewNotReady("실행 화면 캡처가 중단되었습니다.")
+            return MonitoringService.validate_frame(job.get())
+        finally:
+            # Job holds bound controller methods too. Drop BOTH temporary SDK
+            # owners before allowing cleanup to restore the target window.
+            job = controller = None
+            if owns_capture:
+                self._preview_capture_idle.set()
 
     def preview_connection_target(self):
         """Read-only identity for reconnecting diagnostics AFTER task cleanup."""
@@ -1109,6 +1149,9 @@ class AppRuntime:
                         self._context_sink_id = None
 
                 cleanup_errors = []
+
+                if not self._preview_capture_idle.wait(CONTROLLER_DRAIN_TIMEOUT_SECONDS):
+                    return False, "정리 중 화면 캡처 완료를 기다리는 시간이 초과되었습니다."
 
                 # SDK binding owns native disposal; do not invalidate live Job handles.
                 self.tasker = None

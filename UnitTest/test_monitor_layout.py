@@ -35,7 +35,7 @@ class MonitorPreviewLayoutTests(unittest.TestCase):
         self.window.resize(1100, 900)
         self.window.ui.workspaceSplitter.setSizes([900, 309])
         for text in (
-                "실행 캐시 작업 화면 갱신 주기에 따라 표시  목표 60 FPS  출력 40.0 FPS\n출력 프레임이 낮습니다. (40.0 FPS) 목표 프레임을 낮추세요.",
+                "실행 캐시 작업 화면 갱신 주기에 따라 표시  목표 60 FPS  출력 40.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.",
                 "작업대상연결확인실패" * 60):
             self.screen.status.setText(text)
             for width, height in ((2048, 1024), (512, 1536)):
@@ -47,7 +47,7 @@ class MonitorPreviewLayoutTests(unittest.TestCase):
 
     def test_height_resize_and_card_reorder_keep_horizontal_scroll_zero(self):
         sections = self.window.ui.monitorSectionsWidget
-        self.screen.status.setText("연결 준비 재시도 중  목표 60 FPS  출력 0.0 FPS\n출력 프레임이 낮습니다. (0.0 FPS) 목표 프레임을 낮추세요.")
+        self.screen.status.setText("연결 준비 재시도 중  목표 60 FPS  출력 0.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.")
         for order in (("screen", "log", "connection"), ("connection", "screen", "log")):
             cards = {card.property("monitorSectionKey"): card for card in sections.sections()}
             for index, key in enumerate(order):
@@ -62,7 +62,7 @@ class MonitorPreviewLayoutTests(unittest.TestCase):
         section = self.screen.parentWidget().parentWidget()
         toggle = section.findChild(QToolButton, "monitorSectionToggle")
         toggle.setChecked(False)
-        self.screen.status.setText("테스트 캡처  목표 60 FPS  출력 0.0 FPS\n출력 프레임이 낮습니다. (0.0 FPS) 목표 프레임을 낮추세요.")
+        self.screen.status.setText("테스트 캡처  목표 60 FPS  출력 0.0 FPS\n출력 프레임이 낮습니다. 목표 프레임을 낮추세요.")
         self.window.resize(1100, 650)
         self.window.ui.workspaceSplitter.setSizes([900, 309])
         toggle.setChecked(True)

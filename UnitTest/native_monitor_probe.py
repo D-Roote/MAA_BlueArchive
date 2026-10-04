@@ -18,7 +18,7 @@ from types import SimpleNamespace
 os.environ["QT_QPA_PLATFORM"] = "windows"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel
 from maa.toolkit import Toolkit
 from maa.resource import Resource
@@ -31,7 +31,66 @@ class ProbeLabel(QLabel):
 
     def mousePressEvent(self, event):
         self.clicks += 1
+        print(json.dumps({"clicks": self.clicks}), flush=True)
         super().mousePressEvent(event)
+
+
+def owned_window():
+    """Keep the target outside the SDK process, as with actual game input."""
+    app = QApplication([])
+    window = ProbeLabel("Owned SDK capture regression window")
+    window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    window.resize(320, 180)
+    window.move(20, 20)
+    window.show()
+    print(json.dumps({"hwnd": int(window.winId())}), flush=True)
+    # Even if the SDK probe times out, this owned target exits with its parent.
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    parent = kernel.OpenProcess(0x00100000, False, os.getppid())
+    assert parent, "Cannot watch owned parent process"
+    phase = False
+    def tick():
+        nonlocal phase
+        if kernel.WaitForSingleObject(parent, 0) == 0:
+            app.quit()
+            return
+        phase = not phase
+        window.setStyleSheet("background: #204080;" if phase else "background: #e0d090;")
+    timer = QTimer()
+    timer.timeout.connect(tick)
+    timer.start(250)
+    try:
+        app.exec()
+    finally:
+        kernel.CloseHandle(parent)
+
+
+class OwnedWindowProcess:
+    def __init__(self):
+        self.process = subprocess.Popen(
+            [sys.executable, "-u", str(Path(__file__).resolve()), "--owned-window"],
+            stdout=subprocess.PIPE, text=True)
+        self.hwnd = json.loads(self.process.stdout.readline())["hwnd"]
+        self.clicks = 0
+        def read_clicks():
+            for line in self.process.stdout:
+                self.clicks = json.loads(line)["clicks"]
+        self.reader = threading.Thread(target=read_clicks, daemon=True)
+        self.reader.start()
+
+    def winId(self):
+        return self.hwnd
+
+    def close(self):
+        if self.process.poll() is None:
+            self.process.terminate()  # Only the Popen-owned fixture process.
+        self.process.wait(3)
+        self.reader.join(3)
+        self.process.stdout.close()
 
 
 def main(temp):
@@ -40,13 +99,7 @@ def main(temp):
     launcher.resize(250, 100)
     launcher.move(400, 20)
     launcher.show()
-    window = ProbeLabel("Owned SDK capture regression window")
-    window.setWindowFlags(Qt.WindowType.Window)
-    window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-    window.resize(320, 180)
-    # Windows deliberately clamps off-screen WindowPlacement on restoration.
-    window.move(20, 20)
-    window.show()
+    window = OwnedWindowProcess()
     app.processEvents()
     hwnd = int(window.winId())
     runtime = AppRuntime()
@@ -131,6 +184,22 @@ def main(temp):
                         errors.append(error)
                 runner = threading.Thread(target=execute, daemon=True)
                 runner.start()
+                preview_done = threading.Event()
+                preview_frames, preview_errors = [], []
+                def preview():
+                    while not preview_done.is_set():
+                        started = time.monotonic()
+                        try:
+                            frame = runtime.capture_preview_frame()
+                            preview_frames.append(float(frame.mean()))
+                        except PreviewNotReady:
+                            pass  # Initialization/completion is retryable.
+                        except BaseException as error:
+                            preview_errors.append(error)
+                            return
+                        preview_done.wait(max(0.001, 1 / 30 - (time.monotonic() - started)))
+                preview_worker = threading.Thread(target=preview, daemon=True)
+                preview_worker.start()
                 deadline = time.monotonic() + 8
                 stopped = False
                 checks = 0
@@ -151,6 +220,11 @@ def main(temp):
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Repeated owned task timed out")
                     time.sleep(0.005)
+                preview_done.set()
+                preview_worker.join(3)
+                assert not preview_worker.is_alive() and not preview_errors, preview_errors
+                assert len(preview_frames) >= 2 and max(preview_frames) - min(preview_frames) > 1, preview_frames
+                assert runtime._preview_capture_idle.is_set()
                 if errors:
                     raise errors[0]
                 assert outcome and checks == 2, (outcome, attempt, checks)
@@ -161,7 +235,7 @@ def main(temp):
                 assert runtime.tasker is None and runtime.controller is None
                 assert not runtime._minimize_focus_prepared
                 assert placement() == original, (original, placement())
-                print(f"Repeated SDK task {attempt} minimized before/after SDK click and restored manual_stop={stopped}")
+                print(f"Repeated SDK task {attempt} shared preview={len(preview_frames)} fresh frames, minimized before/after SDK click and restored manual_stop={stopped}")
 
             # Diagnostics are requested from the settings/start window, not
             # from the target window that the SDK just sent input messages to.
@@ -186,15 +260,26 @@ def main(temp):
             finally:
                 native(service.close)
     finally:
-        native(runtime.release_session)
-        window.close()
-        launcher.close()
-        app.processEvents()
+        try:
+            native(runtime.release_session)
+        finally:
+            window.close()
+            launcher.close()
+            app.processEvents()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 2:
+    if len(sys.argv) == 2 and sys.argv[1] == "--owned-window":
+        owned_window()
+    elif len(sys.argv) == 2:
         main(sys.argv[1])
     else:
         with tempfile.TemporaryDirectory(prefix="maaba-native-monitor-") as temp:
-            subprocess.run([sys.executable, str(Path(__file__).resolve()), temp], check=True, timeout=60)
+            with subprocess.Popen([sys.executable, "-u", str(Path(__file__).resolve()), temp]) as child:
+                try:
+                    if child.wait(timeout=60):
+                        raise RuntimeError("Owned-window probe failed")
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait()

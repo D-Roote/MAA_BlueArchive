@@ -120,14 +120,14 @@ class ContinuousPreviewTests(unittest.TestCase):
 
     def test_runtime_initialization_retries_then_recovers_without_manual_restart(self):
         self.window.isRunning = True
-        self.window.runtime.capture_cached_frame.side_effect = RuntimeError("initializing")
+        self.window.runtime.capture_preview_frame.side_effect = RuntimeError("initializing")
         self.start_preview()
         self.assertIn("재시도 중", self.screen.status.text())
         self.assertTrue(self.monitor.preview_timer.isActive())
-        self.window.runtime.capture_cached_frame.side_effect = None
-        self.window.runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), np.uint8)
+        self.window.runtime.capture_preview_frame.side_effect = None
+        self.window.runtime.capture_preview_frame.return_value = np.zeros((10, 20, 3), np.uint8)
         self.capture_again()
-        self.assertIn("실행 캐시", self.screen.status.text())
+        self.assertIn("실행 캡처", self.screen.status.text())
         self.assertNotIn("재시도 중", self.screen.status.text())
         self.assertTrue(self.monitor.streaming)
 
@@ -162,7 +162,7 @@ class ContinuousPreviewTests(unittest.TestCase):
 
     def test_lost_task_connection_is_terminal_without_creating_a_replacement(self):
         self.window.isRunning = True
-        self.window.runtime.capture_cached_frame.side_effect = MonitoringDisconnected("task window closed")
+        self.window.runtime.capture_preview_frame.side_effect = MonitoringDisconnected("task window closed")
 
         def close():
             self.monitor.service.controller = None
@@ -173,7 +173,7 @@ class ContinuousPreviewTests(unittest.TestCase):
             self.fixture.wait_for_monitor()
         factory.assert_not_called()
         self.assertFalse(self.monitor.streaming)
-        self.window.runtime.capture_cached_frame.assert_called_once()
+        self.window.runtime.capture_preview_frame.assert_called_once()
 
     def test_explicit_disconnect_during_task_never_disconnects_task_controller(self):
         self.start_preview()
@@ -207,7 +207,7 @@ class ContinuousPreviewTests(unittest.TestCase):
         self.monitor._resume_connection = (self.monitor.preset_name, "99", dict(self.monitor.preferences))
         target = ConnectionTarget("42", "game", "Win32", hwnd=42, pid=123)
         self.window.runtime.preview_connection_target.return_value = (self.monitor.preset_name, target)
-        self.window.runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), np.uint8)
+        self.window.runtime.capture_preview_frame.return_value = np.zeros((10, 20, 3), np.uint8)
         with patch.object(self.monitor.service, "connect") as connect:
             self.start_preview()
             self.assertEqual(self.monitor._resume_connection[1], "42")

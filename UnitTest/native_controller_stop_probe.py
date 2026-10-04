@@ -18,6 +18,7 @@ from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 from app.runtime import AppRuntime, ControllerActivitySink
+from app.monitoring import PreviewNotReady
 
 
 class SlowController(CustomController):
@@ -63,7 +64,7 @@ def main(log_dir):
     resource = Resource()
     bundle = Path(__file__).resolve().parent / "fixtures" / "native_monitor"
     assert resource.post_bundle(bundle).wait().succeeded
-    for attempt in range(6):
+    for attempt in range(9):
         owned = SlowController()
         controller = Controller(handle=owned._handle)
         runtime = AppRuntime()
@@ -77,8 +78,23 @@ def main(log_dir):
         # Tasker is waiting in a pipeline delay while a native action is running.
         runtime.tasker.post_task("Native_Run", {"Native_Run": {"pre_delay": 2000}})
         assert runtime.tasker.running
-        owned.slow = "capture" if attempt % 2 == 0 else "click"
-        pending = controller.post_screencap() if owned.slow == "capture" else controller.post_click(20, 20)
+        shared_preview = attempt >= 6
+        owned.slow = "capture" if shared_preview or attempt % 2 == 0 else "click"
+        preview_errors, preview_frames = [], []
+        preview_worker = None
+        if shared_preview:
+            def preview():
+                try:
+                    preview_frames.append(runtime.capture_preview_frame())
+                except PreviewNotReady:
+                    pass  # SDK stop can cancel a valid queued screenshot.
+                except BaseException as error:
+                    preview_errors.append(error)
+            preview_worker = threading.Thread(target=preview)
+            preview_worker.start()
+            pending = None
+        else:
+            pending = controller.post_screencap() if owned.slow == "capture" else controller.post_click(20, 20)
         assert owned.entered.wait(2)
         result = runtime.stop_task()
         assert result[0], result
@@ -99,13 +115,17 @@ def main(log_dir):
         finally:
             owned.finish.set()
             worker.join(6)
+            if preview_worker is not None:
+                preview_worker.join(3)
+                assert not preview_worker.is_alive() and not preview_errors, preview_errors
         assert not worker.is_alive() and not errors, errors
         assert outcome and outcome[0][0], outcome
         assert owned.exited.is_set() and not owned.inactive_during_action
         assert runtime.tasker is None and runtime.controller is None
+        assert runtime._preview_capture_idle.is_set()
         # pending is deliberately not waited: SDK stop invalidates queued ids.
         del pending, controller, owned
-        print(f"Real SDK rapid-stop {attempt + 1}: native action drained, cleanup succeeded")
+        print(f"Real SDK rapid-stop {attempt + 1}: shared_preview={shared_preview}, native action drained, cleanup succeeded")
 
 
 if __name__ == "__main__":

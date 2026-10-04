@@ -1829,18 +1829,19 @@ class UILifecycleTests(unittest.TestCase):
         self.assertAlmostEqual(drawn.width() / drawn.height(), 160 / 90, delta=0.03)
         self.assertTrue(screen.preview.rect().contains(drawn))
 
-    def test_running_screen_reads_only_runtime_cache(self):
+    def test_running_screen_refreshes_only_through_runtime_controller(self):
         self.show_screen_panel()
         self.configure_screen_capture()
         runtime = self.window.runtime
-        runtime.capture_cached_frame.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
+        runtime.capture_preview_frame.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
         self.window.isRunning = True
         with patch.object(self.window.monitor.service, "capture") as capture:
             self.window.monitor.toggle_capture()
             self.wait_for_monitor()
         capture.assert_not_called()
-        runtime.capture_cached_frame.assert_called_once()
-        self.assertIn("실행 캐시", self.window.monitor.screen.status.text())
+        runtime.capture_preview_frame.assert_called_once()
+        runtime.capture_cached_frame.assert_not_called()
+        self.assertIn("실행 캡처", self.window.monitor.screen.status.text())
         self.window.isRunning = False
 
     def test_continuous_preview_survives_collapse_and_retains_last_frame(self):
